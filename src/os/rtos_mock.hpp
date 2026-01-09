@@ -259,7 +259,7 @@ class RTOSMock : public RTOS {
             task_info.stack_watermark = 0;
             task_info.notification_pending = false;
             task_info.suspended = false;
-            task_info.stop_requested = false;
+            task_info.stop_requested.store(false, std::memory_order_relaxed);
 
             // LOG_DEBUG("MOCK: Task '%s' registered with thread ID %p",
             //   task_name.c_str(), task_info.thread_id);
@@ -305,7 +305,9 @@ class RTOSMock : public RTOS {
                 //     task_name.c_str(), thread_id, was_suspended);
 
                 // Set the stop flag first, before changing suspended state
-                it->second.stop_requested = true;
+                // Use release ordering to ensure all previous writes are visible
+                it->second.stop_requested.store(true,
+                                                std::memory_order_release);
 
                 // Set delay interruption flag to wake up any delay() calls
                 it->second.delay_interrupted = true;
@@ -509,7 +511,8 @@ class RTOSMock : public RTOS {
             bool acknowledged =
                 waitFor(task_info->suspend_ack_cv, lock, 500, [task_info]() {
                     return task_info->suspension_acknowledged ||
-                           task_info->stop_requested;
+                           task_info->stop_requested.load(
+                               std::memory_order_relaxed);
                 });
 
             if (!acknowledged) {
@@ -621,7 +624,8 @@ class RTOSMock : public RTOS {
                 waitFor(task_info->resume_ack_cv, lock,
                         1000 /* 1 second timeout */, [task_info]() {
                             return task_info->resume_acknowledged ||
-                                   task_info->stop_requested;
+                                   task_info->stop_requested.load(
+                                       std::memory_order_relaxed);
                         });
 
             if (!acknowledged) {
@@ -668,7 +672,8 @@ class RTOSMock : public RTOS {
                     task_name = pair.second.name;
 
                     // Quick check for stop request without additional locking
-                    should_stop = task_info->stop_requested;
+                    should_stop = task_info->stop_requested.load(
+                        std::memory_order_relaxed);
                     is_suspended = task_info->suspended;
                     break;
                 }
@@ -704,10 +709,12 @@ class RTOSMock : public RTOS {
 
             // Wait with timeout to prevent indefinite blocking
             // Use our waitFor helper that respects virtual time
-            bool status = waitFor(
-                task_info->cv, lock, 500000 /* 500ms timeout */, [task_info]() {
-                    return !task_info->suspended || task_info->stop_requested;
-                });
+            bool status = waitFor(task_info->cv, lock,
+                                  500000 /* 500ms timeout */, [task_info]() {
+                                      return !task_info->suspended ||
+                                             task_info->stop_requested.load(
+                                                 std::memory_order_relaxed);
+                                  });
 
             if (!status) {
                 // LOG_DEBUG("MOCK: Task '%s' wait timeout, rechecking condition",
@@ -718,7 +725,7 @@ class RTOSMock : public RTOS {
             }
 
             // After wait, recheck stop flag
-            if (task_info->stop_requested) {
+            if (task_info->stop_requested.load(std::memory_order_relaxed)) {
                 // LOG_DEBUG("MOCK: Task '%s' should stop after wait",
                 //   task_name.c_str());
                 return true;
@@ -842,7 +849,8 @@ class RTOSMock : public RTOS {
 
                 // Use task-aware waitFor with suspension detection
                 bool initial_suspended_state = task_info->suspended;
-                bool initial_stop_requested = task_info->stop_requested;
+                bool initial_stop_requested =
+                    task_info->stop_requested.load(std::memory_order_relaxed);
 
                 bool success = waitFor(
                     q->notEmpty, lock, timeout,
@@ -861,7 +869,8 @@ class RTOSMock : public RTOS {
                                 // Return true if:
                                 // 1. Task is deleted/stop requested
                                 // 2. Suspension state changed (got suspended or resumed)
-                                return task_info.stop_requested ||
+                                return task_info.stop_requested.load(
+                                           std::memory_order_relaxed) ||
                                        (task_info.suspended !=
                                         initial_suspended_state);
                             }
@@ -939,13 +948,7 @@ class RTOSMock : public RTOS {
      * @param ms Number of milliseconds to delay
      */
     void delay(uint32_t ms) override {
-        if (timeMode_ == TimeMode::kRealTime) {
-            // In real-time mode, use actual sleep
-            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-            return;
-        }
-
-        // In virtual time mode, find the current task's TaskInfo
+        // Find the current task's TaskInfo (needed for both real-time and virtual time modes)
         std::thread::id current_id = std::this_thread::get_id();
         TaskInfo* task_info = nullptr;
 
@@ -962,7 +965,7 @@ class RTOSMock : public RTOS {
         if (!task_info) {
             LOG_WARNING(
                 "MOCK: Could not find TaskInfo for current thread in delay()");
-            // Fallback to real-time sleep
+            // Fallback to non-interruptible sleep
             std::this_thread::sleep_for(std::chrono::milliseconds(ms));
             return;
         }
@@ -970,11 +973,31 @@ class RTOSMock : public RTOS {
         // Check if stop or delay interruption was already requested
         {
             std::lock_guard<std::mutex> lock(task_info->mutex);
-            if (task_info->stop_requested || task_info->delay_interrupted) {
+            if (task_info->stop_requested.load(std::memory_order_relaxed) ||
+                task_info->delay_interrupted) {
                 throw TaskTerminationException();  // Terminate task execution
             }
         }
 
+        if (timeMode_ == TimeMode::kRealTime) {
+            // Real-time mode: Use interruptible wait with condition variable
+            std::unique_lock<std::mutex> lock(task_info->mutex);
+            task_info->delay_cv.wait_for(
+                lock, std::chrono::milliseconds(ms), [task_info]() {
+                    return task_info->stop_requested.load(
+                               std::memory_order_relaxed) ||
+                           task_info->delay_interrupted;
+                });
+
+            // After wait returns, check if we were interrupted
+            if (task_info->stop_requested.load(std::memory_order_relaxed) ||
+                task_info->delay_interrupted) {
+                throw TaskTerminationException();
+            }
+            return;
+        }
+
+        // Virtual time mode continues below
         uint64_t wakeTimeMs;
 
         // Register this task as waiting until the wake time
@@ -992,7 +1015,8 @@ class RTOSMock : public RTOS {
             std::unique_lock<std::mutex> lock(task_info->mutex);
             task_info->delay_cv.wait(lock, [this, wakeTimeMs, task_info]() {
                 // Check stop/interruption flags first
-                if (task_info->stop_requested || task_info->delay_interrupted) {
+                if (task_info->stop_requested.load(std::memory_order_relaxed) ||
+                    task_info->delay_interrupted) {
                     return true;
                 }
 
@@ -1002,7 +1026,8 @@ class RTOSMock : public RTOS {
             });
 
             // After wait returns, check if we were woken due to termination request
-            if (task_info->stop_requested || task_info->delay_interrupted) {
+            if (task_info->stop_requested.load(std::memory_order_relaxed) ||
+                task_info->delay_interrupted) {
                 // Clean up before throwing
                 {
                     std::lock_guard<std::mutex> timeLock(timeMutex_);
@@ -1272,7 +1297,7 @@ class RTOSMock : public RTOS {
             }
 
             // Quick check for stop request or pending notification without waiting
-            if (task_info->stop_requested) {
+            if (task_info->stop_requested.load(std::memory_order_relaxed)) {
                 // std::cout << "MOCK: Task received stop request during WaitForNotify" << std::endl;
                 return QueueResult::kError;
             }
@@ -1326,7 +1351,8 @@ class RTOSMock : public RTOS {
                 // 1. Stop requested (should exit)
                 // 2. Not suspended AND have pending notification (normal notification)
                 // 3. Suspension state changed (either got suspended or resumed)
-                return it->second.stop_requested ||
+                return it->second.stop_requested.load(
+                           std::memory_order_relaxed) ||
                        (!it->second.suspended &&
                         it->second.notification_pending) ||
                        (it->second.suspended != initial_suspended_state);
@@ -1355,7 +1381,7 @@ class RTOSMock : public RTOS {
                 return QueueResult::kError;
             }
 
-            if (it->second.stop_requested) {
+            if (it->second.stop_requested.load(std::memory_order_relaxed)) {
                 // std::cout << "MOCK: Task received stop request after wait in WaitForNotify" << std::endl;
                 return QueueResult::kError;
             }
@@ -1816,11 +1842,17 @@ class RTOSMock : public RTOS {
             return false;
 
         std::thread::id current_id = std::this_thread::get_id();
+
+        // Acquire lock before accessing tasks_ map to prevent use-after-free
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+
         TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
         if (!task_info) {
             return false;
         }
 
+        // Need to lock task's mutex to safely modify waiting_on_queue_cvs
+        std::lock_guard<std::mutex> task_lock(task_info->mutex);
         task_info->waiting_on_queue_cvs.push_back(cv);
         return true;
     }
@@ -1835,10 +1867,16 @@ class RTOSMock : public RTOS {
             return false;
 
         std::thread::id current_id = std::this_thread::get_id();
+
+        // Acquire lock before accessing tasks_ map to prevent use-after-free
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+
         TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
         if (!task_info)
             return false;
 
+        // Need to lock task's mutex to safely modify waiting_on_queue_cvs
+        std::lock_guard<std::mutex> task_lock(task_info->mutex);
         auto& cvs = task_info->waiting_on_queue_cvs;
         auto it = std::find(cvs.begin(), cvs.end(), cv);
         if (it != cvs.end()) {
@@ -1854,14 +1892,18 @@ class RTOSMock : public RTOS {
      */
     bool isCurrentTaskDeleted() {
         std::thread::id current_id = std::this_thread::get_id();
+
+        // Acquire lock before accessing tasks_ map to prevent use-after-free
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+
         TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
         if (!task_info) {
             LOG_ERROR("Current task not found");
             return false;  // If we can't find the task, assume it's not deleted or it is not created.
         }
 
-        // Quick check without locking the task mutex to avoid deadlock
-        return task_info->stop_requested;
+        // Use atomic load with acquire ordering to ensure we see the latest value
+        return task_info->stop_requested.load(std::memory_order_acquire);
     }
 
     struct TaskInfo {
@@ -1878,7 +1920,7 @@ class RTOSMock : public RTOS {
         std::mutex mutex;
         std::condition_variable cv;
         bool suspended = false;
-        bool stop_requested = false;
+        std::atomic<bool> stop_requested{false};
 
         // For suspend/resume acknowledgment
         bool suspension_acknowledged = false;
