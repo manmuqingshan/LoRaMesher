@@ -438,6 +438,26 @@ void LoRaMeshProtocol::SetDataReceivedCallback(
     network_service_->SetDataReceivedCallback(callback);
 }
 
+void LoRaMeshProtocol::SetNodeCapabilities(uint8_t capabilities) {
+    if (network_service_) {
+        network_service_->SetLocalNodeCapabilities(capabilities);
+    }
+}
+
+uint8_t LoRaMeshProtocol::GetLocalNodeCapabilities() const {
+    if (network_service_) {
+        return network_service_->GetLocalNodeCapabilities();
+    }
+    return 0;
+}
+
+uint8_t LoRaMeshProtocol::GetNodeCapabilities(AddressType node_address) const {
+    if (network_service_) {
+        return network_service_->GetNodeCapabilities(node_address);
+    }
+    return 0;
+}
+
 const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
     return network_service_->GetNetworkNodes();
 }

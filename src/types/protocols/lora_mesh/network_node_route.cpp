@@ -53,16 +53,15 @@ void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
 
 // NetworkNodeRoute implementation
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint32_t time)
-    : routing_entry(addr, 0, 0, 0), last_seen(time), last_updated(time) {}
+    : routing_entry(addr, 0, 0, 0, 0), last_seen(time), last_updated(time) {}
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
                                    uint32_t time, bool is_manager, uint8_t caps,
                                    uint8_t slots)
-    : routing_entry(addr, 0, 0, slots),
+    : routing_entry(addr, 0, 0, slots, caps),
       battery_level(battery),
       last_seen(time),
       is_network_manager(is_manager),
-      capabilities(caps),
       next_hop(0),
       last_updated(time),
       is_active(true) {
@@ -75,11 +74,11 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
                                    uint32_t time, bool is_manager, uint8_t caps,
                                    uint8_t slots, uint8_t hops)
-    : routing_entry(addr, hops, 200, slots),  // Default link quality of 200
+    : routing_entry(addr, hops, 200, slots,
+                    caps),  // Default link quality of 200
       battery_level(battery),
       last_seen(time),
       is_network_manager(is_manager),
-      capabilities(caps),
       next_hop(addr),  // Simple default: next hop is the node itself
       last_updated(time),
       is_active(true) {
@@ -91,7 +90,7 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
                                    uint8_t hops, uint8_t quality, uint32_t time)
-    : routing_entry(dest, hops, quality, 0),
+    : routing_entry(dest, hops, quality, 0, 0),
       last_seen(time),
       next_hop(next),
       last_updated(time),
@@ -141,8 +140,8 @@ bool NetworkNodeRoute::UpdateNodeInfo(uint8_t battery, bool is_manager,
     }
 
     // Update capabilities if provided
-    if (caps != 0 && capabilities != caps) {
-        capabilities = caps;
+    if (caps != 0 && routing_entry.capabilities != caps) {
+        routing_entry.capabilities = caps;
         changed = true;
     }
 
@@ -212,6 +211,11 @@ bool NetworkNodeRoute::UpdateFromRoutingTableEntry(
         changed = true;
     }
 
+    if (routing_entry.capabilities != entry.capabilities) {
+        routing_entry.capabilities = entry.capabilities;
+        changed = true;
+    }
+
     // Update timestamps and status
     last_updated = current_time;
     is_active = true;
@@ -242,19 +246,19 @@ bool NetworkNodeRoute::UpdateAllocatedSlots(uint8_t new_slots,
     return false;  // No change
 }
 
-RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
-    return routing_entry;
-}
-
 bool NetworkNodeRoute::UpdateCapabilities(uint8_t new_capabilities,
                                           uint32_t current_time) {
-    if (capabilities != new_capabilities) {
-        capabilities = new_capabilities;
+    if (routing_entry.capabilities != new_capabilities) {
+        routing_entry.capabilities = new_capabilities;
         last_seen =
             current_time;  // Update last seen time on capabilities change
         return true;       // Capabilities changed
     }
     return false;  // No change
+}
+
+RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
+    return routing_entry;
 }
 
 void NetworkNodeRoute::ExpectRoutingMessage() {
@@ -288,53 +292,12 @@ void NetworkNodeRoute::ResetLinkStats() {
     link_stats.Reset();
 }
 
-bool NetworkNodeRoute::HasCapability(uint8_t capability) const {
-    return (capabilities & capability) != 0;
-}
-
-std::string NetworkNodeRoute::GetCapabilitiesString() const {
-    std::vector<std::string> caps;
-
-    // Define capability bits (these should match JoinRequestHeader capabilities)
-    if (capabilities & 0x01)
-        caps.push_back("ROUTER");
-    if (capabilities & 0x02)
-        caps.push_back("GATEWAY");
-    if (capabilities & 0x04)
-        caps.push_back("BATTERY_POWERED");
-    if (capabilities & 0x08)
-        caps.push_back("HIGH_BANDWIDTH");
-    if (capabilities & 0x10)
-        caps.push_back("TIME_SYNC_SOURCE");
-    if (capabilities & 0x20)
-        caps.push_back("SENSOR_NODE");
-    if (capabilities & 0x40)
-        caps.push_back("RESERVED");
-    if (capabilities & 0x80)
-        caps.push_back("EXTENDED_CAPS");
-
-    if (caps.empty()) {
-        return "NONE";
-    }
-
-    // Join capabilities with " | "
-    std::ostringstream oss;
-    for (size_t i = 0; i < caps.size(); ++i) {
-        if (i > 0)
-            oss << " | ";
-        oss << caps[i];
-    }
-
-    return oss.str();
-}
-
 Result NetworkNodeRoute::Serialize(utils::ByteSerializer& serializer) const {
     // Node identity and status information
     serializer.WriteUint16(routing_entry.destination);
     serializer.WriteUint8(battery_level);
     serializer.WriteUint32(last_seen);
     serializer.WriteUint8(is_network_manager ? 1 : 0);
-    serializer.WriteUint8(capabilities);
 
     // Routing information
     serializer.WriteUint16(next_hop);
@@ -352,7 +315,6 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
     auto battery_level = deserializer.ReadUint8();
     auto last_seen = deserializer.ReadUint32();
     auto is_manager_raw = deserializer.ReadUint8();
-    auto capabilities = deserializer.ReadUint8();
 
     // Read routing information
     auto next_hop = deserializer.ReadUint16();
@@ -361,7 +323,7 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
 
     // Check if all reads were successful
     if (!address || !battery_level || !last_seen || !is_manager_raw ||
-        !capabilities || !next_hop || !last_updated || !is_active_raw) {
+        !next_hop || !last_updated || !is_active_raw) {
         return std::nullopt;
     }
 
@@ -369,11 +331,10 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
     NetworkNodeRoute node_route;
 
     // Set node identity and status
-    node_route.routing_entry = RoutingTableEntry(*address, 0, 0, 0);
+    node_route.routing_entry = RoutingTableEntry(*address, 0, 0, 0, 0);
     node_route.battery_level = *battery_level;
     node_route.last_seen = *last_seen;
     node_route.is_network_manager = (*is_manager_raw != 0);
-    node_route.capabilities = *capabilities;
 
     // Set routing information
     node_route.next_hop = *next_hop;

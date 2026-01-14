@@ -15,6 +15,7 @@
 #include "types/application/application_types.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/base_message.hpp"
+#include "types/node_capabilities.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {
@@ -158,6 +159,31 @@ class LoraMesher {
     const std::vector<types::protocols::lora_mesh::SlotAllocation>&
     GetSlotTable() const;
 
+    /**
+     * @brief Set local node capabilities
+     *
+     * Updates the capabilities for this node. Changes will be propagated
+     * in the next routing table broadcast.
+     *
+     * @param capabilities Capabilities bitmap (NodeCapabilities flags)
+     */
+    void SetNodeCapabilities(uint8_t capabilities);
+
+    /**
+     * @brief Get local node capabilities
+     *
+     * @return uint8_t Local node capabilities bitmap
+     */
+    uint8_t GetNodeCapabilities() const;
+
+    /**
+     * @brief Get capabilities for a remote node
+     *
+     * @param node_address Address of the node to query
+     * @return uint8_t Node capabilities bitmap (0 if unknown)
+     */
+    uint8_t GetNodeCapabilities(AddressType node_address) const;
+
    private:
     friend class Builder;  // Allow Builder to access private constructor
 
@@ -283,6 +309,17 @@ class LoraMesher::Builder {
     }
 
     /**
+     * @brief Set node capabilities
+     *
+     * @param capabilities Node capabilities bitmap (NodeCapabilities flags)
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withNodeCapabilities(uint8_t capabilities) {
+        node_capabilities_ = capabilities;
+        return *this;
+    }
+
+    /**
      * @brief Configure for PingPong protocol
      * 
      * @param config The PingPong protocol configuration
@@ -323,6 +360,12 @@ class LoraMesher::Builder {
         }
         auto mesher = std::unique_ptr<LoraMesher>(new LoraMesher(config_));
         mesher->auto_address_from_hardware_ = auto_address_from_hardware;
+
+        // Set initial capabilities if configured
+        if (node_capabilities_ != 0) {
+            mesher->SetNodeCapabilities(node_capabilities_);
+        }
+
         return mesher;
     }
 
@@ -330,6 +373,7 @@ class LoraMesher::Builder {
     Config config_;  ///< The configuration being built
     bool auto_address_from_hardware =
         true;  ///< Use hardware ID for auto address generation
+    uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
 };
 
 }  // namespace loramesher

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
+#include "types/node_capabilities.hpp"
 
 namespace loramesher {
 
@@ -22,22 +23,25 @@ struct RoutingTableEntry {
     uint8_t hop_count = 0;        ///< Number of hops to destination
     uint8_t link_quality = 0;     ///< Link quality metric (0-255)
     uint8_t allocated_data_slots =
-        0;  ///< Number of data slots allocated to this node
+        0;                     ///< Number of data slots allocated to this node
+    uint8_t capabilities = 0;  ///< Node capabilities bitmap
 
     /**
      * @brief Constructor with all fields
-     * 
+     *
      * @param dest Destination address
      * @param hops Hop count to destination
      * @param quality Link quality metric
      * @param data_slots Allocated data slots
+     * @param caps Node capabilities bitmap
      */
     RoutingTableEntry(AddressType dest, uint8_t hops, uint8_t quality,
-                      uint8_t data_slots)
+                      uint8_t data_slots, uint8_t caps = 0)
         : destination(dest),
           hop_count(hops),
           link_quality(quality),
-          allocated_data_slots(data_slots) {}
+          allocated_data_slots(data_slots),
+          capabilities(caps) {}
 
     /**
      * @brief Default constructor
@@ -46,19 +50,20 @@ struct RoutingTableEntry {
 
     /**
      * @brief Size of an entry in bytes
-     * 
+     *
      * @return size_t Size of the entry
      */
     static constexpr size_t Size() {
         return sizeof(AddressType) +  // Destination address
                sizeof(uint8_t) +      // Hop count
                sizeof(uint8_t) +      // Link quality
-               sizeof(uint8_t);       // Allocated slots
+               sizeof(uint8_t) +      // Allocated slots
+               sizeof(uint8_t);       // Capabilities
     }
 
     /**
      * @brief Serialize the entry to a byte serializer
-     * 
+     *
      * @param serializer The serializer to write to
      * @return Result Success if serialization succeeded
      */
@@ -67,12 +72,13 @@ struct RoutingTableEntry {
         serializer.WriteUint8(hop_count);
         serializer.WriteUint8(link_quality);
         serializer.WriteUint8(allocated_data_slots);
+        serializer.WriteUint8(capabilities);
         return Result::Success();
     }
 
     /**
      * @brief Deserialize an entry from a byte deserializer
-     * 
+     *
      * @param deserializer The deserializer to read from
      * @return std::optional<RoutingTableEntry> The entry if successful, nullopt otherwise
      */
@@ -83,12 +89,13 @@ struct RoutingTableEntry {
         auto hops = deserializer.ReadUint8();
         auto quality = deserializer.ReadUint8();
         auto data_slots = deserializer.ReadUint8();
+        auto caps = deserializer.ReadUint8();
 
-        if (!dest || !hops || !quality || !data_slots) {
+        if (!dest || !hops || !quality || !data_slots || !caps) {
             return std::nullopt;
         }
 
-        return RoutingTableEntry(*dest, *hops, *quality, *data_slots);
+        return RoutingTableEntry(*dest, *hops, *quality, *data_slots, *caps);
     }
 };
 

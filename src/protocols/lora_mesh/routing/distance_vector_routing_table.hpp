@@ -50,7 +50,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     bool UpdateRoute(AddressType source, AddressType destination,
                      uint8_t hop_count, uint8_t link_quality,
-                     uint8_t allocated_data_slots,
+                     uint8_t allocated_data_slots, uint8_t capabilities,
                      uint32_t current_time) override;
 
     bool AddNode(

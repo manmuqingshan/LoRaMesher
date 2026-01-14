@@ -181,20 +181,22 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Update routing entry for a destination
-     * 
+     *
      * Updates or creates a routing entry based on information received
      * from a neighbor.
-     * 
+     *
      * @param source Source of the routing update
      * @param destination Destination address
      * @param hop_count Hop count from source to destination
      * @param link_quality Link quality from source to destination
      * @param allocated_slots Slots allocated to destination
+     * @param capabilities Node capabilities bitmap
      * @return bool True if routing table was significantly updated
      */
     bool UpdateRouteEntry(AddressType source, AddressType destination,
                           uint8_t hop_count, uint8_t link_quality,
-                          uint8_t allocated_slots) override;
+                          uint8_t allocated_slots,
+                          uint8_t capabilities) override;
 
     /**
      * @brief Set callback for route update notifications
@@ -209,6 +211,31 @@ class NetworkService : public INetworkService {
      * @param callback Function to call when data is received
      */
     void SetDataReceivedCallback(DataReceivedCallback callback) override;
+
+    /**
+     * @brief Set local node capabilities
+     *
+     * Updates the capabilities for this node. Changes will be propagated
+     * in the next routing table broadcast.
+     *
+     * @param capabilities Capabilities bitmap (NodeCapabilities flags)
+     */
+    void SetLocalNodeCapabilities(uint8_t capabilities);
+
+    /**
+     * @brief Get local node capabilities
+     *
+     * @return uint8_t Local node capabilities bitmap
+     */
+    uint8_t GetLocalNodeCapabilities() const;
+
+    /**
+     * @brief Get capabilities for a specific node
+     *
+     * @param node_address Address of the node to query
+     * @return uint8_t Node capabilities bitmap (0 if node not found)
+     */
+    uint8_t GetNodeCapabilities(AddressType node_address) const;
 
     // INetworkService discovery implementation
 
@@ -694,14 +721,12 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Check if join request should be accepted
-     * 
+     *
      * @param node_address Requesting node address
-     * @param capabilities Node capabilities
      * @param requested_slots Requested slots
      * @return std::pair<bool, uint8_t> Accept decision and allocated slots
      */
     std::pair<bool, uint8_t> ShouldAcceptJoin(AddressType node_address,
-                                              uint8_t capabilities,
                                               uint8_t requested_slots);
 
     /**

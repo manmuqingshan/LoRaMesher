@@ -241,7 +241,8 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
 bool NetworkService::UpdateRouteEntry(AddressType source,
                                       AddressType destination,
                                       uint8_t hop_count, uint8_t link_quality,
-                                      uint8_t allocated_data_slots) {
+                                      uint8_t allocated_data_slots,
+                                      uint8_t capabilities) {
     // Add 1 to hop count to account for the hop through this node
     uint8_t actual_hop_count = hop_count + 1;
 
@@ -257,7 +258,7 @@ bool NetworkService::UpdateRouteEntry(AddressType source,
     // Delegate to routing table implementation
     bool route_changed = routing_table_->UpdateRoute(
         source, destination, actual_hop_count, link_quality,
-        allocated_data_slots, current_time);
+        allocated_data_slots, capabilities, current_time);
 
     if (route_changed) {
         UpdateNetworkTopology();
@@ -272,6 +273,49 @@ void NetworkService::SetRouteUpdateCallback(RouteUpdateCallback callback) {
 
 void NetworkService::SetDataReceivedCallback(DataReceivedCallback callback) {
     data_received_callback_ = callback;
+}
+
+void NetworkService::SetLocalNodeCapabilities(uint8_t capabilities) {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    uint32_t current_time = GetRTOS().getTickCount();
+
+    // Update our own node in routing table
+    routing_table_->UpdateNode(
+        node_address_, 100,                 // Battery level
+        network_manager_ == node_address_,  // is_network_manager
+        config_.default_data_slots,         // allocated_data_slots
+        capabilities,                       // capabilities
+        current_time);
+
+    LOG_INFO("Updated local node capabilities to 0x%02X", capabilities);
+}
+
+uint8_t NetworkService::GetLocalNodeCapabilities() const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    // Find our own node in routing table
+    const auto& nodes = routing_table_->GetNodes();
+    for (const auto& node : nodes) {
+        if (node.GetAddress() == node_address_) {
+            return node.routing_entry.capabilities;
+        }
+    }
+
+    return 0;  // Default if not found
+}
+
+uint8_t NetworkService::GetNodeCapabilities(AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    const auto& nodes = routing_table_->GetNodes();
+    for (const auto& node : nodes) {
+        if (node.GetAddress() == node_address) {
+            return node.routing_entry.capabilities;
+        }
+    }
+
+    return 0;  // Node not found
 }
 
 Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
@@ -434,7 +478,8 @@ void NetworkService::SetNetworkManager(AddressType manager_address) {
                 (node.routing_entry.destination == manager_address);
             routing_table_->UpdateNode(
                 node.routing_entry.destination, node.battery_level, is_manager,
-                node.GetAllocatedDataSlots(), node.capabilities, current_time);
+                node.GetAllocatedDataSlots(), node.routing_entry.capabilities,
+                current_time);
         }
     }
 }
@@ -826,21 +871,13 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
         }
     }
 
-    // Determine node capabilities
-    uint8_t capabilities = 0;
-
-    // Set router capability if we have routes
-    if (routing_table_->GetSize() > 0) {
-        capabilities |= 0x01;  // ROUTER capability
-    }
-
     // Battery level (default to 100%)
     uint8_t battery_level = 100;
 
     // Create join request message with selected sponsor
     auto join_request = JoinRequestMessage::Create(
-        manager_address, node_address_, capabilities, battery_level,
-        requested_slots, {}, 0, selected_sponsor_);
+        manager_address, node_address_, battery_level, requested_slots, {}, 0,
+        selected_sponsor_);
 
     if (!join_request) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -912,12 +949,11 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     // sponsor_address = sponsor_address == node_address_ ? 0 : sponsor_address;
 
     // Now we're the network manager, process the join request
-    auto capabilities = join_request_opt->GetCapabilities();
     auto battery_level = join_request_opt->GetBatteryLevel();
     auto requested_slots = join_request_opt->GetRequestedSlots();
 
-    LOG_INFO("Join request from 0x%04X: caps=0x%02X, battery=%d%%, slots=%d",
-             source, capabilities, battery_level, requested_slots);
+    LOG_INFO("Join request from 0x%04X: battery=%d%%, slots=%d", source,
+             battery_level, requested_slots);
 
     // Check if a join is already pending for this superframe
     if (pending_join_request_) {
@@ -931,7 +967,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
 
     // Determine if node should be accepted
     auto [accepted, allocated_slots] =
-        ShouldAcceptJoin(source, capabilities, requested_slots);
+        ShouldAcceptJoin(source, requested_slots);
 
     if (!accepted) {
         LOG_INFO("Join request from 0x%04X rejected - network constraints",
@@ -970,8 +1006,9 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
 
     // Add the joining node to the network immediately so it appears in network views
     // The full slot allocation will be handled at the superframe boundary
-    bool node_added = UpdateNetworkNode(source, battery_level, false,
-                                        allocated_slots, capabilities);
+    bool node_added =
+        UpdateNetworkNode(source, battery_level, false, allocated_slots,
+                          0);  // capabilities will be set from routing table
     if (node_added) {
         LOG_INFO("Joining node 0x%04X added to network manager's node list",
                  source);
@@ -1726,8 +1763,7 @@ void NetworkService::SetMaxHopCount(uint8_t max_hops) {
 // Helper method implementations
 
 std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
-    AddressType node_address, uint8_t /* capabilities */,
-    uint8_t requested_slots) {
+    AddressType node_address, uint8_t requested_slots) {
 
     // Check network capacity
     if (routing_table_->GetSize() >= config_.max_network_nodes) {
@@ -2263,9 +2299,9 @@ Result NetworkService::ForwardJoinRequest(
         join_request.GetDestination(),
         join_request
             .GetSource(),  // Preserve original source for end-to-end tracking
-        join_request.GetCapabilities(), join_request.GetBatteryLevel(),
-        join_request.GetRequestedSlots(), {},  // No additional info
-        next_hop,                              // Set next hop for routing
+        join_request.GetBatteryLevel(), join_request.GetRequestedSlots(),
+        {},        // No additional info
+        next_hop,  // Set next hop for routing
         join_request.GetHeader()
             .GetSponsorAddress()  // Preserve sponsor address
     );

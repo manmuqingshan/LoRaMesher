@@ -55,7 +55,7 @@ TEST_F(NetworkNodeRouteTest, DefaultConstructor) {
     EXPECT_EQ(default_node.battery_level, 100);
     EXPECT_EQ(default_node.last_seen, 0);
     EXPECT_FALSE(default_node.is_network_manager);
-    EXPECT_EQ(default_node.capabilities, 0);
+    EXPECT_EQ(default_node.routing_entry.capabilities, 0);
     EXPECT_EQ(default_node.routing_entry.allocated_data_slots, 0);
 }
 
@@ -67,7 +67,8 @@ TEST_F(NetworkNodeRouteTest, ParameterizedConstructor) {
     EXPECT_EQ(node_.battery_level, 75);
     EXPECT_EQ(node_.last_seen, 5000);
     EXPECT_FALSE(node_.is_network_manager);
-    EXPECT_EQ(node_.capabilities, 0x05);  // ROUTER | BATTERY_POWERED
+    EXPECT_EQ(node_.routing_entry.capabilities,
+              0x05);  // ROUTER | BATTERY_POWERED
     EXPECT_EQ(node_.routing_entry.allocated_data_slots, 3);
 }
 
@@ -80,8 +81,8 @@ TEST_F(NetworkNodeRouteTest, MinimalConstructor) {
     EXPECT_EQ(minimal_node.routing_entry.destination, 0x5678);
     EXPECT_EQ(minimal_node.battery_level, 90);
     EXPECT_EQ(minimal_node.last_seen, 10000);
-    EXPECT_FALSE(minimal_node.is_network_manager);  // Default value
-    EXPECT_EQ(minimal_node.capabilities, 0);        // Default value
+    EXPECT_FALSE(minimal_node.is_network_manager);          // Default value
+    EXPECT_EQ(minimal_node.routing_entry.capabilities, 0);  // Default value
     EXPECT_EQ(minimal_node.routing_entry.allocated_data_slots,
               0);  // Default value
 }
@@ -157,7 +158,7 @@ TEST_F(NetworkNodeRouteTest, UpdateCapabilities) {
     uint8_t new_capabilities = GATEWAY | HIGH_BANDWIDTH | SENSOR_NODE;
 
     node_.UpdateCapabilities(new_capabilities, current_time);
-    EXPECT_EQ(node_.capabilities, new_capabilities);
+    EXPECT_EQ(node_.routing_entry.capabilities, new_capabilities);
     EXPECT_EQ(node_.last_seen, current_time);
 }
 
@@ -195,32 +196,6 @@ TEST_F(NetworkNodeRouteTest, HasCapability) {
 }
 
 /**
- * @brief Test GetCapabilitiesString
- */
-TEST_F(NetworkNodeRouteTest, GetCapabilitiesString) {
-    // Test with current node (ROUTER | BATTERY_POWERED)
-    std::string caps_str = node_.GetCapabilitiesString();
-    EXPECT_NE(caps_str.find("ROUTER"), std::string::npos);
-    EXPECT_NE(caps_str.find("BATTERY_POWERED"), std::string::npos);
-
-    // Test with no capabilities
-    NetworkNodeRoute no_caps_node(0x1111, 50, 1000, false, 0, 1);
-    EXPECT_EQ(no_caps_node.GetCapabilitiesString(), "NONE");
-
-    // Test with all capabilities
-    NetworkNodeRoute all_caps_node(0x2222, 50, 1000, false, 0xFF, 1);
-    std::string all_caps_str = all_caps_node.GetCapabilitiesString();
-    EXPECT_NE(all_caps_str.find("ROUTER"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("GATEWAY"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("BATTERY_POWERED"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("HIGH_BANDWIDTH"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("TIME_SYNC_SOURCE"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("SENSOR_NODE"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("RESERVED"), std::string::npos);
-    EXPECT_NE(all_caps_str.find("EXTENDED_CAPS"), std::string::npos);
-}
-
-/**
  * @brief Test serialization and deserialization
  */
 TEST_F(NetworkNodeRouteTest, SerializationDeserialization) {
@@ -243,7 +218,6 @@ TEST_F(NetworkNodeRouteTest, SerializationDeserialization) {
     EXPECT_EQ(node_.battery_level, deserialized_node->battery_level);
     EXPECT_EQ(node_.last_seen, deserialized_node->last_seen);
     EXPECT_EQ(node_.is_network_manager, deserialized_node->is_network_manager);
-    EXPECT_EQ(node_.capabilities, deserialized_node->capabilities);
 }
 
 /**

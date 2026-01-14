@@ -65,7 +65,8 @@ AddressType DistanceVectorRoutingTable::FindNextHop(
 
 bool DistanceVectorRoutingTable::UpdateRoute(
     AddressType source, AddressType destination, uint8_t hop_count,
-    uint8_t link_quality, uint8_t allocated_data_slots, uint32_t current_time) {
+    uint8_t link_quality, uint8_t allocated_data_slots, uint8_t capabilities,
+    uint32_t current_time) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     update_count_++;
 
@@ -99,6 +100,11 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                 route_changed = true;
             }
 
+            if (capabilities != node_it->routing_entry.capabilities) {
+                node_it->routing_entry.capabilities = capabilities;
+                route_changed = true;
+            }
+
             if (route_changed) {
                 NotifyRouteUpdate(true, destination, source, hop_count);
             }
@@ -116,6 +122,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
         types::protocols::lora_mesh::NetworkNodeRoute new_node(
             destination, source, hop_count, actual_link_quality, current_time);
         new_node.routing_entry.allocated_data_slots = allocated_data_slots;
+        new_node.routing_entry.capabilities = capabilities;
 
         nodes_.push_back(new_node);
         route_changed = true;
@@ -478,6 +485,12 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                     node_it->routing_entry.allocated_data_slots) {
                     node_it->routing_entry.allocated_data_slots =
                         entry.allocated_data_slots;
+                    changed = true;
+                }
+
+                // Update capabilities if available
+                if (entry.capabilities != node_it->routing_entry.capabilities) {
+                    node_it->routing_entry.capabilities = entry.capabilities;
                     changed = true;
                 }
 

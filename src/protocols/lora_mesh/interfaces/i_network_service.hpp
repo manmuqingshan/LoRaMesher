@@ -177,7 +177,8 @@ class INetworkService {
      */
     virtual bool UpdateRouteEntry(AddressType source, AddressType destination,
                                   uint8_t hop_count, uint8_t link_quality,
-                                  uint8_t allocated_slots) = 0;
+                                  uint8_t allocated_slots,
+                                  uint8_t capabilities) = 0;
 
     /**
      * @brief Set route update callback

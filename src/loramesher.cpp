@@ -242,6 +242,29 @@ void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     }
 }
 
+void LoraMesher::SetNodeCapabilities(uint8_t capabilities) {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        mesh_protocol->SetNodeCapabilities(capabilities);
+    }
+}
+
+uint8_t LoraMesher::GetNodeCapabilities() const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        return mesh_protocol->GetLocalNodeCapabilities();
+    }
+    return 0;
+}
+
+uint8_t LoraMesher::GetNodeCapabilities(AddressType node_address) const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        return mesh_protocol->GetNodeCapabilities(node_address);
+    }
+    return 0;
+}
+
 std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
     std::vector<RouteEntry> routes;
 

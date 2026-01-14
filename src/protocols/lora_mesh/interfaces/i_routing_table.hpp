@@ -55,18 +55,19 @@ class IRoutingTable {
 
     /**
      * @brief Update or add a route entry
-     * 
+     *
      * @param source Source of the route update
      * @param destination Destination address
      * @param hop_count Number of hops to destination
      * @param link_quality Link quality metric (0-255)
      * @param allocated_data_slots Number of allocated data slots
+     * @param capabilities Node capabilities bitmap
      * @param current_time Current timestamp
      * @return bool True if the route was updated or added
      */
     virtual bool UpdateRoute(AddressType source, AddressType destination,
                              uint8_t hop_count, uint8_t link_quality,
-                             uint8_t allocated_data_slots,
+                             uint8_t allocated_data_slots, uint8_t capabilities,
                              uint32_t current_time) = 0;
 
     /**

@@ -82,7 +82,7 @@ class NetworkNodeRoute {
 
     /**
      * @brief Complete constructor with all node fields
-     * 
+     *
      * @param addr Node address
      * @param battery Battery level (0-100%)
      * @param time Current timestamp
@@ -96,7 +96,7 @@ class NetworkNodeRoute {
 
     /**
      * @brief Complete constructor with all node fields and hop count
-     * 
+     *
      * @param addr Node address
      * @param battery Battery level (0-100%)
      * @param time Current timestamp
@@ -214,6 +214,16 @@ class NetworkNodeRoute {
     bool UpdateBatteryLevel(uint8_t new_battery, uint32_t current_time);
 
     /**
+     * @brief Update allocated slots for this node
+     * 
+     * @param new_slots New number of allocated slots
+     * @param current_time Current timestamp
+     * 
+     * @return bool True if slots changed
+     */
+    bool UpdateAllocatedSlots(uint8_t new_slots, uint32_t current_time);
+
+    /**
      * @brief Update node capabilities
      * 
      * @param new_capabilities New capabilities bitmap
@@ -224,14 +234,21 @@ class NetworkNodeRoute {
     bool UpdateCapabilities(uint8_t new_capabilities, uint32_t current_time);
 
     /**
-     * @brief Update allocated slots for this node
+     * @brief Check if node has a specific capability
+     * @param capability Capability to check
      * 
-     * @param new_slots New number of allocated slots
-     * @param current_time Current timestamp
-     * 
-     * @return bool True if slots changed
+     * @return bool True if node has the capability
      */
-    bool UpdateAllocatedSlots(uint8_t new_slots, uint32_t current_time);
+    bool HasCapability(uint8_t capability) const {
+        return (routing_entry.capabilities & capability) != 0;
+    }
+
+    /**
+     * @brief Get the capabilities bitmap
+     * 
+     * @return uint8_t Capabilities bitmap
+     */
+    uint8_t GetCapabilities() const { return routing_entry.capabilities; }
 
     /**
      * @brief Create routing table entry from this node
@@ -273,23 +290,8 @@ class NetworkNodeRoute {
     void ResetLinkStats();
 
     /**
-     * @brief Check if node has a specific capability
-     * 
-     * @param capability The capability to check (bit flag)
-     * @return bool True if the node has the capability
-     */
-    bool HasCapability(uint8_t capability) const;
-
-    /**
-     * @brief Get capabilities as a string
-     * 
-     * @return std::string Human-readable capabilities
-     */
-    std::string GetCapabilitiesString() const;
-
-    /**
      * @brief Size of a network node route when serialized
-     * 
+     *
      * @return size_t Size in bytes
      */
     static constexpr size_t SerializedSize() {
@@ -297,7 +299,6 @@ class NetworkNodeRoute {
                sizeof(uint8_t) +      // Battery level
                sizeof(uint32_t) +     // Last seen
                sizeof(uint8_t) +      // Is network manager (as uint8_t)
-               sizeof(uint8_t) +      // Capabilities
                sizeof(AddressType) +  // Next hop
                sizeof(uint32_t) +     // Last updated
                sizeof(uint8_t);       // Is active (as uint8_t)
@@ -327,7 +328,6 @@ class NetworkNodeRoute {
     uint8_t battery_level = 100;      ///< Battery level (0-100%)
     uint32_t last_seen = 0;           ///< Last time node was seen
     bool is_network_manager = false;  ///< Whether node is network manager
-    uint8_t capabilities = 0;         ///< Node capabilities bitmap
 
     // Routing information
     AddressType next_hop = 0;   ///< Next hop to reach this node

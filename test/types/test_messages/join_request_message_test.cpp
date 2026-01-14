@@ -14,6 +14,7 @@
 #endif
 
 #include "types/messages/loramesher/join_request_message.hpp"
+#include "types/node_capabilities.hpp"
 
 namespace loramesher {
 namespace test {
@@ -26,9 +27,6 @@ class JoinRequestMessageTest : public ::testing::Test {
     // Common test data
     static constexpr AddressType dest = 0x1234;
     static constexpr AddressType src = 0x5678;
-    static constexpr uint8_t capabilities =
-        JoinRequestHeader::NodeCapabilities::ROUTER |
-        JoinRequestHeader::NodeCapabilities::SENSOR_NODE;
     static constexpr uint8_t battery_level = 75;
     static constexpr uint8_t requested_slots = 3;
     std::vector<uint8_t> additional_info{0xAA, 0xBB, 0xCC};
@@ -72,9 +70,8 @@ class JoinRequestMessageTest : public ::testing::Test {
 #endif
 
     void CreateMessage() {
-        auto opt_msg =
-            JoinRequestMessage::Create(dest, src, capabilities, battery_level,
-                                       requested_slots, additional_info);
+        auto opt_msg = JoinRequestMessage::Create(
+            dest, src, battery_level, requested_slots, additional_info);
         ASSERT_TRUE(opt_msg.has_value()) << "Failed to create test message";
         msg_ptr = std::make_unique<JoinRequestMessage>(*opt_msg);
     }
@@ -87,17 +84,13 @@ TEST_F(JoinRequestMessageTest, CreationTest) {
     // Given: Test parameters
     const AddressType test_dest = 0xABCD;
     const AddressType test_src = 0xDCBA;
-    const uint8_t test_capabilities =
-        JoinRequestHeader::NodeCapabilities::GATEWAY |
-        JoinRequestHeader::NodeCapabilities::BATTERY_POWERED;
     const uint8_t test_battery = 90;
     const uint8_t test_slots = 2;
     const std::vector<uint8_t> test_info{0x11, 0x22, 0x33, 0x44};
 
     // When: Creating a message
-    auto opt_msg =
-        JoinRequestMessage::Create(test_dest, test_src, test_capabilities,
-                                   test_battery, test_slots, test_info);
+    auto opt_msg = JoinRequestMessage::Create(test_dest, test_src, test_battery,
+                                              test_slots, test_info);
 
     // Then: Message creation should succeed
     ASSERT_TRUE(opt_msg.has_value()) << "Failed to create JoinRequest message";
@@ -105,7 +98,6 @@ TEST_F(JoinRequestMessageTest, CreationTest) {
     // And: Message should have correct fields
     EXPECT_EQ(opt_msg->GetDestination(), test_dest);
     EXPECT_EQ(opt_msg->GetSource(), test_src);
-    EXPECT_EQ(opt_msg->GetCapabilities(), test_capabilities);
     EXPECT_EQ(opt_msg->GetBatteryLevel(), test_battery);
     EXPECT_EQ(opt_msg->GetRequestedSlots(), test_slots);
     EXPECT_EQ(opt_msg->GetAdditionalInfo(), test_info);
@@ -119,17 +111,14 @@ TEST_F(JoinRequestMessageTest, CreationWithSponsorTest) {
     const AddressType test_dest = 0xABCD;
     const AddressType test_src = 0xDCBA;
     const AddressType test_sponsor = 0xEF01;
-    const uint8_t test_capabilities =
-        JoinRequestHeader::NodeCapabilities::GATEWAY |
-        JoinRequestHeader::NodeCapabilities::BATTERY_POWERED;
     const uint8_t test_battery = 90;
     const uint8_t test_slots = 2;
     const std::vector<uint8_t> test_info{0x11, 0x22, 0x33, 0x44};
 
     // When: Creating a message with sponsor address
-    auto opt_msg = JoinRequestMessage::Create(
-        test_dest, test_src, test_capabilities, test_battery, test_slots,
-        test_info, 0, test_sponsor);
+    auto opt_msg =
+        JoinRequestMessage::Create(test_dest, test_src, test_battery,
+                                   test_slots, test_info, 0, test_sponsor);
 
     // Then: Message creation should succeed
     ASSERT_TRUE(opt_msg.has_value())
@@ -138,7 +127,6 @@ TEST_F(JoinRequestMessageTest, CreationWithSponsorTest) {
     // And: Message should have correct fields including sponsor address
     EXPECT_EQ(opt_msg->GetDestination(), test_dest);
     EXPECT_EQ(opt_msg->GetSource(), test_src);
-    EXPECT_EQ(opt_msg->GetCapabilities(), test_capabilities);
     EXPECT_EQ(opt_msg->GetBatteryLevel(), test_battery);
     EXPECT_EQ(opt_msg->GetRequestedSlots(), test_slots);
     EXPECT_EQ(opt_msg->GetAdditionalInfo(), test_info);
@@ -152,14 +140,12 @@ TEST_F(JoinRequestMessageTest, CreationWithoutSponsorTest) {
     // Given: Test parameters without explicit sponsor address
     const AddressType test_dest = 0xABCD;
     const AddressType test_src = 0xDCBA;
-    const uint8_t test_capabilities =
-        JoinRequestHeader::NodeCapabilities::GATEWAY;
     const uint8_t test_battery = 90;
     const uint8_t test_slots = 2;
 
     // When: Creating a message without sponsor address
-    auto opt_msg = JoinRequestMessage::Create(
-        test_dest, test_src, test_capabilities, test_battery, test_slots);
+    auto opt_msg = JoinRequestMessage::Create(test_dest, test_src, test_battery,
+                                              test_slots);
 
     // Then: Message creation should succeed
     ASSERT_TRUE(opt_msg.has_value())
@@ -174,8 +160,8 @@ TEST_F(JoinRequestMessageTest, CreationWithoutSponsorTest) {
  */
 TEST_F(JoinRequestMessageTest, InvalidCreationTest) {
     // Battery level should be between 0-100
-    auto opt_msg = JoinRequestMessage::Create(dest, src, capabilities, 101,
-                                              requested_slots, additional_info);
+    auto opt_msg = JoinRequestMessage::Create(dest, src, 101, requested_slots,
+                                              additional_info);
 
     // Should fail with invalid battery level
     EXPECT_FALSE(opt_msg.has_value());
@@ -186,8 +172,8 @@ TEST_F(JoinRequestMessageTest, InvalidCreationTest) {
  */
 TEST_F(JoinRequestMessageTest, CreationWithoutAdditionalInfoTest) {
     // When: Creating a message without additional info
-    auto opt_msg = JoinRequestMessage::Create(dest, src, capabilities,
-                                              battery_level, requested_slots);
+    auto opt_msg =
+        JoinRequestMessage::Create(dest, src, battery_level, requested_slots);
 
     // Then: Message creation should succeed
     ASSERT_TRUE(opt_msg.has_value())
@@ -239,7 +225,6 @@ TEST_F(JoinRequestMessageTest, DeserializationTest) {
     // Then: Verify all fields
     EXPECT_EQ(deserialized_msg.GetDestination(), dest);
     EXPECT_EQ(deserialized_msg.GetSource(), src);
-    EXPECT_EQ(deserialized_msg.GetCapabilities(), capabilities);
     EXPECT_EQ(deserialized_msg.GetBatteryLevel(), battery_level);
     EXPECT_EQ(deserialized_msg.GetRequestedSlots(), requested_slots);
     EXPECT_EQ(deserialized_msg.GetAdditionalInfo(), additional_info);
@@ -253,9 +238,9 @@ TEST_F(JoinRequestMessageTest, DeserializationTest) {
 TEST_F(JoinRequestMessageTest, SponsorSerializationDeserializationTest) {
     // Given: A message with sponsor address
     const AddressType sponsor_address = 0xCAFE;
-    auto opt_msg = JoinRequestMessage::Create(
-        dest, src, capabilities, battery_level, requested_slots,
-        additional_info, 0, sponsor_address);
+    auto opt_msg =
+        JoinRequestMessage::Create(dest, src, battery_level, requested_slots,
+                                   additional_info, 0, sponsor_address);
     ASSERT_TRUE(opt_msg.has_value()) << "Failed to create message with sponsor";
 
     JoinRequestMessage sponsor_msg = std::move(*opt_msg);
@@ -277,7 +262,6 @@ TEST_F(JoinRequestMessageTest, SponsorSerializationDeserializationTest) {
     // And: All other fields should also be preserved
     EXPECT_EQ(opt_deserialized->GetDestination(), dest);
     EXPECT_EQ(opt_deserialized->GetSource(), src);
-    EXPECT_EQ(opt_deserialized->GetCapabilities(), capabilities);
     EXPECT_EQ(opt_deserialized->GetBatteryLevel(), battery_level);
     EXPECT_EQ(opt_deserialized->GetRequestedSlots(), requested_slots);
     EXPECT_EQ(opt_deserialized->GetAdditionalInfo(), additional_info);
@@ -338,12 +322,13 @@ TEST_F(JoinRequestMessageTest, ConversionToBaseMessageTest) {
     ASSERT_EQ(payload.size(), JoinRequestHeader::JoinRequestFieldsSize() +
                                   additional_info.size());
 
-    // Check capabilities, battery level, slots
-    EXPECT_EQ(payload[0], capabilities);
-    EXPECT_EQ(payload[1], battery_level);
-    EXPECT_EQ(payload[2], requested_slots);
+    // Check battery level and slots (capabilities removed from wire protocol)
+    EXPECT_EQ(payload[0], battery_level);
+    EXPECT_EQ(payload[1], requested_slots);
+    // payload[2-3] is next_hop, payload[4-5] is sponsor_address
 
-    // Check additional info
+    // Check additional info (starts after header fields)
+    size_t additional_info_offset = JoinRequestHeader::JoinRequestFieldsSize();
     for (size_t i = 0; i < additional_info.size(); i++) {
         EXPECT_EQ(payload[JoinRequestHeader::JoinRequestFieldsSize() + i],
                   additional_info[i]);
@@ -380,7 +365,6 @@ TEST_F(JoinRequestMessageTest, GetHeaderTest) {
     EXPECT_EQ(header.GetDestination(), dest);
     EXPECT_EQ(header.GetSource(), src);
     EXPECT_EQ(header.GetType(), MessageType::JOIN_REQUEST);
-    EXPECT_EQ(header.GetCapabilities(), capabilities);
     EXPECT_EQ(header.GetBatteryLevel(), battery_level);
     EXPECT_EQ(header.GetRequestedSlots(), requested_slots);
     EXPECT_EQ(header.GetSponsorAddress(), 0);  // Default sponsor address

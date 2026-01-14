@@ -74,9 +74,9 @@ void ConfigureAndUseLoraMesher() {
                                        180000,  // Route timeout: 180 seconds
                                        10);     // Max hops: 10
 
-    // Step 4: Create protocol configuration
-    ProtocolConfig protocol_config;
-    protocol_config.setLoRaMeshConfig(mesh_config);
+    // // Step 4: Create protocol configuration
+    // ProtocolConfig protocol_config;
+    // protocol_config.setLoRaMeshConfig(mesh_config);
 
     // Step 5: Create LoraMesher configuration
     mesher = LoraMesher::Builder()
@@ -87,6 +87,7 @@ void ConfigureAndUseLoraMesher() {
                      true)  // Enable hardware-based addressing (default)
                  // Alternatively, you can set a specific address:
                  // .withNodeAddress(0x1234)
+                 .withNodeCapabilities(GATEWAY)  // Set node capabilities
                  .Build();
 
     std::cout << "Node address: 0x" << std::hex << mesher->GetNodeAddress()
@@ -139,8 +140,20 @@ void ConfigureAndUseLoraMesher() {
         std::cout << "  Destination: 0x" << std::hex << route.destination
                   << ", Next hop: 0x" << route.next_hop
                   << ", Hops: " << std::dec << static_cast<int>(route.hop_count)
-                  << ", Valid: " << (route.is_valid ? "yes" : "no")
-                  << std::endl;
+                  << ", Valid: " << (route.is_valid ? "yes" : "no");
+
+        // Query and display node capabilities
+        // This information can be used for smart routing decisions
+        uint8_t node_caps = mesher->GetNodeCapabilities(route.destination);
+        std::cout << ", Capabilities: 0x" << std::hex
+                  << static_cast<int>(node_caps) << std::dec;
+        if (node_caps & GATEWAY)
+            std::cout << " [GATEWAY]";
+        else if (node_caps == NONE)
+            std::cout << " [NONE]";
+        else if (node_caps != NONE)
+            std::cout << node_caps;  // Print raw value for unknown capabilities
+        std::cout << std::endl;
     }
 
     auto status = mesher->GetNetworkStatus();
@@ -149,8 +162,6 @@ void ConfigureAndUseLoraMesher() {
               << std::hex << status.network_manager << ", Slot=" << std::dec
               << status.current_slot << ", Nodes=" << status.connected_nodes
               << std::endl;
-
-    // Application main loop...
 
     // When done, stop LoraMesher
     mesher->Stop();

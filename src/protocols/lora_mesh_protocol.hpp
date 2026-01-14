@@ -156,6 +156,31 @@ class LoRaMeshProtocol : public Protocol {
         lora_mesh::INetworkService::DataReceivedCallback callback);
 
     /**
+     * @brief Set local node capabilities
+     *
+     * Updates the capabilities for this node. Changes will be propagated
+     * in the next routing table broadcast.
+     *
+     * @param capabilities Capabilities bitmap (NodeCapabilities flags)
+     */
+    void SetNodeCapabilities(uint8_t capabilities);
+
+    /**
+     * @brief Get local node capabilities
+     *
+     * @return uint8_t Local node capabilities bitmap
+     */
+    uint8_t GetLocalNodeCapabilities() const;
+
+    /**
+     * @brief Get capabilities for a specific node
+     *
+     * @param node_address Address of the node to query
+     * @return uint8_t Node capabilities bitmap (0 if node not found)
+     */
+    uint8_t GetNodeCapabilities(AddressType node_address) const;
+
+    /**
      * @brief Get all network nodes with their routing information
      * 
      * Note: Caller must be careful with concurrent access as this returns

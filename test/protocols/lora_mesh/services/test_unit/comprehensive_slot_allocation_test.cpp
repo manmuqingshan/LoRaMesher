@@ -147,7 +147,7 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
         if (state == ProtocolState::NORMAL_OPERATION ||
             state == ProtocolState::NETWORK_MANAGER) {
             routing_table->UpdateRoute(test_node_address_, test_node_address_,
-                                       0, 100, config.default_data_slots,
+                                       0, 100, config.default_data_slots, 0,
                                        current_time);
             LOG_INFO("Added local service node 0x%04X to network",
                      test_node_address_);
@@ -157,7 +157,8 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
         for (const auto& [addr, hop_distance] : other_nodes) {
             // TODO:
             routing_table->UpdateRoute(network_manager, addr, hop_distance, 100,
-                                       config.default_data_slots, current_time);
+                                       config.default_data_slots, 0,
+                                       current_time);
             LOG_INFO("Added node 0x%04X at hop distance %d", addr,
                      hop_distance);
         }
