@@ -772,8 +772,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                               static_cast<int>(state));
                 }
             } else {
-                LOG_DEBUG("No control message to send in state %d",
-                          static_cast<int>(state));
+                LOG_DEBUG("No control message to send in slot %d", slot_type);
             }
             break;
         }
@@ -1038,11 +1037,8 @@ Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
                       "Message queue service not initialized");
     }
 
-    // Search if message_queue_service contains a routing_message
-    if (message_queue_service_->HasMessage(
-            loramesher::MessageType::ROUTE_TABLE)) {
-        return Result::Success();  // Already exists, no need to add
-    }
+    // Search if message_queue_service contains a routing_message and remove it
+    message_queue_service_->RemoveMessage(loramesher::MessageType::ROUTE_TABLE);
 
     // Create a new routing message with broadcast destination
     auto routing_message = network_service_->CreateRoutingTableMessage(

@@ -11,13 +11,15 @@ namespace loramesher {
 RoutingTableHeader::RoutingTableHeader(AddressType dest, AddressType src,
                                        AddressType network_manager_addr,
                                        uint8_t table_version,
-                                       uint8_t entry_count)
+                                       uint8_t entry_count,
+                                       uint8_t source_capabilities)
     : BaseHeader(
           dest, src, MessageType::ROUTE_TABLE,
           RoutingTableFieldsSize() + RoutingTableEntry::Size() * entry_count),
       network_manager_addr_(network_manager_addr),
       table_version_(table_version),
-      entry_count_(entry_count) {}
+      entry_count_(entry_count),
+      source_capabilities_(source_capabilities) {}
 
 Result RoutingTableHeader::SetRoutingTableInfo(AddressType network_manager_addr,
                                                uint8_t table_version,
@@ -40,6 +42,7 @@ Result RoutingTableHeader::Serialize(utils::ByteSerializer& serializer) const {
     serializer.WriteUint16(network_manager_addr_);
     serializer.WriteUint8(table_version_);
     serializer.WriteUint8(entry_count_);
+    serializer.WriteUint8(source_capabilities_);
 
     return Result::Success();
 }
@@ -65,16 +68,18 @@ std::optional<RoutingTableHeader> RoutingTableHeader::Deserialize(
     auto network_id = deserializer.ReadUint16();
     auto table_version = deserializer.ReadUint8();
     auto entry_count = deserializer.ReadUint8();
+    auto source_capabilities = deserializer.ReadUint8();
 
-    if (!network_id || !table_version || !entry_count) {
+    if (!network_id.has_value() || !table_version.has_value() ||
+        !entry_count.has_value() || !source_capabilities.has_value()) {
         LOG_ERROR("Failed to deserialize routing table header fields");
         return std::nullopt;
     }
 
     // Create and return the routing table header
-    RoutingTableHeader header(base_header->GetDestination(),
-                              base_header->GetSource(), *network_id,
-                              *table_version, *entry_count);
+    RoutingTableHeader header(
+        base_header->GetDestination(), base_header->GetSource(), *network_id,
+        *table_version, *entry_count, *source_capabilities);
 
     return header;
 }

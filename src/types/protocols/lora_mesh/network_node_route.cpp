@@ -139,8 +139,8 @@ bool NetworkNodeRoute::UpdateNodeInfo(uint8_t battery, bool is_manager,
         changed = true;
     }
 
-    // Update capabilities if provided
-    if (caps != 0 && routing_entry.capabilities != caps) {
+    // Update capabilities (allows setting to NONE/0x00)
+    if (routing_entry.capabilities != caps) {
         routing_entry.capabilities = caps;
         changed = true;
     }

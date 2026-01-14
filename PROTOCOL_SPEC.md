@@ -433,6 +433,7 @@ struct RoutingTableEntry {
     uint8_t hop_count;               // Hops to destination (1 byte)
     uint8_t link_quality;            // Link quality metric 0-255 (1 byte)
     uint8_t allocated_data_slots;    // Data slots for this node (1 byte)
+    uint8_t capabilities;            // Node capability flags (1 byte)
 };
 ```
 
@@ -447,6 +448,50 @@ struct RoutingTableEntry {
 2. Version increments enable delta updates and loop detection
 3. Link quality metrics prepare for future advanced routing algorithms
 4. Entry count allows variable-length route advertisements
+
+**Capability Propagation (v1.2)**:
+
+Node capabilities (e.g., GATEWAY, custom flags) are propagated through the network using a **next-hop-based trust model**:
+
+```cpp
+// Capability update rule:
+// Only accept capability updates from the next hop on the optimal path
+if (routing_entry.capabilities == 0 && new_capabilities != 0) {
+    // Always accept if current capabilities unknown
+    update_capabilities();
+} else if (next_hop == message_source && new_capabilities != 0) {
+    // Trust capabilities only from our next hop to this destination
+    update_capabilities();
+}
+```
+
+**Benefits of Next-Hop Verification**:
+- **Loop Prevention**: Stale capability information from non-optimal paths is rejected
+- **Automatic Convergence**: When routes change, capability sources automatically update
+- **Multi-hop Propagation**: Capabilities propagate through chains via optimal paths
+- **No Extra State**: Leverages existing `next_hop` field in routing table
+- **Trust Optimal Path**: Only information from best route is considered authoritative
+
+**Example Capability Propagation**:
+```
+Network: Node1 ← Node2 ← Node3 (chain topology)
+Node1 capabilities = GATEWAY (0x01)
+
+1. Node2 receives routing table from Node1:
+   - Node1: hop=1, caps=0x01 (direct neighbor)
+   - Node2's next hop to Node1: Node1 ✓
+   - Accept: Node2 stores caps=0x01
+
+2. Node3 receives routing table from Node2:
+   - Node1: hop=2, caps=0x01 (via Node2)
+   - Node3's next hop to Node1: Node2 ✓
+   - Accept: Node3 stores caps=0x01
+
+3. Stale update: Node2 receives old info from Node3:
+   - Node1: caps=0x00 (outdated)
+   - Node2's next hop to Node1: Node1 (not Node3!) ✗
+   - Reject: Node2 keeps caps=0x01
+```
 
 #### 3.3.4 Synchronization Messages
 ```cpp
@@ -680,6 +725,45 @@ void SendRoutingUpdate(uint16_t targetNode) {
         }
     }
 }
+```
+
+**Capability Update Loop Prevention (v1.2)**:
+
+In addition to route loop prevention, capability updates are protected against stale information loops:
+
+```cpp
+// Prevent capability update loops by only trusting next hop
+bool should_update_capabilities = false;
+
+if (current_capabilities == 0 && new_capabilities != 0) {
+    // Always accept if current is unknown
+    should_update_capabilities = true;
+} else if (next_hop == message_source &&
+           new_capabilities != 0 &&
+           new_capabilities != current_capabilities) {
+    // Only trust our next hop on the optimal path
+    should_update_capabilities = true;
+}
+```
+
+**Why This Prevents Loops**:
+1. **Path-Based Trust**: Only the next hop on the best path can update capabilities
+2. **Stale Rejection**: Old information from non-optimal paths is automatically rejected
+3. **Unknown Bootstrap**: Nodes initially unknown (0x00) can be learned from any path
+4. **Route Coupling**: Capability source automatically updates when routing changes
+
+**Example Loop Prevention**:
+```
+Topology: Node1 ← → Node2 (bidirectional)
+         Node1 ← → Node3
+
+1. Node1 sets capabilities = 0x01
+2. Node2 learns from Node1: caps=0x01, next_hop=Node1 ✓
+3. Node3 learns from Node1: caps=0x01, next_hop=Node1 ✓
+4. Node2 sends stale info to Node3: Node1 caps=0x00
+   - Node3's next_hop to Node1: Node1 (not Node2!)
+   - Reject: Node3 keeps caps=0x01 ✓
+5. No loop formed: stale information cannot propagate
 ```
 
 **Route Poisoning**: Advertise unreachable routes with infinite metric

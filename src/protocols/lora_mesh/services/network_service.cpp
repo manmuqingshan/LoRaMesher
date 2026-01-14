@@ -73,15 +73,9 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
                                        bool is_network_manager,
                                        uint8_t allocated_data_slots,
                                        uint8_t capabilities) {
-    // Don't track our own node unless we're in NORMAL_OPERATION state
-    // (which means we've joined a network and need TX/CONTROL_TX slots)
-    if (node_address == node_address_) {
-        if (state_ != ProtocolState::NORMAL_OPERATION &&
-            state_ != ProtocolState::NETWORK_MANAGER) {
-            return false;
-        }
-        // Allow adding local node when in operational states
-    }
+    // Allow updating local node properties (especially capabilities) at any time
+    // The local node won't be advertised to others (GetRoutingEntries excludes it)
+    // This ensures SetNodeCapabilities() works regardless of network state
 
     std::lock_guard<std::mutex> lock(network_mutex_);
 
@@ -174,6 +168,7 @@ Result NetworkService::ProcessRoutingTableMessage(
     auto network_manager = routing_msg.GetNetworkManager();
     auto table_version = routing_msg.GetTableVersion();
     auto entries = routing_msg.GetEntries();
+    uint8_t source_capabilities = routing_msg.GetSourceCapabilities();
 
     LOG_INFO(
         "Received routing table update from 0x%04X: version %d, %zu entries at "
@@ -205,7 +200,7 @@ Result NetworkService::ProcessRoutingTableMessage(
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
         source, entries, reception_timestamp, local_link_quality,
-        config_.max_hops);
+        config_.max_hops, source_capabilities);
 
     routing_changed |= routes_updated;
 
@@ -278,36 +273,32 @@ void NetworkService::SetDataReceivedCallback(DataReceivedCallback callback) {
 void NetworkService::SetLocalNodeCapabilities(uint8_t capabilities) {
     std::lock_guard<std::mutex> lock(network_mutex_);
 
-    uint32_t current_time = GetRTOS().getTickCount();
+    // Check if capabilities actually changed
+    if (local_capabilities_ == capabilities) {
+        return;  // No change
+    }
 
-    // Update our own node in routing table
-    routing_table_->UpdateNode(
-        node_address_, 100,                 // Battery level
-        network_manager_ == node_address_,  // is_network_manager
-        config_.default_data_slots,         // allocated_data_slots
-        capabilities,                       // capabilities
-        current_time);
+    // Store local capabilities in dedicated field
+    local_capabilities_ = capabilities;
 
     LOG_INFO("Updated local node capabilities to 0x%02X", capabilities);
 }
 
 uint8_t NetworkService::GetLocalNodeCapabilities() const {
     std::lock_guard<std::mutex> lock(network_mutex_);
-
-    // Find our own node in routing table
-    const auto& nodes = routing_table_->GetNodes();
-    for (const auto& node : nodes) {
-        if (node.GetAddress() == node_address_) {
-            return node.routing_entry.capabilities;
-        }
-    }
-
-    return 0;  // Default if not found
+    // Return from dedicated field, not routing table
+    return local_capabilities_;
 }
 
 uint8_t NetworkService::GetNodeCapabilities(AddressType node_address) const {
     std::lock_guard<std::mutex> lock(network_mutex_);
 
+    // Check if requesting local node capabilities
+    if (node_address == node_address_) {
+        return local_capabilities_;
+    }
+
+    // Search routing table for other nodes
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
         if (node.GetAddress() == node_address) {
@@ -525,9 +516,12 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     // Increment table version
     table_version_ = (table_version_ + 1) % 256;
 
-    // Create message
+    // Get local capabilities directly
+    uint8_t local_capabilities = local_capabilities_;
+
     auto routing_msg_opt = RoutingTableMessage::Create(
-        destination, node_address_, network_manager_, table_version_, entries);
+        destination, node_address_, network_manager_, table_version_, entries,
+        local_capabilities);
     if (!routing_msg_opt) {
         LOG_ERROR("Failed to create routing table message");
         return nullptr;
@@ -615,7 +609,9 @@ Result NetworkService::CreateNetwork() {
     SetState(ProtocolState::NETWORK_MANAGER);
 
     // Add the network manager node
-    NetworkNodeRoute manager_node(node_address_, 100, last_sync_time_, true, 0,
+    uint8_t current_capabilities = GetLocalNodeCapabilities();
+    NetworkNodeRoute manager_node(node_address_, 100, last_sync_time_, true,
+                                  current_capabilities,
                                   config_.default_data_slots);
     if (!routing_table_->AddNode(manager_node)) {
         LOG_ERROR("Failed to add network manager node 0x%04X to routing table",
@@ -957,6 +953,15 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
 
     // Check if a join is already pending for this superframe
     if (pending_join_request_) {
+        // Check if this is a duplicate request from the same node
+        if (pending_join_data_ && pending_join_data_->GetSource() == source) {
+            LOG_INFO(
+                "Duplicate join request from 0x%04X - already pending, "
+                "ignoring",
+                source);
+            return Result::Success();  // Silent deduplication
+        }
+
         LOG_INFO(
             "Join request from 0x%04X rejected - join already pending this "
             "superframe",

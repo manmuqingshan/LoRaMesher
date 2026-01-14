@@ -53,8 +53,8 @@ class CapabilityPropagationTests : public LoRaMeshTestFixture {
                 for (auto* other_node : nodes) {
                     if (node->address != other_node->address) {
                         // Query capabilities of other node
-                        uint8_t caps =
-                            node->protocol->GetNodeCapabilities(other_node->address);
+                        auto caps = node->protocol->GetNodeCapabilities(
+                            other_node->address);
 
                         // If capabilities are 0 (unknown), propagation not complete
                         // unless the other node actually has 0 capabilities
@@ -94,8 +94,8 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -103,7 +103,9 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
     ASSERT_TRUE(became_manager) << "Node1 did not become network manager";
 
     // Set capabilities on node1
-    node1.protocol->SetNodeCapabilities(ROUTER);
+    node1.protocol->SetNodeCapabilities(GATEWAY);
+
+    ASSERT_EQ(node1.protocol->GetLocalNodeCapabilities(), GATEWAY);
 
     WaitForTasksToExecute();
 
@@ -113,37 +115,41 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
     WaitForTasksToExecute();
 
     // Wait for node2 to join and reach NORMAL_OPERATION
-    bool joined = AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2,
-                              [&]() {
-                                  return node2.protocol->GetState() ==
-                                         protocols::lora_mesh::INetworkService::
-                                             ProtocolState::NORMAL_OPERATION;
-                              });
+    bool joined =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+            return node2.protocol->GetState() ==
+                   protocols::lora_mesh::INetworkService::ProtocolState::
+                       NORMAL_OPERATION;
+        });
     ASSERT_TRUE(joined) << "Node2 did not join network";
 
     // Set capabilities on node2
-    node2.protocol->SetNodeCapabilities(GATEWAY | SENSOR_NODE);
+    node2.protocol->SetNodeCapabilities(GATEWAY);
+
+    ASSERT_EQ(node2.protocol->GetLocalNodeCapabilities(), GATEWAY);
 
     WaitForTasksToExecute();
 
+    // Get superframe time
+    auto superframeTime = GetSuperframeDuration(node1);
+
     // Wait for capabilities to propagate
     std::vector<TestNode*> nodes = {&node1, &node2};
-    bool propagated = WaitForCapabilityPropagation(nodes, 15000);
+    bool propagated = WaitForCapabilityPropagation(nodes, superframeTime * 2);
 
     ASSERT_TRUE(propagated) << "Capabilities did not propagate in time";
 
     // Verify node1 can query node2's capabilities
     uint8_t node2_caps = node1.protocol->GetNodeCapabilities(node2.address);
-    EXPECT_EQ(node2_caps, GATEWAY | SENSOR_NODE)
-        << "Node1 should know Node2's capabilities";
+    EXPECT_EQ(node2_caps, GATEWAY) << "Node1 should know Node2's capabilities";
 
     // Verify node2 can query node1's capabilities
     uint8_t node1_caps = node2.protocol->GetNodeCapabilities(node1.address);
-    EXPECT_EQ(node1_caps, ROUTER) << "Node2 should know Node1's capabilities";
+    EXPECT_EQ(node1_caps, GATEWAY) << "Node2 should know Node1's capabilities";
 
     // Verify local capabilities are correct
-    EXPECT_EQ(node1.protocol->GetLocalNodeCapabilities(), ROUTER);
-    EXPECT_EQ(node2.protocol->GetLocalNodeCapabilities(), GATEWAY | SENSOR_NODE);
+    EXPECT_EQ(node1.protocol->GetLocalNodeCapabilities(), GATEWAY);
+    EXPECT_EQ(node2.protocol->GetLocalNodeCapabilities(), GATEWAY);
 }
 
 /**
@@ -159,9 +165,9 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
 
     SetLinkStatus(node1, node2, true);
 
-    // Start node1 with ROUTER capability
+    // Start node1 with GATEWAY capability
     ASSERT_TRUE(StartNode(node1));
-    node1.protocol->SetNodeCapabilities(ROUTER);
+    node1.protocol->SetNodeCapabilities(GATEWAY);
 
     WaitForTasksToExecute();
 
@@ -169,8 +175,8 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -183,12 +189,12 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
     WaitForTasksToExecute();
 
     // Wait for node2 to join
-    bool joined = AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2,
-                              [&]() {
-                                  return node2.protocol->GetState() ==
-                                         protocols::lora_mesh::INetworkService::
-                                             ProtocolState::NORMAL_OPERATION;
-                              });
+    bool joined =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+            return node2.protocol->GetState() ==
+                   protocols::lora_mesh::INetworkService::ProtocolState::
+                       NORMAL_OPERATION;
+        });
     ASSERT_TRUE(joined);
 
     // Wait for initial capabilities to propagate
@@ -198,31 +204,29 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
 
     // Verify initial state
     uint8_t initial_caps = node2.protocol->GetNodeCapabilities(node1.address);
-    EXPECT_EQ(initial_caps, ROUTER);
+    EXPECT_EQ(initial_caps, GATEWAY);
 
     // Update node1 capabilities at runtime
-    node1.protocol->SetNodeCapabilities(ROUTER | BATTERY_POWERED);
+    node1.protocol->SetNodeCapabilities(NONE);
 
     WaitForTasksToExecute();
 
     // Wait for updated capabilities to propagate
-    bool updated_propagated = AdvanceTime(
-        100, 15000, 100, 2, [&]() {
-            uint8_t caps = node2.protocol->GetNodeCapabilities(node1.address);
-            return caps == (ROUTER | BATTERY_POWERED);
-        });
+    bool updated_propagated = AdvanceTime(100, 15000, 100, 2, [&]() {
+        uint8_t caps = node2.protocol->GetNodeCapabilities(node1.address);
+        return caps == (NONE);
+    });
 
     ASSERT_TRUE(updated_propagated)
         << "Updated capabilities did not propagate in time";
 
     // Verify node2 received the updated capabilities
     uint8_t updated_caps = node2.protocol->GetNodeCapabilities(node1.address);
-    EXPECT_EQ(updated_caps, ROUTER | BATTERY_POWERED)
+    EXPECT_EQ(updated_caps, NONE)
         << "Node2 should see Node1's updated capabilities";
 
     // Verify node1's local capabilities are correct
-    EXPECT_EQ(node1.protocol->GetLocalNodeCapabilities(),
-              ROUTER | BATTERY_POWERED);
+    EXPECT_EQ(node1.protocol->GetLocalNodeCapabilities(), NONE);
 }
 
 /**
@@ -248,7 +252,7 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
 
     // Start node1 (will become network manager)
     ASSERT_TRUE(StartNode(node1));
-    node1.protocol->SetNodeCapabilities(ROUTER);
+    node1.protocol->SetNodeCapabilities(GATEWAY);
 
     WaitForTasksToExecute();
 
@@ -256,8 +260,8 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -271,38 +275,42 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
     WaitForTasksToExecute();
 
     // Wait for node2 to join
-    bool node2_joined = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+    bool node2_joined =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
             return node2.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
         });
     ASSERT_TRUE(node2_joined);
 
-    // Start node3 with SENSOR_NODE | BATTERY_POWERED capabilities
+    // Start node3 with GATEWAY and 0x02 custom capabilities
     ASSERT_TRUE(StartNode(node3));
-    node3.protocol->SetNodeCapabilities(SENSOR_NODE | BATTERY_POWERED);
+    node3.protocol->SetNodeCapabilities(GATEWAY | 0x02);
 
     WaitForTasksToExecute();
 
+    discovery_timeout = GetSuperframeDuration(node1) * 3;
+
     // Wait for node3 to join
-    bool node3_joined = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+    bool node3_joined =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
             return node3.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
         });
     ASSERT_TRUE(node3_joined);
 
-    // Start node4 with ROUTER | HIGH_BANDWIDTH capabilities
+    // Start node4 with GATEWAY | 0x03 custom capabilities
     ASSERT_TRUE(StartNode(node4));
-    node4.protocol->SetNodeCapabilities(ROUTER | HIGH_BANDWIDTH);
+    node4.protocol->SetNodeCapabilities(GATEWAY | 0x03);
 
     WaitForTasksToExecute();
 
+    discovery_timeout = GetSuperframeDuration(node1) * 3;
+
     // Wait for node4 to join
-    bool node4_joined = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+    bool node4_joined =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
             return node4.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -311,40 +319,38 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
 
     // Wait for all capabilities to propagate
     std::vector<TestNode*> nodes = {&node1, &node2, &node3, &node4};
-    bool all_propagated = WaitForCapabilityPropagation(nodes, 20000);
+    bool all_propagated =
+        WaitForCapabilityPropagation(nodes, discovery_timeout);
 
     ASSERT_TRUE(all_propagated) << "Not all capabilities propagated in time";
 
     // Verify each node can query all other nodes' capabilities
     EXPECT_EQ(node1.protocol->GetNodeCapabilities(node2.address), GATEWAY);
     EXPECT_EQ(node1.protocol->GetNodeCapabilities(node3.address),
-              SENSOR_NODE | BATTERY_POWERED);
+              GATEWAY | 0x02);
     EXPECT_EQ(node1.protocol->GetNodeCapabilities(node4.address),
-              ROUTER | HIGH_BANDWIDTH);
-
-    EXPECT_EQ(node2.protocol->GetNodeCapabilities(node1.address), ROUTER);
+              GATEWAY | 0x03);
+    EXPECT_EQ(node2.protocol->GetNodeCapabilities(node1.address), GATEWAY);
     EXPECT_EQ(node2.protocol->GetNodeCapabilities(node3.address),
-              SENSOR_NODE | BATTERY_POWERED);
+              GATEWAY | 0x02);
     EXPECT_EQ(node2.protocol->GetNodeCapabilities(node4.address),
-              ROUTER | HIGH_BANDWIDTH);
+              GATEWAY | 0x03);
 
-    EXPECT_EQ(node3.protocol->GetNodeCapabilities(node1.address), ROUTER);
+    EXPECT_EQ(node3.protocol->GetNodeCapabilities(node1.address), GATEWAY);
     EXPECT_EQ(node3.protocol->GetNodeCapabilities(node2.address), GATEWAY);
     EXPECT_EQ(node3.protocol->GetNodeCapabilities(node4.address),
-              ROUTER | HIGH_BANDWIDTH);
+              GATEWAY | 0x03);
 
-    EXPECT_EQ(node4.protocol->GetNodeCapabilities(node1.address), ROUTER);
+    EXPECT_EQ(node4.protocol->GetNodeCapabilities(node1.address), GATEWAY);
     EXPECT_EQ(node4.protocol->GetNodeCapabilities(node2.address), GATEWAY);
     EXPECT_EQ(node4.protocol->GetNodeCapabilities(node3.address),
-              SENSOR_NODE | BATTERY_POWERED);
+              GATEWAY | 0x02);
 
     // Verify local capabilities are correct
-    EXPECT_EQ(node1.protocol->GetLocalNodeCapabilities(), ROUTER);
+    EXPECT_EQ(node1.protocol->GetLocalNodeCapabilities(), GATEWAY);
     EXPECT_EQ(node2.protocol->GetLocalNodeCapabilities(), GATEWAY);
-    EXPECT_EQ(node3.protocol->GetLocalNodeCapabilities(),
-              SENSOR_NODE | BATTERY_POWERED);
-    EXPECT_EQ(node4.protocol->GetLocalNodeCapabilities(),
-              ROUTER | HIGH_BANDWIDTH);
+    EXPECT_EQ(node3.protocol->GetLocalNodeCapabilities(), GATEWAY | 0x02);
+    EXPECT_EQ(node4.protocol->GetLocalNodeCapabilities(), GATEWAY | 0x03);
 }
 
 /**
@@ -366,8 +372,8 @@ TEST_F(CapabilityPropagationTests, UnknownNodeCapabilityQuery) {
     auto discovery_timeout = GetDiscoveryTimeout(node);
     auto slot_duration = GetSlotDuration(node);
 
-    bool became_manager = AdvanceTime(
-        slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager =
+        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
             return node.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -382,9 +388,9 @@ TEST_F(CapabilityPropagationTests, UnknownNodeCapabilityQuery) {
     EXPECT_EQ(caps, 0) << "Unknown node should have 0 capabilities";
 
     // Verify no crash occurred and we can continue using the node
-    EXPECT_EQ(node.protocol->GetState(),
-              protocols::lora_mesh::INetworkService::ProtocolState::
-                  NETWORK_MANAGER);
+    EXPECT_EQ(
+        node.protocol->GetState(),
+        protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 }
 
 }  // namespace test

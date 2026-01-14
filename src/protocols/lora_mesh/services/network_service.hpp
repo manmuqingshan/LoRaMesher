@@ -846,6 +846,9 @@ class NetworkService : public INetworkService {
     std::optional<JoinRequestMessage>
         pending_join_data_;  ///< Buffered join request data
 
+    // Local node capabilities
+    uint8_t local_capabilities_ = 0;  ///< Local node capabilities bitmap
+
     // Thread safety
     mutable std::mutex network_mutex_;
 };

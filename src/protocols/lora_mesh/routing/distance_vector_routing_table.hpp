@@ -97,7 +97,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
         AddressType source_address,
         const std::vector<RoutingTableEntry>& entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
-        uint8_t max_hops) override;
+        uint8_t max_hops, uint8_t source_capabilities = 0) override;
 
    private:
     // Internal helper methods

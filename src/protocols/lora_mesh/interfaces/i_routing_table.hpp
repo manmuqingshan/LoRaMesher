@@ -196,23 +196,24 @@ class IRoutingTable {
 
     /**
      * @brief Process a routing table message and update routes
-     * 
+     *
      * This method processes a received routing table message and updates the routing
      * table with new or better routes. It handles source node updates and route
      * validation according to the distance-vector algorithm.
-     * 
+     *
      * @param source_address Address of the node that sent the routing message
      * @param entries Vector of routing table entries from the message
      * @param reception_timestamp When the message was received
      * @param local_link_quality Link quality to the source node (0-255)
      * @param max_hops Maximum allowed hop count
+     * @param source_capabilities Capabilities bitmap of the source node
      * @return bool True if any routes were updated
      */
     virtual bool ProcessRoutingTableMessage(
         AddressType source_address,
         const std::vector<RoutingTableEntry>& entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
-        uint8_t max_hops) = 0;
+        uint8_t max_hops, uint8_t source_capabilities = 0) = 0;
 };
 
 /**
