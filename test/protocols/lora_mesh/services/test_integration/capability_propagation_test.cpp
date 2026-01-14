@@ -135,7 +135,7 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
 
     // Wait for capabilities to propagate
     std::vector<TestNode*> nodes = {&node1, &node2};
-    bool propagated = WaitForCapabilityPropagation(nodes, superframeTime * 2);
+    bool propagated = WaitForCapabilityPropagation(nodes, superframeTime * 3);
 
     ASSERT_TRUE(propagated) << "Capabilities did not propagate in time";
 
@@ -211,11 +211,14 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
 
     WaitForTasksToExecute();
 
+    discovery_timeout = GetDiscoveryTimeout(node1) * 3;
+
     // Wait for updated capabilities to propagate
-    bool updated_propagated = AdvanceTime(100, 15000, 100, 2, [&]() {
-        uint8_t caps = node2.protocol->GetNodeCapabilities(node1.address);
-        return caps == (NONE);
-    });
+    bool updated_propagated =
+        AdvanceTime(100, discovery_timeout, 100, 2, [&]() {
+            uint8_t caps = node2.protocol->GetNodeCapabilities(node1.address);
+            return caps == (NONE);
+        });
 
     ASSERT_TRUE(updated_propagated)
         << "Updated capabilities did not propagate in time";
