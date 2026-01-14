@@ -692,7 +692,7 @@ class VirtualTimeController {
 };
 
 // Initialize static member
-VirtualTimeController* VirtualTimeController::instance_ = nullptr;
+inline VirtualTimeController* VirtualTimeController::instance_ = nullptr;
 
 /**
  * @brief Adapter class to connect MockRadio to VirtualNetwork

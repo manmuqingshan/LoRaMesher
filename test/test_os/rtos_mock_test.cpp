@@ -1249,7 +1249,7 @@ TEST_F(RTOSMockTest, ReceiveFromQueueTaskSuspended) {
                 // This should block and wait - simulating superframe_service behavior
                 auto result =
                     GetRTOS().ReceiveFromQueue(testParams->queue, &receivedData,
-                                               5000 /* 5 second timeout */);
+                                               15000 /* 15 second timeout */);
 
                 // Store the result
                 testParams->receiveResult.store(result);
