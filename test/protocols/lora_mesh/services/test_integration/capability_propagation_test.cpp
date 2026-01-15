@@ -47,7 +47,7 @@ class CapabilityPropagationTests : public LoRaMeshTestFixture {
      */
     bool WaitForCapabilityPropagation(const std::vector<TestNode*>& nodes,
                                       uint32_t timeout_ms = 10000) {
-        return AdvanceTime(timeout_ms, timeout_ms, 100, 2, [&]() {
+        return AdvanceTime(timeout_ms, timeout_ms, 10, 2, [&]() {
             // Check if all nodes know about each other's capabilities
             for (auto* node : nodes) {
                 for (auto* other_node : nodes) {

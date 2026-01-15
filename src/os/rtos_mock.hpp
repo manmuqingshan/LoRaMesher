@@ -192,6 +192,13 @@ class RTOSMock : public RTOS {
             }
         }
 
+        // Wait for woken tasks to process and re-block before returning
+        // This ensures deterministic behavior in tests by preventing the test
+        // from advancing virtual time before tasks have processed their wake-up
+        if (!tasksToWake.empty()) {
+            waitForTasksToReblock();
+        }
+
         return virtualTimeMs_;
     }
 
@@ -1713,7 +1720,7 @@ class RTOSMock : public RTOS {
         // Wait until either:
         // 1. The predicate becomes true
         // 2. The virtual time advances beyond our wake time
-        cv.wait_until(
+        bool success = cv.wait_until(
             lock,
             std::chrono::steady_clock::now() + std::chrono::milliseconds(1000),
             [this, wakeTimeMs, &pred]() {
@@ -1726,6 +1733,11 @@ class RTOSMock : public RTOS {
                 std::lock_guard<std::mutex> timeLock(timeMutex_);
                 return virtualTimeMs_ >= wakeTimeMs;
             });
+
+        if (!success) {
+            // Timeout occurred (should be rare due to long wait_until)
+            LOG_DEBUG("MOCK: waitFor timed out waiting for condition variable");
+        }
 
         // Clean up our wait registration
         {
@@ -1904,6 +1916,84 @@ class RTOSMock : public RTOS {
 
         // Use atomic load with acquire ordering to ensure we see the latest value
         return task_info->stop_requested.load(std::memory_order_acquire);
+    }
+
+    /**
+     * @brief Check if a task has a registered wait in waitingTasks_ or on a queue
+     * @param thread_ptr Pointer to the thread to check
+     * @return true if the task is currently waiting/blocked, false otherwise
+     * @note Caller must hold both tasksMutex_ and timeMutex_
+     */
+    bool hasRegisteredWait(std::thread* thread_ptr) const {
+        // Check if task is waiting on any queue CVs
+        auto it = tasks_.find(thread_ptr);
+        if (it != tasks_.end()) {
+            // Task is blocked if it has registered queue CVs it's waiting on
+            if (!it->second.waiting_on_queue_cvs.empty()) {
+                return true;
+            }
+        }
+
+        // Check if task has a registered wake time in waitingTasks_
+        // This is a simplification - we can't directly map CVs to tasks
+        // So we consider the task blocked if ANY CV has a future wake time
+        for (const auto& [cv, wake_time] : waitingTasks_) {
+            if (wake_time > virtualTimeMs_) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @brief Wait for tasks that were just woken to re-block
+     *
+     * This ensures deterministic virtual time behavior by waiting for tasks
+     * to process their work and re-enter a wait state before allowing
+     * further time advancement.
+     *
+     * @param timeout_ms Maximum time to wait in real milliseconds (default 100ms)
+     */
+    void waitForTasksToReblock(uint32_t timeout_ms = 100) {
+        auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(timeout_ms);
+
+        while (std::chrono::steady_clock::now() < deadline) {
+            size_t blocked_count = 0;
+            size_t total_tasks = 0;
+
+            {
+                std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
+                std::lock_guard<std::mutex> time_lock(timeMutex_);
+
+                total_tasks = tasks_.size();
+
+                for (const auto& [thread_ptr, task_info] : tasks_) {
+                    // Task is considered "blocked" if:
+                    // 1. It's suspended
+                    // 2. It's been requested to stop
+                    // 3. It has a registered wait (on CV or queue)
+                    if (task_info.suspended ||
+                        task_info.stop_requested.load(
+                            std::memory_order_relaxed) ||
+                        hasRegisteredWait(
+                            const_cast<std::thread*>(thread_ptr))) {
+                        blocked_count++;
+                    }
+                }
+
+                // If all tasks are blocked, we're done
+                if (blocked_count >= total_tasks) {
+                    return;
+                }
+            }
+
+            // Yield to let tasks run
+            std::this_thread::yield();
+        }
+
+        // Timeout is acceptable - tasks may have completed or be in transition
     }
 
     struct TaskInfo {

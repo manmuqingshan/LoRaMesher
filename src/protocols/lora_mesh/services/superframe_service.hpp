@@ -365,7 +365,7 @@ class SuperframeService : public ISuperframeService {
 
     bool is_running_;
     bool is_synchronized_;
-    bool auto_advance_;
+    bool auto_advance_ = true;
     bool update_start_time_in_new_superframe =
         true;  ///< Flag to control start time updates
     bool sync_in_progress_ =
