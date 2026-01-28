@@ -147,10 +147,10 @@ class BaseHeader {
     static Result IsValidMessageType(MessageType type);
 
    protected:
-    AddressType destination_ = 0;               ///< Destination address
-    AddressType source_ = 0;                    ///< Source address
-    MessageType type_ = MessageType::DATA_MSG;  ///< Message type
-    uint8_t payload_size_ = 0;  ///< Size of the payload in bytes
+    AddressType destination_ = 0;           ///< Destination address
+    AddressType source_ = 0;                ///< Source address
+    MessageType type_ = MessageType::DATA;  ///< Message type
+    uint8_t payload_size_ = 0;              ///< Size of the payload in bytes
 };
 
 }  // namespace loramesher

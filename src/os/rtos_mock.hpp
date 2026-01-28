@@ -360,7 +360,7 @@ class RTOSMock : public RTOS {
 
         if (thread_id != std::thread::id()) {
             // Give the task a moment to exit gracefully
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::yield();
 
             // Wait for thread to finish with a reasonable timeout
             if (thread->joinable()) {

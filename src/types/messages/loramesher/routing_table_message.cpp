@@ -43,7 +43,7 @@ RoutingTableMessage::RoutingTableMessage(const BaseMessage& message) {
 std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     AddressType dest, AddressType src, AddressType network_manager_addr,
     uint8_t table_version, const std::vector<RoutingTableEntry>& entries,
-    uint8_t source_capabilities) {
+    uint8_t source_capabilities, uint8_t source_allocated_data_slots) {
 
     // Check if the number of entries fits in a uint8_t
     if (entries.size() > UINT8_MAX) {
@@ -54,14 +54,15 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     // Create the header with the correct number of entries
     RoutingTableHeader header(dest, src, network_manager_addr, table_version,
                               static_cast<uint8_t>(entries.size()),
-                              source_capabilities);
+                              source_capabilities, source_allocated_data_slots);
 
     LOG_DEBUG(
         "Created routing table message "
         "src: 0x%04X, dest: 0x%04X, NM: 0x%04X, "
-        "table v.: %d, entry count: %d, caps: 0x%02X",
+        "table v.: %d, entry count: %d, caps: 0x%02X, data_slots: %d",
         src, dest, network_manager_addr, table_version,
-        static_cast<int>(entries.size()), source_capabilities);
+        static_cast<int>(entries.size()), source_capabilities,
+        source_allocated_data_slots);
 
     return RoutingTableMessage(header, entries);
 }
@@ -134,6 +135,10 @@ uint8_t RoutingTableMessage::GetSourceCapabilities() const {
     return header_.GetSourceCapabilities();
 }
 
+uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
+    return header_.GetSourceAllocatedDataSlots();
+}
+
 uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
     // Find the node entry with the specified address
     for (const auto& entry : entries_) {
@@ -188,6 +193,7 @@ BaseMessage RoutingTableMessage::ToBaseMessage() const {
     serializer.WriteUint8(header_.GetTableVersion());
     serializer.WriteUint8(header_.GetEntryCount());
     serializer.WriteUint8(header_.GetSourceCapabilities());
+    serializer.WriteUint8(header_.GetSourceAllocatedDataSlots());
 
     // Serialize all network node routes
     for (const auto& entry : entries_) {

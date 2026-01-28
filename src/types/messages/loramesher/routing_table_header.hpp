@@ -31,10 +31,12 @@ class RoutingTableHeader : public BaseHeader {
       * @param table_version Version of the routing table (increments with changes)
       * @param entry_count Number of routing entries in the message
       * @param source_capabilities Source node capabilities bitmap
+      * @param source_allocated_data_slots Source node's allocated data slots
       */
     RoutingTableHeader(AddressType dest, AddressType src,
                        AddressType network_manager_addr, uint8_t table_version,
-                       uint8_t entry_count, uint8_t source_capabilities = 0);
+                       uint8_t entry_count, uint8_t source_capabilities = 0,
+                       uint8_t source_allocated_data_slots = 0);
 
     /**
      * @brief Get the network manager address
@@ -63,6 +65,15 @@ class RoutingTableHeader : public BaseHeader {
      * @return uint8_t Capabilities bitmap of the source node
      */
     uint8_t GetSourceCapabilities() const { return source_capabilities_; }
+
+    /**
+     * @brief Gets the source node's allocated data slots
+     *
+     * @return uint8_t Number of allocated data slots for the source node
+     */
+    uint8_t GetSourceAllocatedDataSlots() const {
+        return source_allocated_data_slots_;
+    }
 
     /**
       * @brief Sets the routing table specific information
@@ -104,7 +115,8 @@ class RoutingTableHeader : public BaseHeader {
         return sizeof(AddressType) +  // Network manager address
                sizeof(uint8_t) +      // Table version
                sizeof(uint8_t) +      // Entry count
-               sizeof(uint8_t);       // Source capabilities
+               sizeof(uint8_t) +      // Source capabilities
+               sizeof(uint8_t);       // Source allocated data slots
     }
 
     /**
@@ -121,6 +133,8 @@ class RoutingTableHeader : public BaseHeader {
     uint8_t table_version_ = 0;             ///< Version of the routing table
     uint8_t entry_count_ = 0;               ///< Number of routing entries
     uint8_t source_capabilities_ = 0;       ///< Source node capabilities
+    uint8_t source_allocated_data_slots_ =
+        0;  ///< Source node's allocated data slots
 };
 
 }  // namespace loramesher

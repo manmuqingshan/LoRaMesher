@@ -18,7 +18,7 @@ SyncBeaconHeader::SyncBeaconHeader(AddressType dest, AddressType src,
       total_slots_(total_slots),
       slot_duration_ms_(slot_duration_ms),
       network_manager_(network_manager),
-      hop_count_(0),             // Original transmission has hop count 0
+      hop_count_(1),             // Original transmission has hop count 1
       propagation_delay_ms_(0),  // No delay for original transmission
       max_hops_(5) {}            // Default network diameter
 

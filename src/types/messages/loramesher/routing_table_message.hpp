@@ -37,13 +37,15 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * @param table_version Version of the routing table
      * @param entries Vector of network node routes
      * @param source_capabilities Source node capabilities bitmap
+     * @param source_allocated_data_slots Source node's allocated data slots
      * @return std::optional<RoutingTableMessage> Valid message if creation succeeded,
      *         std::nullopt otherwise
      */
     static std::optional<RoutingTableMessage> Create(
         AddressType dest, AddressType src, AddressType network_manager_addr,
         uint8_t table_version, const std::vector<RoutingTableEntry>& entries,
-        uint8_t source_capabilities = 0);
+        uint8_t source_capabilities = 0,
+        uint8_t source_allocated_data_slots = 0);
 
     /**
      * @brief Creates a routing table message from serialized data
@@ -103,6 +105,13 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * @return uint8_t Capabilities bitmap of the source node
      */
     uint8_t GetSourceCapabilities() const;
+
+    /**
+     * @brief Gets the source node's allocated data slots
+     *
+     * @return uint8_t Number of allocated data slots for the source node
+     */
+    uint8_t GetSourceAllocatedDataSlots() const;
 
     /**
      * @brief Gets the total size of the payload message

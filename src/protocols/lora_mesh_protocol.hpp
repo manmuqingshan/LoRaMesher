@@ -91,11 +91,24 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Send a message through the protocol
-     * 
+     *
      * @param message Message to send
      * @return Result Success or error details
      */
     Result SendMessage(const BaseMessage& message) override;
+
+    /**
+     * @brief Send user data to a destination through the mesh network
+     *
+     * Creates a DataMessage with proper next-hop routing and queues
+     * it for transmission. The data will be routed through the mesh
+     * network to reach the destination.
+     *
+     * @param destination Final destination address
+     * @param data User data payload to send
+     * @return Result Success or error (e.g., no route found)
+     */
+    Result SendData(AddressType destination, const std::vector<uint8_t>& data);
 
     /**
      * @brief Pause all protocol services

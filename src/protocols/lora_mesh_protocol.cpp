@@ -210,6 +210,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     lora_mesh::INetworkService::NetworkConfig net_config =
         service_config_.network_config;
     net_config.node_address = config.getNodeAddress();
+    net_config.node_role = config.getNodeRole();
 
     Result result = network_service_->Configure(net_config);
     if (!result) {
@@ -328,7 +329,7 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
     SlotAllocation::SlotType slot_type;
 
     switch (message.GetType()) {
-        case MessageType::DATA_MSG:
+        case MessageType::DATA:
             slot_type = SlotAllocation::SlotType::TX;
             break;
         case MessageType::ROUTE_TABLE:
@@ -351,6 +352,16 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
               slot_utils::SlotTypeToString(slot_type).c_str());
 
     return Result::Success();
+}
+
+Result LoRaMeshProtocol::SendData(AddressType destination,
+                                  const std::vector<uint8_t>& data) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+
+    return network_service_->SendData(destination, data);
 }
 
 Result LoRaMeshProtocol::Pause() {
