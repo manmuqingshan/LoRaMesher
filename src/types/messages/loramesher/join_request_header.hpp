@@ -32,11 +32,12 @@ class JoinRequestHeader : public BaseHeader {
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param additional_info_size To store the payload size in the base message
       * @param sponsor_address Sponsor node address (0 for no sponsor)
+      * @param hop_count Number of hops from joining node (0 for direct)
       */
     JoinRequestHeader(AddressType dest, AddressType src, uint8_t battery_level,
                       uint8_t requested_slots, AddressType next_hop = 0,
                       uint8_t additional_info_size = 0,
-                      AddressType sponsor_address = 0);
+                      AddressType sponsor_address = 0, uint8_t hop_count = 0);
 
     /**
       * @brief Gets the battery level
@@ -65,6 +66,18 @@ class JoinRequestHeader : public BaseHeader {
       * @return AddressType Sponsor address (0 for no sponsor)
       */
     AddressType GetSponsorAddress() const { return sponsor_address_; }
+
+    /**
+      * @brief Gets the hop count from joining node
+      *
+      * @return uint8_t Number of hops from joining node
+      */
+    uint8_t GetHopCount() const { return hop_count_; }
+
+    /**
+      * @brief Increments hop count for forwarding
+      */
+    void IncrementHopCount() { hop_count_++; }
 
     /**
       * @brief Sets the join request specific information
@@ -120,7 +133,8 @@ class JoinRequestHeader : public BaseHeader {
         return sizeof(uint8_t) +      // Battery level
                sizeof(uint8_t) +      // Requested slots
                sizeof(AddressType) +  // Next hop
-               sizeof(AddressType);   // Sponsor address
+               sizeof(AddressType) +  // Sponsor address
+               sizeof(uint8_t);       // Hop count
     }
 
     /**
@@ -137,7 +151,8 @@ class JoinRequestHeader : public BaseHeader {
     uint8_t requested_slots_ = 1;  ///< Requested number of data slots
     AddressType next_hop_ = 0;     ///< Next hop for message forwarding
     AddressType sponsor_address_ =
-        0;  ///< Sponsor node address (0 = no sponsor)
+        0;                   ///< Sponsor node address (0 = no sponsor)
+    uint8_t hop_count_ = 0;  ///< Hops from joining node
 };
 
 }  // namespace loramesher

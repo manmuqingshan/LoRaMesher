@@ -45,12 +45,14 @@ class JoinResponseHeader : public BaseHeader {
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param additional_info_size Additional info size to set the correct payload to BaseHeader
       * @param target_address Target node address for final delivery (0 for direct)
+      * @param control_slot_index Assigned control slot index for the joining node (0xFF = unassigned)
       */
     JoinResponseHeader(AddressType dest, AddressType src, uint16_t network_id,
                        uint8_t allocated_slots, ResponseStatus status,
                        AddressType next_hop = 0,
                        uint8_t additional_info_size = 0,
-                       AddressType target_address = 0);
+                       AddressType target_address = 0,
+                       uint8_t control_slot_index = 0xFF);
 
     /**
       * @brief Gets the network ID
@@ -86,6 +88,13 @@ class JoinResponseHeader : public BaseHeader {
       * @return AddressType Target address for final delivery (0 for direct)
       */
     AddressType GetTargetAddress() const { return target_address_; }
+
+    /**
+      * @brief Gets the assigned control slot index
+      *
+      * @return uint8_t Control slot index (0xFF = unassigned)
+      */
+    uint8_t GetControlSlotIndex() const { return control_slot_index_; }
 
     /**
       * @brief Sets the join response specific information
@@ -136,7 +145,8 @@ class JoinResponseHeader : public BaseHeader {
                sizeof(uint8_t) +      // Allocated slots
                sizeof(uint8_t) +      // Status
                sizeof(AddressType) +  // Next hop
-               sizeof(AddressType);   // Target address
+               sizeof(AddressType) +  // Target address
+               sizeof(uint8_t);       // Control slot index
     }
 
     /**
@@ -155,6 +165,8 @@ class JoinResponseHeader : public BaseHeader {
     AddressType next_hop_ = 0;          ///< Next hop for message forwarding
     AddressType target_address_ =
         0;  ///< Target node address for final delivery (0 = direct)
+    uint8_t control_slot_index_ =
+        0xFF;  ///< Assigned control slot index (0xFF = unassigned)
 };
 
 }  // namespace loramesher

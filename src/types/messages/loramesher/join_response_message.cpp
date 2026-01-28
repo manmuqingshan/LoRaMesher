@@ -16,11 +16,12 @@ std::optional<JoinResponseMessage> JoinResponseMessage::Create(
     AddressType dest, AddressType src, uint16_t network_id,
     uint8_t allocated_slots, JoinResponseHeader::ResponseStatus status,
     const std::vector<uint8_t>& superframe_info, AddressType next_hop,
-    AddressType target_address) {
+    AddressType target_address, uint8_t control_slot_index) {
 
     // Create the header with the join response information
     JoinResponseHeader header(dest, src, network_id, allocated_slots, status,
-                              next_hop, superframe_info.size(), target_address);
+                              next_hop, superframe_info.size(), target_address,
+                              control_slot_index);
 
     return JoinResponseMessage(header, superframe_info);
 }
@@ -75,6 +76,10 @@ JoinResponseHeader::ResponseStatus JoinResponseMessage::GetStatus() const {
 
 const std::vector<uint8_t>& JoinResponseMessage::GetSuperframeInfo() const {
     return superframe_info_;
+}
+
+uint8_t JoinResponseMessage::GetControlSlotIndex() const {
+    return header_.GetControlSlotIndex();
 }
 
 AddressType JoinResponseMessage::GetSource() const {

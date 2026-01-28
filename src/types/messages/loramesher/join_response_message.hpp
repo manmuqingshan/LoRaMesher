@@ -31,7 +31,8 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
       * @param status Response status code
       * @param superframe_info Optional superframe configuration information
       * @param next_hop Next hop for message forwarding (0 for direct)
-      * @param sponsor_address Sponsor node address (0 for no sponsor)
+      * @param target_address Target node address for final delivery (0 for direct)
+      * @param control_slot_index Assigned control slot index (0xFF = unassigned)
       * @return std::optional<JoinResponseMessage> Valid message if creation succeeded,
       *         std::nullopt otherwise
       */
@@ -39,7 +40,8 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
         AddressType dest, AddressType src, uint16_t network_id,
         uint8_t allocated_slots, JoinResponseHeader::ResponseStatus status,
         const std::vector<uint8_t>& superframe_info = {},
-        AddressType next_hop = 0, AddressType target_address = 0);
+        AddressType next_hop = 0, AddressType target_address = 0,
+        uint8_t control_slot_index = 0xFF);
 
     /**
       * @brief Creates a join response message from serialized data
@@ -74,10 +76,17 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
 
     /**
       * @brief Gets the superframe information
-      * 
+      *
       * @return const std::vector<uint8_t>& Superframe configuration information
       */
     const std::vector<uint8_t>& GetSuperframeInfo() const;
+
+    /**
+      * @brief Gets the assigned control slot index
+      *
+      * @return uint8_t Control slot index (0xFF = unassigned)
+      */
+    uint8_t GetControlSlotIndex() const;
 
     /**
       * @brief Gets the source address
