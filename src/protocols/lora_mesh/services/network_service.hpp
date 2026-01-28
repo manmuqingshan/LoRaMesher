@@ -15,6 +15,7 @@
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
+#include "types/messages/loramesher/data_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
@@ -228,6 +229,25 @@ class NetworkService : public INetworkService {
      * @return uint8_t Local node capabilities bitmap
      */
     uint8_t GetLocalNodeCapabilities() const;
+
+    /**
+     * @brief Set local node allocated data slots
+     *
+     * Updates the allocated data slots for this node. Changes will be propagated
+     * in the next routing table broadcast.
+     *
+     * @param data_slots Number of allocated data slots
+     */
+    void SetLocalAllocatedDataSlots(uint8_t data_slots);
+
+    /**
+     * @brief Get local node allocated data slots
+     *
+     * @return uint8_t Local node's allocated data slots
+     */
+    uint8_t GetLocalAllocatedDataSlots() const {
+        return local_allocated_data_slots_;
+    }
 
     /**
      * @brief Get capabilities for a specific node
@@ -462,6 +482,45 @@ class NetworkService : public INetworkService {
     Result SendJoinResponse(
         AddressType dest, loramesher::JoinResponseHeader::ResponseStatus status,
         uint8_t allocated_slots, AddressType sponsor_address = 0);
+
+    // Data message methods
+
+    /**
+     * @brief Process a received data message
+     *
+     * Handles next-hop routing: if this node is the next_hop and the final
+     * destination, delivers to application layer. If this node is the next_hop
+     * but not the final destination, forwards the message.
+     *
+     * @param message Data message to process
+     * @param reception_timestamp When the message was received
+     * @return Result Success or error
+     */
+    Result ProcessDataMessage(const BaseMessage& message,
+                              uint32_t reception_timestamp);
+
+    /**
+     * @brief Forward a data message to the next hop
+     *
+     * Looks up the next hop for the final destination and queues
+     * a new data message with updated next_hop field.
+     *
+     * @param original_msg The original data message to forward
+     * @return Result Success or error
+     */
+    Result ForwardDataMessage(const DataMessage& original_msg);
+
+    /**
+     * @brief Send user data to a destination
+     *
+     * Creates a DataMessage with proper next-hop routing and queues
+     * it for transmission.
+     *
+     * @param destination Final destination address
+     * @param data User data payload
+     * @return Result Success or error (e.g., no route found)
+     */
+    Result SendData(AddressType destination, const std::vector<uint8_t>& data);
 
     // Multi-hop synchronization beacon processing
 
@@ -754,11 +813,23 @@ class NetworkService : public INetworkService {
         const JoinResponseMessage& join_response);
 
     /**
+     * @brief Forward join response to next hop on path to sponsor
+     *
+     * Forwards a join response when this node is on the multi-hop path
+     * between the network manager and the sponsor node. Updates the
+     * next_hop field to continue routing toward the destination.
+     *
+     * @param join_response The join response to forward
+     * @return Result Success if forwarded successfully, error otherwise
+     */
+    Result ForwardJoinResponse(const JoinResponseMessage& join_response);
+
+    /**
      * @brief Schedule discovery slot for forwarding
-     * 
+     *
      * Finds the next available DISCOVERY_RX slot and temporarily converts
      * it to DISCOVERY_TX for message forwarding, then reverts it back.
-     * 
+     *
      * @return bool True if slot was scheduled successfully
      */
     bool ScheduleDiscoverySlotForwarding();
@@ -833,8 +904,8 @@ class NetworkService : public INetworkService {
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
     // Superframe parameters
-    uint8_t network_max_hops_ =
-        0;  ///< Number of hops received from sync beacons
+    uint8_t current_network_depth_ =
+        0;  ///< Current network depth from sync beacons/routing table
     uint8_t number_of_slots_per_superframe_ =
         0;  ///< Number of allocated slots x superframe, received from sync beacon
     uint8_t no_received_sync_beacon_count_ =
@@ -846,8 +917,21 @@ class NetworkService : public INetworkService {
     std::optional<JoinRequestMessage>
         pending_join_data_;  ///< Buffered join request data
 
+    // Control slot assignment (join-order-based)
+    uint8_t join_order_counter_ =
+        1;  ///< NM: next control slot index to assign (starts at 1, 0 is NM)
+    uint8_t my_control_slot_index_ =
+        0;  ///< This node's assigned control slot index (NM=0, others assigned at join)
+
     // Local node capabilities
     uint8_t local_capabilities_ = 0;  ///< Local node capabilities bitmap
+
+    // Local node allocated data slots
+    uint8_t local_allocated_data_slots_ =
+        0;  ///< Local node's allocated data slots
+
+    // Node role configuration
+    NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
 
     // Thread safety
     mutable std::mutex network_mutex_;
