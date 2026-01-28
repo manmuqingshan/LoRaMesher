@@ -6,6 +6,7 @@
 #include "superframe_service.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <random>
 
 #include "os/os_port.hpp"
 
@@ -56,7 +57,7 @@ SuperframeService::~SuperframeService() {
         // This ensures the task sees is_running_ = false quickly
         if (notification_queue_) {
             SuperframeNotificationType stop_notification =
-                SuperframeNotificationType::STARTED;
+                SuperframeNotificationType::STOP_REQUESTED;
             GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
         }
     }
@@ -127,17 +128,16 @@ Result SuperframeService::StopSuperframe() {
     is_running_ = false;
     is_synchronized_ = false;
 
+    // Wake up the task if it's blocked in ReceiveFromQueue
+    // This ensures the task can exit quickly before DeleteTask tries to join
+    if (notification_queue_) {
+        SuperframeNotificationType stop_notification =
+            SuperframeNotificationType::STOP_REQUESTED;
+        GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
+    }
+
     // Stop the update task
     if (update_task_handle_) {
-        // bool suspended = GetRTOS().SuspendTask(update_task_handle_);
-        // if (!suspended) {
-        //     LOG_ERROR(
-        //         "Failed to suspend superframe update task, deleting task");
-        //     // Delete the task if suspension failed
-        //     GetRTOS().DeleteTask(update_task_handle_);
-        //     update_task_handle_ = nullptr;
-        // }
-
         // Delete the task. Suspending the task does not work correctly.
         // Maybe is something about the virtual time mode
         // Hours spend: 5h
@@ -283,9 +283,20 @@ uint32_t SuperframeService::GetDiscoveryTimeout() {
         return 0;
     }
 
-    // Discovery timeout is the duration of discovery slots
-    // TODO: Calculate this correctly.
-    return total_slots_ * slot_duration_ms_ * 3;
+    // Base discovery timeout: 3 superframes worth of time
+    uint32_t base_timeout = total_slots_ * slot_duration_ms_ * 3;
+
+    // Add random jitter to prevent simultaneous network creation
+    // when multiple nodes start at nearly the same time.
+    if (discovery_jitter_max_ms_ > 0) {
+        std::mt19937 rng(node_address_);
+        std::uniform_int_distribution<uint32_t> dist(0,
+                                                     discovery_jitter_max_ms_);
+        uint32_t jitter = dist(rng);
+        return base_timeout + jitter;
+    }
+
+    return base_timeout;
 }
 
 uint16_t SuperframeService::GetCurrentSlot() const {
@@ -658,7 +669,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
 
     // Task loop with queue-based efficient waiting
     SuperframeNotificationType notification;
-    while (!rtos.ShouldStopOrPause() && service->is_running_) {
+    while (!rtos.ShouldStopOrPause() || service->is_running_) {
         // Double-check that the notification queue is still valid
         if (!service->notification_queue_) {
             LOG_DEBUG("UpdateTask: notification queue deleted, exiting");
@@ -699,6 +710,13 @@ void SuperframeService::UpdateTaskFunction(void* param) {
                     // LOG_DEBUG(
                     //     "New frame notification - checking state transitions");
                     // service->UpdateSuperframeState();
+                    break;
+
+                case SuperframeNotificationType::STOP_REQUESTED:
+                    // Stop requested - exit the loop immediately
+                    // The is_running_ flag is already false at this point
+                    LOG_DEBUG(
+                        "Stop notification received, exiting update task");
                     break;
             }
         } else if (queue_result == os::QueueResult::kTimeout) {

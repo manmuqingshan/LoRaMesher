@@ -95,6 +95,13 @@ class ISuperframeService {
 
     virtual uint32_t GetTimeSinceSuperframeStart() = 0;
 
+    /**
+      * @brief Get current superframe duration
+      * 
+      * @return uint32_t Duration of the superframe in milliseconds
+      */
+    virtual uint32_t GetSuperframeDuration() const = 0;
+
     static constexpr uint32_t DEFAULT_DISCOVERY_SLOT_COUNT = 10;
     static constexpr uint32_t DEFAULT_SLOT_DURATION_MS = 1000;
     static constexpr uint32_t DEFAULT_DISCOVERY_TIMEOUT_MS =
