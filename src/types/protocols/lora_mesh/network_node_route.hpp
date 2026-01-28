@@ -153,11 +153,26 @@ class NetworkNodeRoute {
 
     /**
      * @brief Check if this route is better than another route
-     * 
+     *
+     * Uses a composite cost metric: cost = hop_count × 35 + (255 - link_quality).
+     * Lower cost is better. See PROTOCOL_SPEC.md Section 4.1.
+     *
      * @param other The other route to compare against
      * @return bool True if this route is better
      */
     bool IsBetterRouteThan(const NetworkNodeRoute& other) const;
+
+    /**
+     * @brief Calculate route cost from hop count and link quality
+     *
+     * Formula: cost = hop_count × COST_PER_HOP + (255 - link_quality)
+     * Lower cost indicates a better route.
+     *
+     * @param hop_count Number of hops to destination
+     * @param link_quality Link quality metric (0-255, higher is better)
+     * @return uint16_t Route cost (lower is better)
+     */
+    static uint16_t CalculateRouteCost(uint8_t hop_count, uint8_t link_quality);
 
     /**
      * @brief Update the last seen timestamp

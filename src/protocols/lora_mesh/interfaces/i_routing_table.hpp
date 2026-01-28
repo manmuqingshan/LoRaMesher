@@ -126,6 +126,16 @@ class IRoutingTable {
     virtual bool IsNodePresent(AddressType address) const = 0;
 
     /**
+     * @brief Find a node by address (const version)
+     * 
+     * @param node_address Address to search for
+     * @return Const iterator to the node, or end() if not found
+     */
+    virtual std::vector<
+        types::protocols::lora_mesh::NetworkNodeRoute>::const_iterator
+    GetNode(AddressType node_address) const = 0;
+
+    /**
      * @brief Get all network nodes in the routing table
      * 
      * @return const std::vector<NetworkNodeRoute>& Reference to nodes vector
@@ -207,13 +217,15 @@ class IRoutingTable {
      * @param local_link_quality Link quality to the source node (0-255)
      * @param max_hops Maximum allowed hop count
      * @param source_capabilities Capabilities bitmap of the source node
+     * @param source_allocated_data_slots Number of allocated data slots for source node
      * @return bool True if any routes were updated
      */
     virtual bool ProcessRoutingTableMessage(
         AddressType source_address,
         const std::vector<RoutingTableEntry>& entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
-        uint8_t max_hops, uint8_t source_capabilities = 0) = 0;
+        uint8_t max_hops, uint8_t source_capabilities = 0,
+        uint8_t source_allocated_data_slots = 0) = 0;
 };
 
 /**

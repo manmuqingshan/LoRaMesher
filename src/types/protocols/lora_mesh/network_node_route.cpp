@@ -65,10 +65,10 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
       next_hop(0),
       last_updated(time),
       is_active(true) {
-    LOG_DEBUG(
-        "New routing entry created with address 0x%04X, "
-        "battery %d%%, manager %s, slots %d",
-        addr, battery, is_manager ? "yes" : "no", slots);
+    // LOG_DEBUG(
+    //     "New routing entry created with address 0x%04X, "
+    //     "battery %d%%, manager %s, slots %d",
+    //     addr, battery, is_manager ? "yes" : "no", slots);
 }
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
@@ -82,10 +82,10 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
       next_hop(addr),  // Simple default: next hop is the node itself
       last_updated(time),
       is_active(true) {
-    LOG_DEBUG(
-        "New routing entry created with address 0x%04X, "
-        "battery %d%%, manager %s, slots %d, hops %d",
-        addr, battery, is_manager ? "yes" : "no", slots, hops);
+    // LOG_DEBUG(
+    //     "New routing entry created with address 0x%04X, "
+    //     "battery %d%%, manager %s, slots %d, hops %d",
+    //     addr, battery, is_manager ? "yes" : "no", slots, hops);
 }
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
@@ -105,8 +105,15 @@ bool NetworkNodeRoute::IsDirectNeighbor() const {
     return routing_entry.hop_count == 1 && is_active;
 }
 
+uint16_t NetworkNodeRoute::CalculateRouteCost(uint8_t hop_count,
+                                              uint8_t link_quality) {
+    constexpr uint16_t COST_PER_HOP = 35;
+    return (static_cast<uint16_t>(hop_count) * COST_PER_HOP) +
+           (255 - link_quality);
+}
+
 bool NetworkNodeRoute::IsBetterRouteThan(const NetworkNodeRoute& other) const {
-    // First, prefer active routes over inactive ones
+    // Active routes always preferred
     if (is_active && !other.is_active) {
         return true;
     }
@@ -114,8 +121,18 @@ bool NetworkNodeRoute::IsBetterRouteThan(const NetworkNodeRoute& other) const {
         return false;
     }
 
-    return routing_entry.link_quality >
-           other.routing_entry.link_quality;  // Higher quality is better
+    // Compare by composite cost (lower is better)
+    uint16_t this_cost =
+        CalculateRouteCost(routing_entry.hop_count, routing_entry.link_quality);
+    uint16_t other_cost = CalculateRouteCost(other.routing_entry.hop_count,
+                                             other.routing_entry.link_quality);
+
+    if (this_cost != other_cost) {
+        return this_cost < other_cost;
+    }
+
+    // Tiebreaker: prefer fewer hops
+    return routing_entry.hop_count < other.routing_entry.hop_count;
 }
 
 void NetworkNodeRoute::UpdateLastSeen(uint32_t current_time) {
