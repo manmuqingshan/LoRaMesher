@@ -1,10 +1,10 @@
 # LoRaMesher Protocol Specification
 
-**Version**: 1.2
-**Last Updated**: 2025-09-16
+**Version**: 1.2.2
+**Last Updated**: 2026-01-28
 **Protocol Type**: Distance-Vector Mesh Routing with Power-Aware TDMA and Sponsor-Based Joining
 
-This document provides the complete technical specification for the LoRaMesher protocol, a distance-vector routing protocol designed for LoRa mesh networks with TDMA coordination. Version 1.2 introduces sponsor-based join mechanisms and enhanced routing table architecture.
+This document provides the complete technical specification for the LoRaMesher protocol, a distance-vector routing protocol designed for LoRa mesh networks with TDMA coordination. Version 1.2 introduces sponsor-based join mechanisms and enhanced routing table architecture. Version 1.2.1 synchronizes documentation with actual implementation and moves unimplemented features to the Future Work section. Version 1.2.2 adds discovery timeout jitter to prevent race conditions when multiple nodes start simultaneously.
 
 ## Table of Contents
 
@@ -64,6 +64,7 @@ This document provides the complete technical specification for the LoRaMesher p
     - 10.3 [System Architecture Evolution](#103-system-architecture-evolution)
     - 10.4 [Protocol Extensions](#104-protocol-extensions)
     - 10.5 [Performance Optimization](#105-performance-optimization)
+    - 10.6 [Planned Message Types and Protocols](#106-planned-message-types-and-protocols)
 11. [Conclusion](#11-conclusion)
 
 ---
@@ -285,18 +286,20 @@ enum class MessageType : uint8_t {
     DATA = 0x11,         // 0001 0001: Regular data message
 
     // Control messages (0x2x)
-    ACK = 0x21,          // 0010 0001: Acknowledgment
+    ACK = 0x21,          // 0010 0001: Acknowledgment (reserved, not currently used)
     PING = 0x23,         // 0010 0011: Ping request
     PONG = 0x24,         // 0010 0100: Pong response
 
     // Routing messages (0x3x)
-    HELLO = 0x31,        // 0011 0001: Hello packet for routing
+    HELLO = 0x31,        // 0011 0001: Hello packet (reserved, not currently used)
     ROUTE_TABLE = 0x32,  // 0011 0010: Routing table update
 
     // System messages (0x4x)
     SYNC = 0x41,         // 0100 0001: Synchronization packet
     JOIN_REQUEST = 0x42, // 0100 0010: Request to join network
     JOIN_RESPONSE = 0x43,// 0100 0011: Response to join request
+    SLOT_REQUEST = 0x44, // 0100 0100: Request slot allocation
+    SLOT_ALLOCATION = 0x45, // 0100 0101: Slot allocation response
     SYNC_BEACON = 0x46,  // 0100 0110: Multi-hop sync beacon
 };
 ```
@@ -324,7 +327,7 @@ JOIN_REQUEST  = 0x42,  // Request to join network (with sponsor support)
 JOIN_RESPONSE = 0x43,  // Response to join request (with routing semantics)
 ```
 
-**JOIN_REQUEST Format (Updated v1.2)**:
+**JOIN_REQUEST Format (Updated v1.3)**:
 ```cpp
 struct JoinRequestHeader {
     // Standard message header (6 bytes)
@@ -334,15 +337,15 @@ struct JoinRequestHeader {
     uint8_t payload_size;           // Size of join request payload (1 byte)
 
     // Join request specific fields (9 bytes)
-    uint8_t capabilities;           // Node capability flags (1 byte)
     uint8_t battery_level;          // Battery level 0-100% (1 byte)
     uint8_t requested_slots;        // Number of data slots requested (1 byte)
     AddressType next_hop;           // Next hop for message forwarding (2 bytes)
     AddressType sponsor_address;    // Sponsor node address (0 = no sponsor) (2 bytes)
+    uint8_t hop_count;              // Hops from joining node (incremented on forward) (1 byte)
 };
 ```
 
-**JOIN_RESPONSE Format (Updated v1.2)**:
+**JOIN_RESPONSE Format (Updated v1.3)**:
 ```cpp
 struct JoinResponseHeader {
     // Standard message header (6 bytes)
@@ -351,16 +354,26 @@ struct JoinResponseHeader {
     MessageType type = JOIN_RESPONSE; // Message type 0x43 (1 byte)
     uint8_t payload_size;            // Size of response payload (1 byte)
 
-    // Join response specific fields (11 bytes)
+    // Join response specific fields (12 bytes)
     uint16_t network_id;             // Network identifier (2 bytes)
     uint8_t allocated_slots;         // Number of allocated data slots (1 byte)
     ResponseStatus status;           // Response status code (1 byte)
     AddressType next_hop;            // Next hop for message forwarding (2 bytes)
     AddressType target_address;      // Final recipient (joining node) (2 bytes)
+    uint8_t control_slot_index;      // Assigned control slot index (1 byte) [v1.3]
 
     // Optional superframe info in payload
 };
 ```
+
+**Control Slot Index (v1.3)**:
+The Network Manager assigns each joining node a unique `control_slot_index` based on join order:
+- NM itself has `control_slot_index = 0`
+- First joining node gets `control_slot_index = 1`
+- Second joining node gets `control_slot_index = 2`, etc.
+- Value `0xFF` indicates unassigned (used for non-ACCEPTED responses)
+
+This ensures collision-free CONTROL slot allocation without requiring complete routing table knowledge. Each node's CONTROL_TX slot position is: `sync_beacon_slots + control_slot_index`.
 
 **JOIN_RESPONSE Status Codes**:
 - `ACCEPTED = 0x00`: Join request accepted, slot allocated
@@ -368,6 +381,7 @@ struct JoinResponseHeader {
 - `CAPACITY_EXCEEDED = 0x02`: Network at capacity
 - `AUTHENTICATION_FAILED = 0x03`: Authentication failed
 - `RETRY_LATER = 0x04`: Temporarily rejected, retry after delay
+- `RESERVED = 0x05`: Reserved for future use
 
 **Key v1.2 Routing Semantics**:
 - **destination**: Immediate next hop for message routing
@@ -383,29 +397,16 @@ struct JoinResponseHeader {
 #### 3.3.2 Routing Messages
 ```cpp
 // Routing protocol messages (v1.2)
-HELLO = 0x31,        // Hello packet for neighbor discovery
-ROUTE_TABLE = 0x32,  // Routing table exchange (documented in 3.2.3)
+HELLO = 0x31,        // Hello packet (reserved, not currently implemented)
+ROUTE_TABLE = 0x32,  // Routing table exchange (implemented)
 ```
 
-**HELLO Format**:
-```cpp
-struct HelloMessage {
-    // Standard message header (6 bytes)
-    AddressType destination;     // Broadcast or target (2 bytes)
-    AddressType source;          // Sending node address (2 bytes)
-    MessageType type = HELLO;    // Message type 0x31 (1 byte)
-    uint8_t payload_size;        // Size of hello payload (1 byte)
+**HELLO Message** *(Planned - see Section 10 Future Work)*:
 
-    // Hello-specific fields
-    uint32_t timestamp;          // Transmission timestamp (4 bytes)
-    uint8_t sequence_number;     // Message sequence for tracking (1 byte)
-    uint8_t link_quality;        // Local link quality assessment (1 byte)
-};
-```
+The HELLO message type (0x31) is reserved for future neighbor discovery and link quality assessment functionality. The message type is defined in the enum but the HelloMessage struct is not yet implemented.
 
 **Usage**:
-- **HELLO messages**: Used for neighbor discovery and link quality assessment
-- **ROUTE_TABLE messages**: Used for distance-vector routing table exchange (see section 3.2.3)
+- **ROUTE_TABLE messages**: Used for distance-vector routing table exchange (see section 3.3.3)
 
 #### 3.3.3 Routing Table Messages (New v1.2)
 ```cpp
@@ -531,13 +532,15 @@ struct SyncBeaconHeader {
 
 #### 3.3.5 Data Messages
 ```cpp
-// Application data messages
-DATA_UNICAST   = 0x11,  // Point-to-point data
-DATA_BROADCAST = 0x12,  // Network-wide broadcast
-DATA_MULTICAST = 0x13,  // Group communication
+// Application data messages (currently implemented)
+DATA = 0x11,  // Regular data message (point-to-point)
+
+// Reserved for future implementation (see Section 10):
+// DATA_BROADCAST = 0x12,  // Network-wide broadcast
+// DATA_MULTICAST = 0x13,  // Group communication
 ```
 
-**DATA_UNICAST Format**:
+**DATA Message Format**:
 ```cpp
 struct DataUnicast {
     uint8_t messageType;     // 0x11
@@ -648,14 +651,29 @@ LoRaMesher implements a modified Bellman-Ford distance-vector routing algorithm 
 
 #### 4.1.1 Routing Table Structure
 
+The implementation uses a two-layer structure for routing information:
+
+**RoutingTableEntry** (for serialization/transmission):
 ```cpp
-struct RouteEntry {
-    uint16_t destination;    // Destination node ID
-    uint16_t nextHop;       // Next hop to reach destination
-    uint8_t hops;           // Hop count (primary metric)
-    uint8_t linkQuality;    // Link quality (secondary metric)
-    uint32_t lastUpdate;    // Timestamp of last update
-    uint8_t flags;          // Route flags (valid, temporary, etc.)
+// From types/messages/loramesher/routing_table_entry.hpp
+struct RoutingTableEntry {
+    AddressType destination = 0;      // Destination address (uint16_t)
+    uint8_t hop_count = 0;            // Hop count to destination
+    uint8_t link_quality = 0;         // Link quality metric (0-255)
+    uint8_t allocated_data_slots = 0; // Data slots allocated to node
+    uint8_t capabilities = 0;         // Node capabilities bitmap
+};
+```
+
+**NetworkNodeRoute** (internal routing table):
+```cpp
+// From types/protocols/lora_mesh/network_node_route.hpp
+class NetworkNodeRoute {
+    RoutingTableEntry routing_entry;  // Route metrics
+    AddressType next_hop = 0;         // Next hop address
+    uint32_t last_updated = 0;        // Timestamp of last update
+    bool is_active = true;            // Route validity flag
+    bool is_network_manager = false;  // Network manager flag
 };
 ```
 
@@ -701,31 +719,66 @@ if (combinedQuality < MIN_QUALITY_THRESHOLD) {
 }
 ```
 
-**Route Comparison**:
+**Route Comparison** (Weighted Cost Metric):
+
+The route selection uses a composite cost that balances hop count and link quality:
+
 ```cpp
-bool isBetterRoute(const RouteEntry& current, const RouteEntry& candidate) {
-    // Primary comparison: hop count
-    if (candidate.hops < current.hops) return true;
-    if (candidate.hops > current.hops) return false;
-    
-    // Secondary comparison: link quality
-    return candidate.linkQuality > current.linkQuality;
+// cost = hop_count × 35 + (255 - link_quality)
+// Lower cost = better route
+uint16_t CalculateRouteCost(uint8_t hop_count, uint8_t link_quality) {
+    constexpr uint16_t COST_PER_HOP = 35;
+    return (hop_count * COST_PER_HOP) + (255 - link_quality);
+}
+
+bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
+    if (is_active && !other.is_active) return true;
+    if (!is_active && other.is_active) return false;
+
+    uint16_t this_cost = CalculateRouteCost(routing_entry.hop_count,
+                                            routing_entry.link_quality);
+    uint16_t other_cost = CalculateRouteCost(other.routing_entry.hop_count,
+                                             other.routing_entry.link_quality);
+
+    if (this_cost != other_cost) return this_cost < other_cost;
+    return routing_entry.hop_count < other.routing_entry.hop_count;  // Tiebreaker
 }
 ```
+
+**Cost Formula Rationale**:
+- COST_PER_HOP = 35: Each additional hop acceptable if quality improves by ~35 points
+- Balances LoRa's per-hop latency/energy cost against link reliability
+- Example rankings (lower cost wins):
+  | Route | Hops | Quality | Cost |
+  |-------|------|---------|------|
+  | C     | 4    | 250     | 145  |
+  | B     | 3    | 200     | 160  |
+  | A     | 2    | 150     | 175  |
+  | D     | 2    | 100     | 225  |
 
 ### 4.2 Loop Prevention
 
-**Split Horizon**: Don't advertise routes back to the node that provided them
+**Split Horizon** (Actual Implementation):
+
+The implementation filters routing entries when sending updates:
 ```cpp
-void SendRoutingUpdate(uint16_t targetNode) {
-    for (auto& route : routingTable) {
-        if (route.nextHop != targetNode) {
-            // Only advertise if not learned from target
-            includeInUpdate(route);
+// From protocols/lora_mesh/routing/distance_vector_routing_table.cpp
+std::vector<RoutingTableEntry> GetRoutingEntries(AddressType exclude_address) const {
+    std::vector<RoutingTableEntry> entries;
+    for (const auto& node : nodes_) {
+        if (node.is_active &&
+            node.routing_entry.destination != exclude_address) {
+            entries.push_back(node.ToRoutingTableEntry());
         }
     }
+    return entries;
 }
+
+// Usage: exclude own address when broadcasting
+routing_table_->GetRoutingEntries(node_address_);
 ```
+
+> **Note**: The current implementation excludes routes by destination address rather than by next_hop. This prevents advertising self-routes but doesn't implement traditional split horizon (filtering by next_hop).
 
 **Capability Update Loop Prevention (v1.2)**:
 
@@ -766,35 +819,42 @@ Topology: Node1 ← → Node2 (bidirectional)
 5. No loop formed: stale information cannot propagate
 ```
 
-**Route Poisoning**: Advertise unreachable routes with infinite metric
-```cpp
-void PoisonRoute(uint16_t destination) {
-    RouteEntry poisonRoute;
-    poisonRoute.destination = destination;
-    poisonRoute.hops = INFINITE_HOPS;
-    poisonRoute.linkQuality = 0;
-    broadcastRoutingUpdate(poisonRoute);
-}
-```
+**Route Poisoning**:
+
+> **Note**: Explicit route poisoning (broadcasting infinite metric) is not currently implemented. Routes are implicitly invalidated through timeout-based aging. See Section 10 for planned route poisoning enhancements.
 
 ### 4.3 Route Aging
 
-Routes are aged out if not refreshed within the configured timeout:
+Routes are aged out using a dual-timeout mechanism (Actual Implementation):
 
 ```cpp
-void AgeRoutes() {
-    uint32_t currentTime = getCurrentTime();
-    for (auto& route : routingTable) {
-        if (currentTime - route.lastUpdate > ROUTE_TIMEOUT) {
-            if (route.flags & ROUTE_PERMANENT) {
-                continue; // Don't age permanent routes
-            }
-            removeRoute(route.destination);
-            broadcastRoutePoison(route.destination);
+// From protocols/lora_mesh/routing/distance_vector_routing_table.cpp
+size_t RemoveInactiveNodes(uint32_t current_time,
+                           uint32_t route_timeout_ms,
+                           uint32_t node_timeout_ms) {
+    // Phase 1: Mark routes as inactive if they've timed out
+    for (auto& node : nodes_) {
+        if (node.IsExpired(current_time, route_timeout_ms) && node.is_active) {
+            node.is_active = false;
+            NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
         }
     }
+
+    // Phase 2: Remove nodes that have been inactive for too long
+    auto new_end = std::remove_if(
+        nodes_.begin(), nodes_.end(),
+        [current_time, node_timeout_ms](const NetworkNodeRoute& node) {
+            return node.IsExpired(current_time, node_timeout_ms);
+        });
+    nodes_.erase(new_end, nodes_.end());
 }
 ```
+
+**Configuration Parameters**:
+- `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
+- `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
+
+> **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
 ### 4.5 Network Topology Examples and Routing Behavior
 
@@ -1164,28 +1224,38 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 
 ### 5.2 Timing Parameters
 
+The TDMA timing is configured through two separate structures:
+
+**Superframe Structure** (`types/protocols/lora_mesh/superframe.hpp`):
 ```cpp
-struct SuperframeConfig {
-    uint16_t slot_duration_ms;      // Duration of each slot (ms)
-    uint8_t total_slots;           // Number of slots in superframe
-    uint32_t superframe_duration_ms; // Total superframe duration (ms)
-    uint8_t guard_time_ms;         // TX guard time for RX readiness (ms)
-    uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms)
-    uint8_t max_hops;              // Network diameter limit
-    float target_duty_cycle;       // Target power efficiency (0.3 = 30%)
+struct Superframe {
+    uint16_t total_slots = 0;           // Total number of slots in the superframe
+    uint16_t data_slots = 0;            // Number of data transmission/reception slots
+    uint16_t discovery_slots = 0;       // Number of discovery slots for network joining
+    uint16_t control_slots = 0;         // Number of control slots for management
+    uint32_t slot_duration_ms = 0;      // Duration of each slot in milliseconds
+    uint32_t superframe_start_time = 0; // Start time of current superframe cycle
 };
 
-// Default configuration (Power-Optimized)
-SuperframeConfig defaultConfig = {
+// Default configuration
+Superframe defaultSuperframe = {
+    .total_slots = 100,
+    .data_slots = 60,
+    .discovery_slots = 20,
+    .control_slots = 20,
     .slot_duration_ms = 1000,      // 1 second per slot
-    .total_slots = 20,             // Variable based on network size
-    .superframe_duration_ms = 20000, // 20 second superframe
-    .guard_time_ms = 50,           // 50ms TX guard time for RX readiness
-    .sync_tolerance_ms = 100,      // 100ms sync tolerance
-    .max_hops = 5,                 // Maximum network diameter
-    .target_duty_cycle = 0.3f      // 30% active, 70% sleep
+    .superframe_start_time = 0
 };
 ```
+
+**Protocol Configuration** (`types/configurations/protocol_configuration.hpp`):
+```cpp
+// Relevant timing parameters from LoRaMeshProtocolConfig
+uint8_t max_hops_ = 10;           // Maximum number of hops for routing (1-16)
+uint32_t guard_time_ms_ = 50;     // TX guard time for RX readiness (10-500ms)
+```
+
+*Note: `sync_tolerance_ms` and `target_duty_cycle` are planned features (see Section 10 Future Work).*
 
 ### 5.3 Synchronization Protocol
 
@@ -1585,54 +1655,14 @@ Power-Optimized Superframe:
 
 ### 5.8 Network Manager Election Sequence
 
-When the current network manager fails, a new manager must be elected:
+> **Note**: Automatic Network Manager election is planned but not yet implemented. See Section 10 (Future Work) for the planned election protocol.
 
-```mermaid
-sequenceDiagram
-    participant A as Node A
-    participant B as Node B (Failed Manager)
-    participant C as Node C
-    participant D as Node D
-    
-    Note over A,D: Normal operation with B as network manager
-    B->>A: SYNC_BEACON (regular operation)
-    B->>C: SYNC_BEACON (regular operation)  
-    B->>D: SYNC_BEACON (regular operation)
-    
-    Note over B: Network Manager B fails/disconnects
-    
-    Note over A,D: Sync timeout detection
-    A->>A: No sync beacon received (timeout)
-    C->>C: No sync beacon received (timeout)
-    D->>D: No sync beacon received (timeout)
-    
-    Note over A,D: Manager election process
-    A->>A: Enter manager election mode
-    A->>*: Broadcast MANAGER_ELECTION (nodeId=A, priority=high)
-    
-    C->>C: Enter manager election mode
-    C->>*: Broadcast MANAGER_ELECTION (nodeId=C, priority=medium)
-    
-    D->>D: Enter manager election mode
-    D->>*: Broadcast MANAGER_ELECTION (nodeId=D, priority=low)
-    
-    Note over A,D: Election resolution (highest priority wins)
-    A->>A: Received all election messages
-    A->>A: I have highest priority - become manager
-    
-    C->>C: Node A has higher priority
-    C->>A: MANAGER_ACCEPT (accept A as manager)
-    
-    D->>D: Node A has higher priority  
-    D->>A: MANAGER_ACCEPT (accept A as manager)
-    
-    Note over A,D: New manager takes control
-    A->>A: Transition to NETWORK_MANAGER state
-    A->>*: Broadcast SYNC_BEACON (new manager)
-    
-    C->>C: Synchronize with new manager A
-    D->>D: Synchronize with new manager A
-```
+**Current Behavior**: Network manager designation can be controlled via the `NodeRole` configuration (see Section 6.1.2):
+- **Explicit designation**: Configure a node with `NodeRole::NETWORK_MANAGER` to immediately create and manage a network
+- **Implicit designation**: With `NodeRole::AUTO` (default), nodes will create a network if discovery times out
+- **Join-only nodes**: Configure with `NodeRole::NODE_ONLY` to prevent network creation
+
+When the network manager fails, nodes transition to FAULT_RECOVERY state and return to DISCOVERY mode to find or create a new network. Automatic manager election via MANAGER_ELECTION and MANAGER_ACCEPT messages is a planned feature.
 
 ### 5.6 Fault Recovery and Network Healing
 
@@ -1689,54 +1719,80 @@ sequenceDiagram
 
 ### 6.1 Network Discovery Process
 
+The current implementation uses **sync beacon-based discovery** rather than explicit discovery request/response messages. Nodes discover existing networks by listening for SYNC_BEACON broadcasts.
+
 ```mermaid
 sequenceDiagram
     participant N as New Node
     participant M as Network Manager
-    participant E as Existing Node
-    
+    participant S as Sponsor Node (optional)
+
     N->>N: Enter DISCOVERY state
-    N->>*: Broadcast DISCOVERY_REQUEST
-    
-    alt Network Manager responds
-        M->>N: DISCOVERY_RESPONSE (network_info)
-        N->>N: Evaluate network
-        N->>M: JOIN_REQUEST
-        M->>N: JOIN_RESPONSE (slot_assignment)
+    N->>N: Listen for SYNC_BEACON broadcasts
+
+    alt Sync beacon received
+        M->>N: SYNC_BEACON (network_info)
+        Note over N: or via Sponsor Node
+        S->>N: SYNC_BEACON (forwarded)
+        N->>N: Select sponsor (first beacon sender)
+        N->>S: JOIN_REQUEST (via sponsor)
+        S->>M: JOIN_REQUEST (forwarded to NM)
+        M->>S: JOIN_RESPONSE (via sponsor)
+        S->>N: JOIN_RESPONSE (to joining node)
         N->>N: Enter NORMAL_OPERATION
-    else No response
-        N->>N: Timeout - become Network Manager
+    else No beacon received (timeout)
+        N->>N: Become Network Manager
         N->>N: Enter NETWORK_MANAGER state
+        N->>*: Start broadcasting SYNC_BEACON
     end
 ```
 
+#### 6.1.1 Discovery Timeout Jitter
+
+When multiple nodes start simultaneously (within a few seconds), they would all enter DISCOVERY state and timeout at the same time, each creating their own network. To prevent this race condition, the discovery timeout includes **random jitter** based on the node address.
+
+**Jitter Mechanism**:
+- Base discovery timeout: `total_slots × slot_duration_ms × 3` (typically ~30 seconds)
+- Maximum jitter: `discovery_jitter_max_ms` (default: 5000ms)
+- Jitter calculation: Seeded by node address for deterministic behavior per node
+
+**Effect**:
+- Different nodes timeout at different times (spread over 5 seconds)
+- First node to timeout becomes Network Manager and starts beaconing
+- Other nodes receive the beacon before their timeout and join instead of creating new networks
+
+**Configuration**: The jitter can be configured via `SuperframeService::SetDiscoveryJitter(uint32_t max_jitter_ms)`. Set to 0 to disable jitter (not recommended for production).
+
+#### 6.1.2 Node Role Configuration
+
+For deterministic network formation, nodes can be explicitly configured with one of three roles:
+
+| Role | Enum Value | Behavior |
+|------|------------|----------|
+| **AUTO** | 0 | Default. Create network if discovery times out (existing behavior) |
+| **NETWORK_MANAGER** | 1 | Immediately create network, skip discovery wait |
+| **NODE_ONLY** | 2 | Never create network, wait indefinitely to join |
+
+**Use Cases**:
+- **Testing**: Designate one node as NETWORK_MANAGER and others as NODE_ONLY to ensure deterministic network formation
+- **Production**: Use AUTO for most deployments; use explicit roles when network topology is known in advance
+- **Fixed infrastructure**: Use NETWORK_MANAGER for gateway nodes that should always be the network coordinator
+
+**Configuration**:
+```cpp
+LoRaMeshProtocolConfig config(node_address);
+config.setNodeRole(NodeRole::NETWORK_MANAGER);  // or NODE_ONLY, or AUTO
+```
+
+**NODE_ONLY Behavior**: Nodes with NODE_ONLY role will remain in DISCOVERY state indefinitely until a SYNC_BEACON is received. They will never call `CreateNetwork()` regardless of discovery timeout.
+
+**NETWORK_MANAGER Behavior**: Nodes with NETWORK_MANAGER role will skip the discovery phase entirely and immediately create a new network, entering the NETWORK_MANAGER protocol state.
+
 ### 6.2 Discovery Messages
 
-#### 6.2.1 Discovery Request
-```cpp
-struct DiscoveryRequest {
-    uint8_t messageType;     // DISCOVERY_REQUEST (0x24)
-    uint16_t nodeId;         // Discovering node ID
-    uint8_t capabilities;    // Node capabilities
-    uint8_t preferredRole;   // Preferred network role
-    uint8_t maxHops;         // Maximum network diameter
-    uint8_t checksum;        // Message integrity
-};
-```
+> **Note**: Dedicated DISCOVERY_REQUEST and DISCOVERY_RESPONSE message types are planned but not yet implemented. See Section 10 (Future Work) for the planned discovery protocol with explicit message types.
 
-#### 6.2.2 Discovery Response
-```cpp
-struct DiscoveryResponse {
-    uint8_t messageType;     // DISCOVERY_RESPONSE (0x25)
-    uint16_t managerId;      // Network manager ID
-    uint16_t networkId;      // Network identifier
-    uint8_t networkSize;     // Number of active nodes
-    uint8_t availableSlots;  // Number of free slots
-    uint8_t networkQuality;  // Overall network quality
-    uint32_t uptime;         // Network uptime
-    uint8_t checksum;        // Message integrity
-};
-```
+**Current Implementation**: Network discovery relies on receiving SYNC_BEACON messages (0x46) from existing networks. The sync beacon provides network information (network_id, total_slots, network_manager) needed to initiate the join process.
 
 ### 6.3 Join Process
 
@@ -2076,48 +2132,55 @@ if (sponsor_address == node_address_) {
 
 ### 7.2 LoRaMesher Frame Structure
 
+The base header structure used by all messages:
+
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ├─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┤
-│     Message Type    │     Flags     │         Source Node       │
+│         Destination Node          │          Source Node          │
 ├─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┤
-│      Destination Node (optional)     │   TTL   │ Seq Number (H) │
+│   Message Type  │  Payload Size   │       [Message-Specific       │
 ├─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┤
-│ Seq Number (L) │ Payload Length │          Payload...         │
-├─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┤
-│                         ...Payload...                          │
-├─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┤
-│   Checksum    │
-└─┼─┼─┼─┼─┼─┼─┼─┤
+│                   Fields and Payload...]                          │
+└─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┘
 ```
 
 ### 7.3 Header Field Descriptions
 
+**BaseHeader (6 bytes)** - Common to all message types:
+
 | Field | Size | Description |
 |-------|------|-------------|
-| Message Type | 8 bits | Message category and subtype |
-| Flags | 8 bits | Protocol flags (ACK required, priority, etc.) |
+| Destination Node | 16 bits | Target node identifier (0xFFFF for broadcast) |
 | Source Node | 16 bits | Originating node identifier |
-| Destination Node | 16 bits | Target node (optional for broadcasts) |
-| TTL | 8 bits | Time-to-live (hop limit) |
-| Sequence Number | 16 bits | Message sequence number |
-| Payload Length | 8 bits | Length of payload data |
-| Payload | Variable | Application or protocol data |
-| Checksum | 8 bits | XOR checksum of entire frame |
+| Message Type | 8 bits | Message category and subtype (see Section 3.2) |
+| Payload Size | 8 bits | Length of message-specific fields + payload |
+
+**Message-Specific Extensions** - Added after BaseHeader:
+
+| Message Type | Additional Fields | Total Size |
+|--------------|-------------------|------------|
+| SYNC_BEACON | network_id, total_slots, slot_duration_ms, network_manager, hop_count, propagation_delay_ms, max_hops | 19 bytes |
+| JOIN_REQUEST | battery_level, requested_slots, next_hop, sponsor_address, hop_count | 15 bytes |
+| JOIN_RESPONSE | network_id, allocated_slots, status, next_hop, target_address, control_slot_index | 17 bytes |
+| ROUTE_TABLE | network_manager, table_version, entry_count, source_capabilities + entries | 11+ bytes |
+| DATA | payload only | 6+ bytes |
+
+> **Note**: The current implementation does not include Flags, TTL, Sequence Number, or Checksum fields in the base header. These are planned for future versions (see Section 10).
 
 ### 7.4 Maximum Frame Sizes
 
 | LoRa Configuration | Max Frame Size | Sync Beacon Size | Data Message Size |
 |-------------------|----------------|------------------|-------------------|
-| SF7, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
-| SF8, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
-| SF9, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
-| SF10, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
-| SF11, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
-| SF12, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
+| SF7, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF8, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF9, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF10, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF11, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF12, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
 
-*Note: Sync beacons optimized to 21 bytes (36% reduction) for faster transmission and lower power consumption. Header overhead is 9 bytes, leaving 246 bytes for data payload.*
+*Note: BaseHeader overhead is 6 bytes. Sync beacons are 19 bytes total (6 base + 13 sync-specific). Maximum data payload is 249 bytes (255 - 6 base header).*
 
 ---
 
@@ -2145,62 +2208,93 @@ if (sponsor_address == node_address_) {
 
 ### 8.2 Error Recovery Mechanisms
 
-#### 8.2.1 Message-Level Recovery
+The implementation uses a **Result-based error handling system** with the `LoraMesherErrorCode` enum.
+
+#### 8.2.1 Error Code System (Actual Implementation)
 ```cpp
-enum class MessageResult {
-    SUCCESS,
-    CHECKSUM_ERROR,
-    TIMEOUT,
-    ROUTE_ERROR,
-    BUFFER_FULL
+// From types/error_codes/loramesher_error_codes.hpp
+enum class LoraMesherErrorCode {
+    kSuccess = 0,
+    kUnknownError,
+    kConfigurationError,
+    kTransmissionError,
+    kReceptionError,
+    kInvalidState,
+    kHardwareError,
+    kTimeout,
+    kInvalidParameter,
+    kBufferOverflow,
+    kNotInitialized,
+    kCrcError,
+    kPreambleError,
+    kSyncWordError,
+    kFrequencyError,
+    kCalibrationError,
+    kMemoryError,
+    kBusyError,
+    kInterruptError,
+    kModulationError,
+    kInvalidArgument,
+    kNotImplemented,
+    kSerializationError
 };
 
-MessageResult sendMessageWithRetry(const Message& msg, uint8_t maxRetries = 3) {
-    for (uint8_t attempt = 0; attempt < maxRetries; attempt++) {
-        MessageResult result = sendMessage(msg);
-        if (result == SUCCESS) {
-            return SUCCESS;
+// Result class usage
+Result SendMessage(const BaseMessage& message);  // Returns Result with error code
+if (!result.IsSuccess()) {
+    auto error = result.getErrorCode();
+    // Handle specific error...
+}
+```
+
+#### 8.2.2 Route Recovery (Actual Implementation)
+
+Route recovery is handled through the routing table's inactive node removal:
+
+```cpp
+// From protocols/lora_mesh/routing/distance_vector_routing_table.cpp
+size_t RemoveInactiveNodes(uint32_t current_time,
+                           uint32_t route_timeout_ms,
+                           uint32_t node_timeout_ms) {
+    // Mark routes as inactive if they've timed out
+    for (auto& node : nodes_) {
+        if (node.IsExpired(current_time, route_timeout_ms) && node.is_active) {
+            node.is_active = false;
+            NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
         }
-        
-        // Exponential backoff
-        delay(100 * (1 << attempt));
     }
-    return TIMEOUT;
+
+    // Remove nodes that have been inactive for too long
+    // ... node removal logic
 }
 ```
 
-#### 8.2.2 Route Recovery
+> **Note**: Explicit `broadcastRoutePoison()` and `handleRouteError()` functions are not implemented. Route failures are handled implicitly through timeout-based inactive marking. See Section 10 for planned explicit route poisoning.
+
+#### 8.2.3 Network Recovery (Actual Implementation)
+
+Network recovery uses state machine transitions:
+
 ```cpp
-void handleRouteError(uint16_t destination) {
-    // Remove failed route
-    removeRoute(destination);
-    
-    // Broadcast route poison
-    broadcastRoutePoison(destination);
-    
-    // Trigger route discovery if needed
-    if (hasPendingTraffic(destination)) {
-        initiateRouteDiscovery(destination);
-    }
-}
+// State-based recovery via SetState()
+void SetState(ProtocolState state);
+
+// Synchronization management
+void SetSynchronized(bool synchronized);
+void PerformTimingSynchronization();
+
+// Network state reset
+void ResetNetworkState();
 ```
 
-#### 8.2.3 Network Recovery
-```cpp
-void handleNetworkPartition() {
-    // Clear stale routing information
-    purgeStaleRoutes();
-    
-    // Reset synchronization
-    resetSynchronization();
-    
-    // Return to discovery mode
-    changeState(DISCOVERY);
-    
-    // Attempt network healing
-    broadcastNetworkHealingBeacon();
-}
-```
+Recovery flow when sync is lost:
+1. Node detects sync beacon timeout
+2. Transitions to `FAULT_RECOVERY` state
+3. Clears stale routing information via `RemoveInactiveNodes()`
+4. Resets synchronization state
+5. Returns to `DISCOVERY` state to rejoin network
+
+> **Note**: Explicit `handleNetworkPartition()` and `broadcastNetworkHealingBeacon()` functions are not implemented. Network recovery relies on state machine transitions. See Section 10 for planned enhancements.
 
 ---
 
@@ -2346,30 +2440,208 @@ void handleNetworkPartition() {
 - **Energy Harvesting Integration**: Solar/RF energy harvesting support
 - **Lifetime Prediction**: Battery life estimation and optimization
 
+### 10.6 Planned Message Types and Protocols
+
+This section documents message types and protocols that are specified but not yet implemented.
+
+#### 10.6.1 Data Message Extensions
+```cpp
+// Planned data message subtypes
+DATA_BROADCAST = 0x12,  // Network-wide broadcast (planned)
+DATA_MULTICAST = 0x13,  // Group communication (planned)
+```
+
+**DATA_BROADCAST**: Will enable network-wide broadcast capability for messages that need to reach all nodes.
+
+**DATA_MULTICAST**: Will support group-based messaging where messages are delivered to a subset of nodes subscribed to a multicast group.
+
+#### 10.6.2 HELLO Message Protocol
+```cpp
+// Planned neighbor discovery message
+HELLO = 0x31,  // Hello packet for neighbor discovery (reserved)
+
+struct HelloMessage {
+    // Standard message header (6 bytes)
+    AddressType destination;     // Broadcast or target (2 bytes)
+    AddressType source;          // Sending node address (2 bytes)
+    MessageType type = HELLO;    // Message type 0x31 (1 byte)
+    uint8_t payload_size;        // Size of hello payload (1 byte)
+
+    // Hello-specific fields
+    uint32_t timestamp;          // Transmission timestamp (4 bytes)
+    uint8_t sequence_number;     // Message sequence for tracking (1 byte)
+    uint8_t link_quality;        // Local link quality assessment (1 byte)
+};
+```
+
+**Purpose**: HELLO messages will enable neighbor discovery and link quality assessment separate from routing table updates.
+
+#### 10.6.3 Discovery Message Protocol
+```cpp
+// Planned discovery messages (proposed codes)
+DISCOVERY_REQUEST = 0x47,   // Explicit network discovery request (planned)
+DISCOVERY_RESPONSE = 0x48,  // Response with network information (planned)
+
+struct DiscoveryRequest {
+    uint8_t messageType;     // DISCOVERY_REQUEST (0x47)
+    uint16_t nodeId;         // Discovering node ID
+    uint8_t capabilities;    // Node capabilities
+    uint8_t preferredRole;   // Preferred network role
+    uint8_t maxHops;         // Maximum network diameter
+    uint8_t checksum;        // Message integrity
+};
+
+struct DiscoveryResponse {
+    uint8_t messageType;     // DISCOVERY_RESPONSE (0x48)
+    uint16_t managerId;      // Network manager ID
+    uint16_t networkId;      // Network identifier
+    uint8_t networkSize;     // Number of active nodes
+    uint8_t availableSlots;  // Number of free slots
+    uint8_t networkQuality;  // Overall network quality
+    uint32_t uptime;         // Network uptime
+    uint8_t checksum;        // Message integrity
+};
+```
+
+**Purpose**: Explicit discovery messages will allow nodes to actively query for available networks instead of passively waiting for sync beacons.
+
+**Note**: Original type code 0x24 was reassigned because it conflicts with PONG (0x24).
+
+#### 10.6.4 Network Manager Election Protocol
+```cpp
+// Planned election messages
+MANAGER_ELECTION = 0x49,  // Manager election broadcast (planned)
+MANAGER_ACCEPT = 0x4A,    // Accept elected manager (planned)
+```
+
+**Election Sequence** (Planned):
+```mermaid
+sequenceDiagram
+    participant A as Node A
+    participant B as Node B (Failed Manager)
+    participant C as Node C
+    participant D as Node D
+
+    Note over A,D: Normal operation with B as network manager
+    B->>A: SYNC_BEACON (regular operation)
+
+    Note over B: Network Manager B fails/disconnects
+
+    Note over A,D: Sync timeout detection
+    A->>A: No sync beacon received (timeout)
+
+    Note over A,D: Manager election process
+    A->>*: Broadcast MANAGER_ELECTION (nodeId=A, priority=high)
+    C->>*: Broadcast MANAGER_ELECTION (nodeId=C, priority=medium)
+    D->>*: Broadcast MANAGER_ELECTION (nodeId=D, priority=low)
+
+    Note over A,D: Election resolution (highest priority wins)
+    A->>A: I have highest priority - become manager
+    C->>A: MANAGER_ACCEPT (accept A as manager)
+    D->>A: MANAGER_ACCEPT (accept A as manager)
+
+    Note over A,D: New manager takes control
+    A->>*: Broadcast SYNC_BEACON (new manager)
+```
+
+**Election Priority Criteria** (Proposed):
+1. Lowest node address (deterministic)
+2. Highest battery level (power-aware)
+3. Best network connectivity (topology-aware)
+
+#### 10.6.5 Configuration Parameters (Planned)
+```cpp
+// Planned additions to protocol configuration
+uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms)
+float target_duty_cycle;       // Target power efficiency (0.3 = 30%)
+```
+
+**Purpose**: These parameters will enable fine-grained control over synchronization accuracy and power management.
+
+#### 10.6.6 Frame Header Extensions (Planned)
+
+The following fields are planned additions to the BaseHeader:
+
+```cpp
+// Planned BaseHeader extensions
+struct ExtendedHeader {
+    // Current fields (6 bytes)
+    AddressType destination;
+    AddressType source;
+    MessageType type;
+    uint8_t payload_size;
+
+    // Planned additions
+    uint8_t flags;           // Protocol flags (ACK required, priority, etc.)
+    uint8_t ttl;             // Time-to-live (hop limit)
+    uint16_t sequence_number;// Message sequence number
+    uint8_t checksum;        // XOR checksum of entire frame
+};
+```
+
+**Purpose**: Enable message acknowledgments, hop limiting, duplicate detection, and integrity verification.
+
+#### 10.6.7 Routing Algorithm Enhancements
+
+**Weighted Cost Metric** (Implemented):
+
+A composite cost formula combining hop count and link quality has been implemented.
+See Section 4.1 for details on the `CalculateRouteCost()` function and `IsBetterRouteThan()` method.
+
+**Explicit Route Poisoning**:
+```cpp
+// Planned function for route invalidation
+void BroadcastRoutePoison(AddressType destination) {
+    RoutingTableEntry poison_entry;
+    poison_entry.destination = destination;
+    poison_entry.hop_count = 255;      // INFINITE_HOPS
+    poison_entry.link_quality = 0;
+    BroadcastRoutingUpdate(poison_entry);
+}
+```
+
+**True Split Horizon**:
+```cpp
+// Planned: Filter by next_hop instead of destination
+std::vector<RoutingTableEntry> GetRoutingEntriesWithSplitHorizon(
+    AddressType target_node) const {
+    std::vector<RoutingTableEntry> entries;
+    for (const auto& node : nodes_) {
+        if (node.is_active && node.next_hop != target_node) {
+            entries.push_back(node.ToRoutingTableEntry());
+        }
+    }
+    return entries;
+}
+```
+
 ---
 
 ## 11. Conclusion
 
 The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh networking with the following key features:
 
-### Core Capabilities
-- **Reliable Routing**: Distance-vector algorithm with link quality metrics and deterministic control slot allocation
-- **Power-Aware TDMA**: 70% sleep time with 30% target duty cycle for battery-powered operation
-- **Multi-Hop Synchronization**: Collision-free hop-layered sync beacon forwarding with 36% message size optimization
-- **Scalable Architecture**: Service-oriented design supporting 2-50 node networks efficiently
-
-### Advanced Features
-- **Optimized Sync Beacons**: 21-byte messages (reduced from 33 bytes) for faster transmission and lower power consumption
-- **Deterministic Slot Allocation**: Address-based ordering ensures all nodes calculate identical schedules
-- **Hop-Layered Forwarding**: Sequential transmission by hop distance eliminates inter-hop collisions
-- **Network Synchronization**: Hierarchical timing coordination with ±50ms accuracy across multi-hop networks
+### Core Capabilities (Implemented)
+- **Distance-Vector Routing**: Link quality-based route selection with timeout-based route aging
+- **TDMA Coordination**: Superframe-based slot allocation with deterministic control slot ordering
+- **Multi-Hop Synchronization**: Hop-layered sync beacon forwarding with propagation delay compensation
+- **Sponsor-Based Joining**: Nodes beyond Network Manager range can join via intermediate sponsor nodes
 
 ### Technical Specifications
-- **Message Efficiency**: Sync beacons use only 25ms air time (SF7) vs 51ms for standard messages
-- **Power Optimization**: Target duty cycle of 30% with adaptive superframe sizing
-- **Network Scalability**: Supports up to 255 nodes with configurable parameters
+- **BaseHeader Size**: 6 bytes (destination, source, type, payload_size)
+- **Sync Beacon Size**: 19 bytes total (6 base + 13 sync-specific)
+- **Maximum Data Payload**: 249 bytes (255 - 6 header)
+- **Route Timeout**: Default 180,000 ms (3 minutes)
 - **Memory Footprint**: ~4.4KB RAM usage suitable for ESP32 deployment
 
-The protocol is specifically designed for embedded systems with limited resources while maintaining the flexibility to scale to larger networks. The recent optimizations in sync beacon efficiency and power-aware slot allocation make it particularly suitable for battery-powered IoT deployments requiring long operational lifetimes.
+### Implementation Notes
+This specification has been synchronized with the actual codebase as of version 1.2.1. Several features documented in earlier versions are marked as planned in Section 10:
+- Frame header fields (Flags, TTL, Sequence Number, Checksum)
+- Explicit route poisoning and network healing beacons
+- Hop count as primary routing metric
+- Network Manager election protocol
+- Explicit discovery request/response messages
 
-**Current Status**: Academic specification complete with ongoing implementation enhancements for power efficiency and multi-hop synchronization reliability.
+The protocol is specifically designed for embedded systems with limited resources while maintaining the flexibility to scale to larger networks.
+
+**Current Status**: Core protocol implemented. See Section 10 for planned enhancements and research directions.

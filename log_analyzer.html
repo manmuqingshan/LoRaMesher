@@ -112,14 +112,11 @@
         }
         .timeline {
             width: 100%;
-            height: 400px;
             overflow-x: auto;
-            overflow-y: hidden;
             position: relative;
         }
         .timeline-content {
             position: relative;
-            height: 100%;
             min-width: 100%;
         }
         .node-timeline {
@@ -500,6 +497,29 @@
             margin: 5px 0;
             color: #856404;
         }
+        /* Toast notification for copy feedback */
+        .copy-toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 10000;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+        .copy-toast.show {
+            opacity: 1;
+        }
+        /* Click feedback for slot bars and message indicators */
+        .slot-bar:active, .message-indicator:active {
+            transform: scale(0.95);
+        }
     </style>
 </head>
 <body>
@@ -718,7 +738,7 @@
             let category, cssClass;
             
             switch (mainType) {
-                case MessageType.DATA_MSG:
+                case MessageType.DATA:
                     category = 'data';
                     cssClass = direction === 'received' ? 'tx' : 'tx'; // Keep tx for both for now
                     break;
@@ -844,6 +864,11 @@
             }
 
             formatTimestamp(timestamp) {
+                // Check if any file uses line numbers instead of timestamps
+                if (this.hasFilesWithLineNumbers()) {
+                    return `${timestamp}`;
+                }
+
                 if (this.timestampFormat === 'milliseconds') {
                     return `${timestamp}ms`;
                 }
@@ -894,6 +919,28 @@
                 const milliseconds = relativeMs % 1000;
 
                 return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${Math.floor(milliseconds).toString().padStart(3, '0')}`;
+            }
+
+            copyToClipboard(text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    const toast = document.getElementById('copyToast');
+                    toast.textContent = `Copied: ${text}`;
+                    toast.classList.add('show');
+                    setTimeout(() => {
+                        toast.classList.remove('show');
+                    }, 1500);
+                }).catch(err => {
+                    console.error('Failed to copy: ', err);
+                });
+            }
+
+            hasFilesWithLineNumbers() {
+                for (const [, fileData] of this.files) {
+                    if (fileData.usesLineNumbers) {
+                        return true;
+                    }
+                }
+                return false;
             }
 
             async selectFilesWithPicker() {
@@ -1128,7 +1175,9 @@
                 fileData.messages = [];
                 fileData.nodes.clear();
                 fileData.originalTimeMap = new Map();
+                fileData.usesLineNumbers = false;
                 let pendingTransmission = null;
+                let lineNumber = 0;
 
                 const lines = logContent.split('\n');
                 for (let i = 0; i < lines.length; i++) {
@@ -1162,7 +1211,12 @@
                         const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
                         nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
                     } else {
-                        continue; // Skip lines without timestamp
+                        // No timestamp found - use line number as pseudo-timestamp
+                        lineNumber++;
+                        timestamp = lineNumber;
+                        const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
+                        nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                        fileData.usesLineNumbers = true;
                     }
 
                     // Use existing parsing logic
@@ -1994,8 +2048,14 @@
 📅 Start: ${this.formatTimestamp(slot.start)}
 ⏱️ End: ${this.formatTimestamp(slot.end)}
 ⏳ Duration: ${duration}ms
-📊 Relative: ${relativeTime}ms from start`;
-                
+📊 Relative: ${relativeTime}ms from start
+📋 Click to copy timestamp`;
+
+                // Click to copy timestamp
+                bar.addEventListener('click', () => {
+                    this.copyToClipboard(this.formatTimestamp(slot.start));
+                });
+
                 nodeDiv.appendChild(bar);
             }
 
@@ -2061,10 +2121,16 @@
 📥 To: 0x${message.to}
 ${directionIcon} Direction: ${direction}
 📂 Category: ${category}
-📊 Relative: ${(message.timestamp - this.timeRange.start).toFixed(1)}ms from start`;
-                
+📊 Relative: ${(message.timestamp - this.timeRange.start).toFixed(1)}ms from start
+📋 Click to copy timestamp`;
+
                 indicator.title = messageInfo;
-                
+
+                // Click to copy timestamp
+                indicator.addEventListener('click', () => {
+                    this.copyToClipboard(this.formatTimestamp(message.timestamp));
+                });
+
                 nodeDiv.appendChild(indicator);
             }
 
@@ -2287,5 +2353,6 @@ ${directionIcon} Direction: ${direction}
             }
         }
     </script>
+    <div id="copyToast" class="copy-toast">Timestamp copied!</div>
 </body>
 </html>

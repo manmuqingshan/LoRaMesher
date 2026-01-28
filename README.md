@@ -418,3 +418,6 @@ The nodes have 6 protocol states:
 - **Load balancing**: Implement better distribution of network traffic across nodes.
 - **Discovery time**: Discovery Time should be calculated depending on the superframe duration of the devices. Maybe it should be an option to not stop the discovery until finding a network if known that an existing network exists. Then a Create network straight forward should be added.
 - **Fix function**: CreateRoutingTableMessage() in networ_service.cpp there is 3 loops there, you can do better.
+
+
+- Error when testing messages, when send messages it should know if the message is at the air, some times it will start receiving and it will get messages from 10 slots ago. Fix this.

@@ -93,3 +93,9 @@ Uses GoogleTest with comprehensive coverage:
 - **Hardware mocks**: Full radio and RTOS simulation
 - **Network simulation**: Multi-node mesh testing framework
 - **PlatformIO Native Tests**: Run native tests using `pio test -e test_native`
+
+## Documentation
+
+Update these files when protocol or library behavior changes:
+- **PROTOCOL_SPEC.md**: Protocol specifications and message formats
+- **README.md**: User-facing documentation and API usage
