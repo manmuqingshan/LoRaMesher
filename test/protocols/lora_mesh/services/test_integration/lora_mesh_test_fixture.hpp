@@ -99,11 +99,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
      *
      * @param name Node name for debugging
      * @param address Node address
+     * @param node_role Node role for network formation (default: AUTO)
      * @param pin_config Pin configuration (default: unique pins based on index)
      * @param radio_config Radio configuration (default: mock radio)
      * @return TestNode& Reference to the created node
      */
     TestNode& CreateNode(const std::string& name, AddressType address,
+                         NodeRole node_role = NodeRole::AUTO,
                          const PinConfig& pin_config = PinConfig(),
                          const RadioConfig& radio_config = RadioConfig()) {
         // Create a node with unique address and pin configuration
@@ -183,17 +185,55 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return *empty_node;
         }
 
-        // Configure the protocol with default configuration
+        // Configure the protocol with default configuration and node role
         LoRaMeshProtocolConfig config(address);
+        config.setNodeRole(node_role);
         result = node->protocol->Configure(config);
         if (!result) {
             std::cerr << "Failed to configure protocol for " << name << ": "
                       << result.GetErrorMessage() << std::endl;
         }
 
+        // Register data received callback to populate received_messages
+        // Callback signature: void(AddressType source, const std::vector<uint8_t>& data)
+        node->protocol->SetDataReceivedCallback(
+            [node_ptr = node.get()](AddressType source,
+                                    const std::vector<uint8_t>& data) {
+                // Create a BaseMessage from the received data
+                auto msg_opt = BaseMessage::Create(
+                    node_ptr->address,  // destination (this node)
+                    source,             // source
+                    MessageType::DATA, data);
+                if (msg_opt.has_value()) {
+                    node_ptr->received_messages.push_back(msg_opt.value());
+                }
+            });
+
         // Add the node to our collection and return a reference to it
         nodes_.push_back(node);
         return *node;
+    }
+
+    /**
+     * @brief Create a network manager node (will create network immediately)
+     *
+     * @param name Node name for debugging
+     * @param address Node address
+     * @return TestNode& Reference to the created node
+     */
+    TestNode& CreateManagerNode(const std::string& name, AddressType address) {
+        return CreateNode(name, address, NodeRole::NETWORK_MANAGER);
+    }
+
+    /**
+     * @brief Create a joining-only node (will never create network, only join)
+     *
+     * @param name Node name for debugging
+     * @param address Node address
+     * @return TestNode& Reference to the created node
+     */
+    TestNode& CreateJoiningNode(const std::string& name, AddressType address) {
+        return CreateNode(name, address, NodeRole::NODE_ONLY);
     }
 
     /**
@@ -433,20 +473,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
      *
      * @param from Source node
      * @param to Destination node
-     * @param type Message type
      * @param payload Message payload
      * @return Result Success if message was sent successfully, error details otherwise
      */
-    Result SendMessage(TestNode& from, TestNode& to, MessageType type,
+    Result SendMessage(TestNode& from, TestNode& to,
                        const std::vector<uint8_t>& payload) {
-        auto message_opt =
-            BaseMessage::Create(to.address, from.address, type, payload);
-        if (!message_opt.has_value()) {
-            return Result(LoraMesherErrorCode::kSerializationError,
-                          "Failed to create message");
-        }
-
-        return from.protocol->SendMessage(message_opt.value());
+        return from.protocol->SendData(to.address, payload);
     }
 
     /**
@@ -497,11 +529,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param num_nodes Number of nodes to create
      * @param base_address Base address for nodes (default: 0x1000)
      * @param name_prefix Prefix for node names (default: "Node")
+     * @param manager_index Index of the node to designate as NETWORK_MANAGER
+     *                      (-1 = all nodes use AUTO role, default)
      * @return std::vector<TestNode*> Pointers to the created nodes
      */
     std::vector<TestNode*> GenerateFullMeshTopology(
         int num_nodes, AddressType base_address = 0x1000,
-        const std::string& name_prefix = "Node") {
+        const std::string& name_prefix = "Node", int manager_index = -1) {
         std::vector<TestNode*> result;
 
         // Create nodes with unique addresses and pin configurations
@@ -509,8 +543,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
             std::string name = name_prefix + std::to_string(i + 1);
             AddressType address = base_address + i;
 
-            // Create the node with default unique pin configuration
-            TestNode& node_ref = CreateNode(name, address);
+            // Determine node role based on manager_index
+            NodeRole role = NodeRole::AUTO;
+            if (manager_index >= 0) {
+                role = (i == manager_index) ? NodeRole::NETWORK_MANAGER
+                                            : NodeRole::NODE_ONLY;
+            }
+
+            // Create the node with the determined role
+            TestNode& node_ref = CreateNode(name, address, role);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -537,11 +578,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param num_nodes Number of nodes to create
      * @param base_address Base address for nodes (default: 0x1000)
      * @param name_prefix Prefix for node names (default: "Node")
+     * @param manager_index Index of the node to designate as NETWORK_MANAGER
+     *                      (-1 = all nodes use AUTO role, default)
      * @return std::vector<TestNode*> Pointers to the created nodes
      */
     std::vector<TestNode*> GenerateLineTopology(
         int num_nodes, AddressType base_address = 0x1000,
-        const std::string& name_prefix = "Node") {
+        const std::string& name_prefix = "Node", int manager_index = -1) {
         std::vector<TestNode*> result;
 
         // Create nodes with unique addresses and pin configurations
@@ -549,8 +592,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
             std::string name = name_prefix + std::to_string(i + 1);
             AddressType address = base_address + i;
 
-            // Create the node with default unique pin configuration
-            TestNode& node_ref = CreateNode(name, address);
+            // Determine node role based on manager_index
+            NodeRole role = NodeRole::AUTO;
+            if (manager_index >= 0) {
+                role = (i == manager_index) ? NodeRole::NETWORK_MANAGER
+                                            : NodeRole::NODE_ONLY;
+            }
+
+            // Create the node with the determined role
+            TestNode& node_ref = CreateNode(name, address, role);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -585,12 +635,14 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param central_node_index Index of the central node (default: 0)
      * @param base_address Base address for nodes (default: 0x1000)
      * @param name_prefix Prefix for node names (default: "Node")
+     * @param manager_index Index of the node to designate as NETWORK_MANAGER
+     *                      (-1 = all nodes use AUTO role, default)
      * @return std::vector<TestNode*> Pointers to the created nodes
      */
     std::vector<TestNode*> GenerateStarTopology(
         int num_nodes, int central_node_index = 0,
         AddressType base_address = 0x1000,
-        const std::string& name_prefix = "Node") {
+        const std::string& name_prefix = "Node", int manager_index = -1) {
         std::vector<TestNode*> result;
 
         // Create nodes with unique addresses and pin configurations
@@ -598,8 +650,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
             std::string name = name_prefix + std::to_string(i + 1);
             AddressType address = base_address + i;
 
-            // Create the node with default unique pin configuration
-            TestNode& node_ref = CreateNode(name, address);
+            // Determine node role based on manager_index
+            NodeRole role = NodeRole::AUTO;
+            if (manager_index >= 0) {
+                role = (i == manager_index) ? NodeRole::NETWORK_MANAGER
+                                            : NodeRole::NODE_ONLY;
+            }
+
+            // Create the node with the determined role
+            TestNode& node_ref = CreateNode(name, address, role);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -621,7 +680,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
         // Connect central node to all others
         for (size_t i = 0; i < result.size(); i++) {
-            if (i != central_node_index) {
+            if (i != static_cast<size_t>(central_node_index)) {
                 SetLinkStatus(*result[central_node_index], *result[i], true);
             }
         }
@@ -750,20 +809,18 @@ class LoRaMeshTestFixture : public ::testing::Test {
      *
      * @param nodes Nodes to check
      * @param expected_normal_nodes Number of nodes expected to be in NORMAL_OPERATION state
-     * @param timeout_ms Maximum time to wait (default: 2x discovery timeout)
      * @param check_interval_ms Interval between checks (default: 100ms)
      * @return bool True if network formed as expected, false otherwise
      */
     bool WaitForNetworkFormation(const std::vector<TestNode*>& nodes,
                                  int expected_normal_nodes,
-                                 uint32_t timeout_ms = 0,
-                                 uint32_t check_interval_ms = 100) {
-        if (timeout_ms == 0) {
-            auto* first_node = nodes.front();
-            timeout_ms = GetDiscoveryTimeout(*first_node) * 2;
-            LOG_DEBUG("Using default timeout of %u ms for network formation",
-                      timeout_ms);
-        }
+                                 uint32_t check_interval_ms = 15) {
+
+        auto* first_node = nodes.front();
+        uint32_t timeout_ms =
+            GetDiscoveryTimeout(*first_node) * (nodes.size() + 3);
+        LOG_DEBUG("Using default timeout of %u ms for network formation",
+                  timeout_ms);
 
         uint32_t elapsed = 0;
 
@@ -792,6 +849,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
             // Advance time and try again
             AdvanceTime(check_interval_ms);
             elapsed += check_interval_ms;
+
+            std::this_thread::yield();
         }
 
         return false;
