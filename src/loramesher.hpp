@@ -73,8 +73,20 @@ class LoraMesher {
     [[nodiscard]] Result SendMessage(const BaseMessage& msg);
 
     /**
+     * @brief Generate address from hardware ID without full initialization
+     *
+     * This static method allows users to determine the auto-generated hardware
+     * address before building LoraMesher. This is useful for configuring
+     * role-based settings (like NodeRole) based on the address.
+     *
+     * @return AddressType The address that would be auto-generated, or 0 if hardware ID unavailable
+     * @note Can be called before Build() to configure role-based settings
+     */
+    static AddressType GenerateAddressFromHardware();
+
+    /**
      * @brief Get the node's address in the network
-     * 
+     *
      * @return AddressType The node address
      */
     AddressType GetNodeAddress() const;
@@ -203,10 +215,21 @@ class LoraMesher {
 
     /**
      * @brief Create and initialize the protocol
-     * 
+     *
      * @return Result Success if protocol initialization was successful
      */
     [[nodiscard]] Result InitializeProtocol();
+
+    /**
+     * @brief Resolve the node address from configuration or auto-generation
+     *
+     * Encapsulates all address resolution logic: checks for configured address,
+     * attempts hardware-based generation, falls back to random generation.
+     *
+     * @param protocol_config The protocol configuration (may be updated with generated address)
+     * @return AddressType The resolved node address
+     */
+    AddressType ResolveNodeAddress(ProtocolConfig& protocol_config);
 
     /**
      * @brief Hardware event callback

@@ -345,6 +345,92 @@ TEST_F(LoraMesherInitializationTest, PingPongProtocolConfiguration) {
     ping_pong_mesher->Stop();
 }
 
+/**
+ * @brief Test GenerateAddressFromHardware static method returns consistent address
+ */
+TEST_F(LoraMesherInitializationTest, GenerateAddressFromHardwareConsistency) {
+    // Call GenerateAddressFromHardware multiple times
+    AddressType first_address = LoraMesher::GenerateAddressFromHardware();
+    AddressType second_address = LoraMesher::GenerateAddressFromHardware();
+    AddressType third_address = LoraMesher::GenerateAddressFromHardware();
+
+    // All calls should return the same address (hardware ID is deterministic)
+    EXPECT_EQ(first_address, second_address)
+        << "GenerateAddressFromHardware should return consistent address";
+    EXPECT_EQ(second_address, third_address)
+        << "GenerateAddressFromHardware should return consistent address";
+
+    // Address should be valid (non-zero on platforms with hardware ID)
+    // Note: On native/mock platforms, this may return 0 if hardware ID is unavailable
+}
+
+/**
+ * @brief Test that GenerateAddressFromHardware matches GetNodeAddress after build
+ */
+TEST_F(LoraMesherInitializationTest, GenerateAddressFromHardwareMatchesBuilt) {
+    // Pre-generate address using static method
+    AddressType pre_generated_address =
+        LoraMesher::GenerateAddressFromHardware();
+
+    // Skip test if hardware ID is not available (native mock environment)
+    if (pre_generated_address == 0) {
+        GTEST_SKIP() << "Hardware ID not available in test environment";
+    }
+
+    // Build LoraMesher with auto address from hardware
+    mesher_ = LoraMesher::Builder()
+                  .withRadioConfig(radio_config_)
+                  .withPinConfig(pin_config_)
+                  .withLoRaMeshProtocol(mesh_config_)
+                  .withAutoAddressFromHardware(true)
+                  .Build();
+
+    ASSERT_NE(mesher_, nullptr);
+
+    Result start_result = mesher_->Start();
+    EXPECT_TRUE(start_result)
+        << "Start() failed: " << start_result.GetErrorMessage();
+
+    AddressType built_address = mesher_->GetNodeAddress();
+
+    // The pre-generated address should match the address after build
+    EXPECT_EQ(pre_generated_address, built_address)
+        << "Pre-generated address (0x" << std::hex << pre_generated_address
+        << ") should match built address (0x" << built_address << ")";
+}
+
+/**
+ * @brief Test using GenerateAddressFromHardware for role-based configuration
+ */
+TEST_F(LoraMesherInitializationTest, GenerateAddressForRoleConfiguration) {
+    // This test demonstrates the intended use case:
+    // Pre-generate address to configure NodeRole before building
+
+    AddressType my_address = LoraMesher::GenerateAddressFromHardware();
+
+    // Skip if hardware ID not available
+    if (my_address == 0) {
+        GTEST_SKIP() << "Hardware ID not available in test environment";
+    }
+
+    // Build using the pre-generated address explicitly
+    mesher_ = LoraMesher::Builder()
+                  .withRadioConfig(radio_config_)
+                  .withPinConfig(pin_config_)
+                  .withLoRaMeshProtocol(mesh_config_)
+                  .withNodeAddress(my_address)  // Use pre-generated address
+                  .Build();
+
+    ASSERT_NE(mesher_, nullptr);
+
+    Result start_result = mesher_->Start();
+    EXPECT_TRUE(start_result);
+
+    // Address should match what we set
+    EXPECT_EQ(mesher_->GetNodeAddress(), my_address)
+        << "Node address should match the pre-generated address";
+}
+
 }  // namespace test
 }  // namespace loramesher
 
