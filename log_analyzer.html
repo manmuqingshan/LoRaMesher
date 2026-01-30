@@ -738,9 +738,9 @@
             let category, cssClass;
             
             switch (mainType) {
-                case MessageType.DATA:
+                case MessageType.DATA_MSG:
                     category = 'data';
-                    cssClass = direction === 'received' ? 'tx' : 'tx'; // Keep tx for both for now
+                    cssClass = direction === 'received' ? 'rx' : 'tx';
                     break;
                 case MessageType.CONTROL_MSG:
                     category = 'control';
@@ -1251,9 +1251,9 @@
                 }
 
                 // Parse message transmissions - handle "Sending message" pattern first
-                const sendingMatch = line.match(/Sending message to 0x([0-9A-Fa-f]+), type: (\d+)/);
+                const sendingMatch = line.match(/Sending message to 0x([0-9A-Fa-f]+), type: 0x([0-9A-Fa-f]+)/);
                 if (sendingMatch) {
-                    const messageTypeInfo = getMessageTypeInfo(sendingMatch[2], 'transmitted');
+                    const messageTypeInfo = getMessageTypeInfo('0x' + sendingMatch[2], 'transmitted');
 
                     // Add message directly for ESP32 logs (which don't have "Transmitting" line)
                     fileData.messages.push({
@@ -1466,175 +1466,6 @@
                 // Sort by timestamp
                 this.messages.sort((a, b) => a.timestamp - b.timestamp);
                 this.events.sort((a, b) => a.timestamp - b.timestamp);
-            }
-
-            parseLog(logContent) {
-                const lines = logContent.split('\n');
-                this.events = [];
-                this.messages = [];
-                this.nodes.clear();
-                this.pendingTransmission = null;
-
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
-
-                    // Parse timestamp and node info
-                    const timestampMatch = line.match(/\[(\d+) ms\]/);
-                    const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
-                    
-                    if (timestampMatch) {
-                        const timestamp = parseInt(timestampMatch[1]);
-                        const nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
-                        
-                        // Parse slot transitions
-                        const slotMatch = line.match(/Slot (\d+) transition: type=(\w+)/);
-                        if (slotMatch) {
-                            const slotNum = parseInt(slotMatch[1]);
-                            const slotType = slotMatch[2];
-                            
-                            this.events.push({
-                                timestamp,
-                                nodeId,
-                                type: 'slot_transition',
-                                slotNum,
-                                slotType
-                            });
-                        }
-
-                        // Parse message transmissions - handle "Sending message" pattern first
-                        const sendingMatch = line.match(/Sending message to 0x([0-9A-Fa-f]+), type: (\d+)/);
-                        if (sendingMatch) {
-                            const messageTypeInfo = getMessageTypeInfo(sendingMatch[2], 'transmitted');
-                            
-                            // Store pending transmission with type info
-                            this.pendingTransmission = {
-                                timestamp,
-                                nodeId,
-                                to: sendingMatch[1],
-                                messageTypeInfo
-                            };
-                        }
-
-                        // Parse "Transmitting message from X to Y" pattern - try multiple variations
-                        let transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
-                        if (!transmitMatch) {
-                            // Try without "to X" part
-                            transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+)/);
-                            if (transmitMatch) {
-                                transmitMatch[2] = 'FFFF'; // Default to broadcast if no "to" specified
-                            }
-                        }
-                        
-                        if (transmitMatch) {
-                            let messageTypeInfo = { name: 'UNKNOWN', category: 'unknown', cssClass: 'tx' };
-                            
-                            // Use pending transmission info if available and matches
-                            if (this.pendingTransmission && 
-                                this.pendingTransmission.nodeId === nodeId &&
-                                Math.abs(this.pendingTransmission.timestamp - timestamp) < 100) {
-                                messageTypeInfo = this.pendingTransmission.messageTypeInfo;
-                                this.pendingTransmission = null; // Clear pending transmission
-                            }
-                            
-                            // Add transmission indicator on sender node
-                            this.messages.push({
-                                timestamp,
-                                from: transmitMatch[1],
-                                to: transmitMatch[2],
-                                type: messageTypeInfo.cssClass,
-                                typeName: messageTypeInfo.name,
-                                category: messageTypeInfo.category,
-                                nodeId: transmitMatch[1], // Node that sent the message
-                                direction: 'transmitted'
-                            });
-                        }
-
-                        // Parse message reception
-                        const receiveMatch = line.match(/\*\*\* RECEIVED MESSAGE: type 0x([0-9A-Fa-f]+) from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
-                        if (receiveMatch) {
-                            const messageTypeInfo = getMessageTypeInfo('0x' + receiveMatch[1], 'received');
-                            
-                            // Add reception indicator on receiver node (use nodeId from timestamp line)
-                            this.messages.push({
-                                timestamp,
-                                from: receiveMatch[2],
-                                to: receiveMatch[3],
-                                type: messageTypeInfo.cssClass,
-                                typeName: messageTypeInfo.name,
-                                category: messageTypeInfo.category,
-                                nodeId: nodeId, // Use the node ID from the log line
-                                direction: 'received'
-                            });
-                        }
-
-                        // Parse additional message reception patterns
-                        const receivedMatch = line.match(/received message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
-                        if (receivedMatch) {
-                            // Try to infer message type from context
-                            let messageTypeInfo = { name: 'UNKNOWN', category: 'unknown', cssClass: 'rx' };
-                            
-                            if (line.includes('sync beacon')) {
-                                messageTypeInfo = getMessageTypeInfo(MessageType.SYNC_BEACON, 'received');
-                            } else if (line.includes('Join request')) {
-                                messageTypeInfo = getMessageTypeInfo(MessageType.JOIN_REQUEST, 'received');
-                            } else if (line.includes('routing table')) {
-                                messageTypeInfo = getMessageTypeInfo(MessageType.ROUTE_TABLE, 'received');
-                            } else if (line.includes('control')) {
-                                messageTypeInfo = { name: 'CONTROL', category: 'control', cssClass: 'control-rx' };
-                            }
-                            
-                            // Add reception indicator on receiver node
-                            this.messages.push({
-                                timestamp,
-                                from: receivedMatch[1],
-                                to: receivedMatch[2],
-                                type: messageTypeInfo.cssClass,
-                                typeName: messageTypeInfo.name,
-                                category: messageTypeInfo.category,
-                                nodeId: receivedMatch[2], // Node that received the message
-                                direction: 'received'
-                            });
-                        }
-
-                        // Parse protocol states
-                        const stateMatch = line.match(/Protocol task started|Network service configured|Starting LoRaMesh protocol/);
-                        if (stateMatch) {
-                            this.events.push({
-                                timestamp,
-                                nodeId,
-                                type: 'protocol_event',
-                                event: line.match(/\] (.+)$/)[1]
-                            });
-                        }
-
-                        // Track nodes
-                        if (nodeId !== 'unknown') {
-                            if (!this.nodes.has(nodeId)) {
-                                this.nodes.set(nodeId, {
-                                    id: nodeId,
-                                    firstSeen: timestamp,
-                                    lastSeen: timestamp,
-                                    slots: [],
-                                    states: []
-                                });
-                            }
-                            this.nodes.get(nodeId).lastSeen = timestamp;
-                        }
-                    }
-                }
-
-                // Calculate time range
-                const allTimestamps = this.events.map(e => e.timestamp);
-                this.timeRange.start = Math.min(...allTimestamps);
-                this.timeRange.end = Math.max(...allTimestamps);
-
-                console.log('Parsed log:', {
-                    events: this.events,
-                    messages: this.messages,
-                    nodes: this.nodes,
-                    timeRange: this.timeRange
-                });
             }
 
             toggleFile(fileId) {

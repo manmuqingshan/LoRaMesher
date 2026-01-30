@@ -116,7 +116,7 @@ Result HardwareManager::SendMessage(const BaseMessage& message) {
                       "Hardware not running");
     }
 
-    LOG_DEBUG("Sending message to 0x%04X, type: 0x%04X",
+    LOG_DEBUG("Sending message to 0x%04X, type: 0x%02X",
               message.GetHeader().GetDestination(),
               static_cast<int>(message.GetHeader().GetType()));
 
