@@ -10,7 +10,13 @@
 
 namespace loramesher {
 
-LoraMesher::LoraMesher(const Config& config) : config_(config) {}
+LoraMesher::LoraMesher(const Config& config) : config_(config) {
+    Result init_result = Initialize();
+    if (!init_result) {
+        LOG_ERROR("LoraMesher initialization failed: %s",
+                  init_result.GetErrorMessage().c_str());
+    }
+}
 
 LoraMesher::~LoraMesher() {
     Stop();
