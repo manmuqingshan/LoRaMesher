@@ -439,6 +439,10 @@ uint16_t LoRaMeshProtocol::GetCurrentSlot() const {
     return superframe_service_->GetCurrentSlot();
 }
 
+uint32_t LoRaMeshProtocol::GetSlotDuration() const {
+    return superframe_service_->GetSlotDuration();
+}
+
 void LoRaMeshProtocol::SetRouteUpdateCallback(
     lora_mesh::INetworkService::RouteUpdateCallback callback) {
     network_service_->SetRouteUpdateCallback(callback);

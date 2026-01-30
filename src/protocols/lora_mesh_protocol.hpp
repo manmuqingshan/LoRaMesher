@@ -153,6 +153,13 @@ class LoRaMeshProtocol : public Protocol {
     uint16_t GetCurrentSlot() const;
 
     /**
+     * @brief Get the Slot duration in ms
+     * 
+     * @return uint32_t Slot duration in milliseconds
+     */
+    uint32_t GetSlotDuration() const;
+
+    /**
      * @brief Set route update callback
      *
      * @param callback Callback function
