@@ -128,22 +128,32 @@ Result SuperframeService::StopSuperframe() {
     is_running_ = false;
     is_synchronized_ = false;
 
+    if (update_task_handle_) {
+        bool suspended = GetRTOS().SuspendTask(update_task_handle_);
+        if (!suspended) {
+            LOG_WARNING("Failed to suspend superframe update task");
+            GetRTOS().DeleteTask(update_task_handle_);
+            update_task_handle_ = nullptr;
+        }
+    }
+
     // Wake up the task if it's blocked in ReceiveFromQueue
     // This ensures the task can exit quickly before DeleteTask tries to join
     if (notification_queue_) {
         SuperframeNotificationType stop_notification =
             SuperframeNotificationType::STOP_REQUESTED;
         GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
+        GetRTOS().YieldTask();
     }
 
     // Stop the update task
-    if (update_task_handle_) {
-        // Delete the task. Suspending the task does not work correctly.
-        // Maybe is something about the virtual time mode
-        // Hours spend: 5h
-        GetRTOS().DeleteTask(update_task_handle_);
-        update_task_handle_ = nullptr;
-    }
+    // if (update_task_handle_) {
+    //     // Delete the task. Suspending the task does not work correctly.
+    //     // Maybe is something about the virtual time mode
+    //     // Hours spend: 5h
+    //     GetRTOS().DeleteTask(update_task_handle_);
+    //     update_task_handle_ = nullptr;
+    // }
 
     LOG_INFO("Superframe service stopped after %d completed superframes",
              superframes_completed_);
@@ -669,7 +679,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
 
     // Task loop with queue-based efficient waiting
     SuperframeNotificationType notification;
-    while (!rtos.ShouldStopOrPause() || service->is_running_) {
+    while (!rtos.ShouldStopOrPause() && service->is_running_) {
         // Double-check that the notification queue is still valid
         if (!service->notification_queue_) {
             LOG_DEBUG("UpdateTask: notification queue deleted, exiting");
@@ -732,7 +742,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         }
         // For other queue results (error, empty), continue with normal processing
 
-        GetRTOS().YieldTask();
+        rtos.YieldTask();
     }
 
     LOG_DEBUG("SuperframeService UpdateTaskFunction exiting naturally");
