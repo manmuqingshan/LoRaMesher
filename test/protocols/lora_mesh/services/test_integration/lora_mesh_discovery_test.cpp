@@ -455,9 +455,9 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
   */
 TEST_F(LoRaMeshDiscoveryTests, ThreeNodeSequentialStart) {
     // Create three nodes
-    auto& node1 = CreateNode("Node1", 0x1001, NodeRole::NETWORK_MANAGER);
-    auto& node2 = CreateNode("Node2", 0x1002, NodeRole::NODE_ONLY);
-    auto& node3 = CreateNode("Node3", 0x1003, NodeRole::NODE_ONLY);
+    auto& node1 = CreateNode("Node1", 0x1001);
+    auto& node2 = CreateNode("Node2", 0x1002);
+    auto& node3 = CreateNode("Node3", 0x1003);
 
     // Ensure nodes can communicate
     SetLinkStatus(node1, node2, true);
