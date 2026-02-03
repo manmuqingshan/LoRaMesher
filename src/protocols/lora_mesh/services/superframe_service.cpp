@@ -746,7 +746,6 @@ void SuperframeService::UpdateTaskFunction(void* param) {
     }
 
     LOG_DEBUG("SuperframeService UpdateTaskFunction exiting naturally");
-    service->update_task_handle_ = nullptr;
 }
 
 bool SuperframeService::CheckForNewSuperframe() {
