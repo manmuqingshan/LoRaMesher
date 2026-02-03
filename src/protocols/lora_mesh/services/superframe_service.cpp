@@ -679,7 +679,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
 
     // Task loop with queue-based efficient waiting
     SuperframeNotificationType notification;
-    while (!rtos.ShouldStopOrPause() && service->is_running_) {
+    while (!rtos.ShouldStopOrPause()) {
         // Double-check that the notification queue is still valid
         if (!service->notification_queue_) {
             LOG_DEBUG("UpdateTask: notification queue deleted, exiting");
@@ -746,6 +746,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
     }
 
     LOG_DEBUG("SuperframeService UpdateTaskFunction exiting naturally");
+    service->update_task_handle_ = nullptr;
 }
 
 bool SuperframeService::CheckForNewSuperframe() {
