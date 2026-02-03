@@ -362,6 +362,10 @@ class LoRaMeshProtocol : public Protocol {
     LoRaMeshProtocolConfig config_;
     ServiceConfiguration service_config_;
 
+    // Power management callbacks
+    power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
+    power::WakeUpCallback wake_up_callback_ = nullptr;
+
     // Constants
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 4096;
     static constexpr uint32_t TASK_PRIORITY = 3;

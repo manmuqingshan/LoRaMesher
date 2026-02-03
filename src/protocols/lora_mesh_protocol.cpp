@@ -222,6 +222,19 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     // Configure message queue size
     message_queue_service_->SetMaxQueueSize(service_config_.message_queue_size);
 
+    // Set power management callbacks from config
+    if (config.getPrepareSleepCallback()) {
+        prepare_sleep_callback_ = config.getPrepareSleepCallback();
+    }
+    if (config.getWakeUpCallback()) {
+        wake_up_callback_ = config.getWakeUpCallback();
+    }
+
+    // Set node capabilities from config
+    if (config.getNodeCapabilities() != 0) {
+        network_service_->SetLocalNodeCapabilities(config.getNodeCapabilities());
+    }
+
     return Result::Success();
 }
 

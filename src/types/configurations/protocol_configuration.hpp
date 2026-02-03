@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include "types/messages/base_message.hpp"
+#include "types/power/power_types.hpp"
 #include "types/protocols/protocol.hpp"
 
 namespace loramesher {
@@ -355,6 +356,58 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     void setNodeRole(NodeRole role) { node_role_ = role; }
 
     /**
+     * @brief Get the prepare sleep callback
+     *
+     * @return power::PrepareSleepCallback The callback invoked before sleep
+     */
+    power::PrepareSleepCallback getPrepareSleepCallback() const {
+        return prepare_sleep_callback_;
+    }
+
+    /**
+     * @brief Get the wake up callback
+     *
+     * @return power::WakeUpCallback The callback invoked after wake up
+     */
+    power::WakeUpCallback getWakeUpCallback() const {
+        return wake_up_callback_;
+    }
+
+    /**
+     * @brief Get the node capabilities bitmap
+     *
+     * @return uint8_t Node capabilities flags
+     */
+    uint8_t getNodeCapabilities() const { return node_capabilities_; }
+
+    /**
+     * @brief Set the prepare sleep callback
+     *
+     * @param callback Callback to invoke before device enters sleep
+     */
+    void setPrepareSleepCallback(power::PrepareSleepCallback callback) {
+        prepare_sleep_callback_ = std::move(callback);
+    }
+
+    /**
+     * @brief Set the wake up callback
+     *
+     * @param callback Callback to invoke when device wakes from sleep
+     */
+    void setWakeUpCallback(power::WakeUpCallback callback) {
+        wake_up_callback_ = std::move(callback);
+    }
+
+    /**
+     * @brief Set the node capabilities bitmap
+     *
+     * @param capabilities Node capabilities flags
+     */
+    void setNodeCapabilities(uint8_t capabilities) {
+        node_capabilities_ = capabilities;
+    }
+
+    /**
      * @brief Check if configuration is valid
      * 
      * @return bool True if configuration is valid
@@ -415,6 +468,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         50;                        ///< Maximum number of nodes in the network
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+    power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
+    power::WakeUpCallback wake_up_callback_ = nullptr;
+    uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
 };
 
 /**

@@ -250,8 +250,6 @@ class LoraMesher {
     bool is_initialized_ = false;
     bool is_running_ = false;
     AddressType node_address_ = 0;
-    bool auto_address_from_hardware_ =
-        true;  ///< Use hardware ID for auto address generation
 
     // Callbacks
     MessageReceivedCallback message_callback_ = nullptr;
@@ -327,7 +325,7 @@ class LoraMesher::Builder {
      * @return Builder& Reference to this builder for method chaining
      */
     Builder& withAutoAddressFromHardware(bool enable = true) {
-        auto_address_from_hardware = enable;
+        config_.setAutoAddressFromHardware(enable);
         return *this;
     }
 
@@ -338,7 +336,47 @@ class LoraMesher::Builder {
      * @return Builder& Reference to this builder for method chaining
      */
     Builder& withNodeCapabilities(uint8_t capabilities) {
-        node_capabilities_ = capabilities;
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() == protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setNodeCapabilities(capabilities);
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Set the callback invoked before device enters sleep
+     *
+     * @param callback Function to call before sleep
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withPrepareSleepCallback(power::PrepareSleepCallback callback) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() == protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setPrepareSleepCallback(std::move(callback));
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Set the callback invoked when device wakes from sleep
+     *
+     * @param callback Function to call after wake up
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withWakeUpCallback(power::WakeUpCallback callback) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() == protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setWakeUpCallback(std::move(callback));
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
         return *this;
     }
 
@@ -372,7 +410,7 @@ class LoraMesher::Builder {
 
     /**
      * @brief Build the LoraMesher instance
-     * 
+     *
      * @return std::unique_ptr<LoraMesher> The created instance
      * @throws std::invalid_argument If configuration is invalid
      */
@@ -381,22 +419,11 @@ class LoraMesher::Builder {
             throw std::invalid_argument("Invalid configuration: " +
                                         config_.Validate());
         }
-        auto mesher = std::unique_ptr<LoraMesher>(new LoraMesher(config_));
-        mesher->auto_address_from_hardware_ = auto_address_from_hardware;
-
-        // Set initial capabilities if configured
-        if (node_capabilities_ != 0) {
-            mesher->SetNodeCapabilities(node_capabilities_);
-        }
-
-        return mesher;
+        return std::unique_ptr<LoraMesher>(new LoraMesher(config_));
     }
 
    private:
     Config config_;  ///< The configuration being built
-    bool auto_address_from_hardware =
-        true;  ///< Use hardware ID for auto address generation
-    uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
 };
 
 }  // namespace loramesher

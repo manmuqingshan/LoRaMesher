@@ -402,7 +402,7 @@ AddressType LoraMesher::ResolveNodeAddress(ProtocolConfig& protocol_config) {
     AddressType generated_address = 0;
 
     // Try hardware-based generation if enabled
-    if (auto_address_from_hardware_) {
+    if (config_.getAutoAddressFromHardware()) {
         generated_address = GenerateAddressFromHardware();
         if (generated_address != 0) {
             LOG_INFO("Generated node address 0x%04X from hardware",
