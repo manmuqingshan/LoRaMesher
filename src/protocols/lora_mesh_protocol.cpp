@@ -649,8 +649,20 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     uint32_t reception_timestamp = event->getTimestamp();
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp);
+                    Result result =
+                        hardware_->setState(radio::RadioState::kSleep);
+                    if (!result) {
+                        LOG_WARNING("Failed to set radio to sleep state: %s",
+                                    result.GetErrorMessage().c_str());
+                    }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
+                    Result result =
+                        hardware_->setState(radio::RadioState::kSleep);
+                    if (!result) {
+                        LOG_WARNING("Failed to set radio to sleep state: %s",
+                                    result.GetErrorMessage().c_str());
+                    }
                     // TODO: Handle transmitted events (e.g., update transmission statistics)
                     LOG_DEBUG("Processed radio event for transmitted message");
                 } else {
