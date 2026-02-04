@@ -73,15 +73,9 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
                                        bool is_network_manager,
                                        uint8_t allocated_data_slots,
                                        uint8_t capabilities) {
-    // Don't track our own node unless we're in NORMAL_OPERATION state
-    // (which means we've joined a network and need TX/CONTROL_TX slots)
-    if (node_address == node_address_) {
-        if (state_ != ProtocolState::NORMAL_OPERATION &&
-            state_ != ProtocolState::NETWORK_MANAGER) {
-            return false;
-        }
-        // Allow adding local node when in operational states
-    }
+    // Allow updating local node properties (especially capabilities) at any time
+    // The local node won't be advertised to others (GetRoutingEntries excludes it)
+    // This ensures SetNodeCapabilities() works regardless of network state
 
     std::lock_guard<std::mutex> lock(network_mutex_);
 
@@ -174,11 +168,15 @@ Result NetworkService::ProcessRoutingTableMessage(
     auto network_manager = routing_msg.GetNetworkManager();
     auto table_version = routing_msg.GetTableVersion();
     auto entries = routing_msg.GetEntries();
+    uint8_t source_capabilities = routing_msg.GetSourceCapabilities();
+    uint8_t source_allocated_data_slots =
+        routing_msg.GetSourceAllocatedDataSlots();
 
     LOG_INFO(
         "Received routing table update from 0x%04X: version %d, %zu entries at "
-        "timestamp %u",
-        source, table_version, entries.size(), reception_timestamp);
+        "timestamp %u (caps: 0x%02X, data_slots: %d)",
+        source, table_version, entries.size(), reception_timestamp,
+        source_capabilities, source_allocated_data_slots);
 
     bool routing_changed = false;
 
@@ -205,7 +203,7 @@ Result NetworkService::ProcessRoutingTableMessage(
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
         source, entries, reception_timestamp, local_link_quality,
-        config_.max_hops);
+        config_.max_hops, source_capabilities, source_allocated_data_slots);
 
     routing_changed |= routes_updated;
 
@@ -241,7 +239,8 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
 bool NetworkService::UpdateRouteEntry(AddressType source,
                                       AddressType destination,
                                       uint8_t hop_count, uint8_t link_quality,
-                                      uint8_t allocated_data_slots) {
+                                      uint8_t allocated_data_slots,
+                                      uint8_t capabilities) {
     // Add 1 to hop count to account for the hop through this node
     uint8_t actual_hop_count = hop_count + 1;
 
@@ -257,7 +256,7 @@ bool NetworkService::UpdateRouteEntry(AddressType source,
     // Delegate to routing table implementation
     bool route_changed = routing_table_->UpdateRoute(
         source, destination, actual_hop_count, link_quality,
-        allocated_data_slots, current_time);
+        allocated_data_slots, capabilities, current_time);
 
     if (route_changed) {
         UpdateNetworkTopology();
@@ -274,6 +273,57 @@ void NetworkService::SetDataReceivedCallback(DataReceivedCallback callback) {
     data_received_callback_ = callback;
 }
 
+void NetworkService::SetLocalNodeCapabilities(uint8_t capabilities) {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    // Check if capabilities actually changed
+    if (local_capabilities_ == capabilities) {
+        return;  // No change
+    }
+
+    // Store local capabilities in dedicated field
+    local_capabilities_ = capabilities;
+
+    LOG_INFO("Updated local node capabilities to 0x%02X", capabilities);
+}
+
+uint8_t NetworkService::GetLocalNodeCapabilities() const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    // Return from dedicated field, not routing table
+    return local_capabilities_;
+}
+
+void NetworkService::SetLocalAllocatedDataSlots(uint8_t data_slots) {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    // Check if data slots actually changed
+    if (local_allocated_data_slots_ == data_slots) {
+        return;  // No change
+    }
+
+    local_allocated_data_slots_ = data_slots;
+    LOG_INFO("Updated local node data slots to %d", data_slots);
+}
+
+uint8_t NetworkService::GetNodeCapabilities(AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    // Check if requesting local node capabilities
+    if (node_address == node_address_) {
+        return local_capabilities_;
+    }
+
+    // Search routing table for other nodes
+    const auto& nodes = routing_table_->GetNodes();
+    for (const auto& node : nodes) {
+        if (node.GetAddress() == node_address) {
+            return node.routing_entry.capabilities;
+        }
+    }
+
+    return 0;  // Node not found
+}
+
 Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
     // Reset discovery state
     network_found_ = false;
@@ -284,6 +334,12 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
         LOG_INFO("Clearing previous sponsor 0x%04X for fresh discovery",
                  selected_sponsor_);
         selected_sponsor_ = 0;
+    }
+
+    // Handle NETWORK_MANAGER role - skip discovery, create network immediately
+    if (node_role_ == NodeRole::NETWORK_MANAGER) {
+        LOG_INFO("Node role is NETWORK_MANAGER, creating network immediately");
+        return CreateNetwork();
     }
 
     // Set protocol state
@@ -371,20 +427,8 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
         case MessageType::SYNC_BEACON:
             return ProcessSyncBeacon(message, reception_timestamp);
 
-        case MessageType::DATA_MSG:
-            // Data messages handled by upper layers
-            LOG_DEBUG("Received DATA_MSG from 0x%04X at timestamp %u",
-                      message.GetSource(), reception_timestamp);
-
-            // Forward to application layer via callback
-            if (data_received_callback_) {
-                data_received_callback_(message.GetSource(),
-                                        message.GetPayload());
-                LOG_DEBUG("Forwarded DATA_MSG to application layer");
-            } else {
-                LOG_WARNING("No data callback registered - DATA_MSG dropped");
-            }
-            break;
+        case MessageType::DATA:
+            return ProcessDataMessage(message, reception_timestamp);
 
         default:
             LOG_WARNING("Unknown message type: %d",
@@ -434,7 +478,8 @@ void NetworkService::SetNetworkManager(AddressType manager_address) {
                 (node.routing_entry.destination == manager_address);
             routing_table_->UpdateNode(
                 node.routing_entry.destination, node.battery_level, is_manager,
-                node.GetAllocatedDataSlots(), node.capabilities, current_time);
+                node.GetAllocatedDataSlots(), node.routing_entry.capabilities,
+                current_time);
         }
     }
 }
@@ -454,9 +499,10 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     // Apply configuration
     config_ = config;
     node_address_ = config.node_address;
+    node_role_ = config.node_role;
 
-    LOG_INFO("Network service configured with node address 0x%04X",
-             node_address_);
+    LOG_INFO("Network service configured with node address 0x%04X, role: %d",
+             node_address_, static_cast<int>(node_role_));
 
     return Result::Success();
 }
@@ -480,9 +526,13 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     // Increment table version
     table_version_ = (table_version_ + 1) % 256;
 
-    // Create message
+    // Get local capabilities and data slots directly
+    uint8_t local_capabilities = local_capabilities_;
+    uint8_t local_data_slots = local_allocated_data_slots_;
+
     auto routing_msg_opt = RoutingTableMessage::Create(
-        destination, node_address_, network_manager_, table_version_, entries);
+        destination, node_address_, network_manager_, table_version_, entries,
+        local_capabilities, local_data_slots);
     if (!routing_msg_opt) {
         LOG_ERROR("Failed to create routing table message");
         return nullptr;
@@ -564,21 +614,30 @@ Result NetworkService::CreateNetwork() {
     network_found_ = true;
     network_creator_ = true;
 
+    // Initialize control slot assignment for NM
+    my_control_slot_index_ = 0;  // NM always has slot index 0
+    join_order_counter_ = 1;     // Next joining node will get index 1
+
+    // Initialize local data slots for network creator
+    SetLocalAllocatedDataSlots(config_.default_data_slots);
+
     superframe_service_->SetSynchronized(true);
 
     // Update state
     SetState(ProtocolState::NETWORK_MANAGER);
 
     // Add the network manager node
-    NetworkNodeRoute manager_node(node_address_, 100, last_sync_time_, true, 0,
-                                  config_.default_data_slots);
-    if (!routing_table_->AddNode(manager_node)) {
-        LOG_ERROR("Failed to add network manager node 0x%04X to routing table",
-                  node_address_);
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "Failed to add network manager to routing table");
-    }
-    LOG_INFO("Added network manager node 0x%04X", node_address_);
+    // uint8_t current_capabilities = GetLocalNodeCapabilities();
+    // NetworkNodeRoute manager_node(node_address_, 100, last_sync_time_, true,
+    //                               current_capabilities,
+    //                               config_.default_data_slots);
+    // if (!routing_table_->AddNode(manager_node)) {
+    //     LOG_ERROR("Failed to add network manager node 0x%04X to routing table",
+    //               node_address_);
+    //     return Result(LoraMesherErrorCode::kInvalidState,
+    //                   "Failed to add network manager to routing table");
+    // }
+    // LOG_INFO("Added network manager node 0x%04X", node_address_);
 
     // Initialize slot table as network manager
     result = UpdateSlotTable();
@@ -614,7 +673,7 @@ Result NetworkService::PerformTimingSynchronization(
     // Compensate for processing delay between radio DIO interrupt and timestamp capture
     // This delay includes: task switch (~5-10ms) + SPI read (~10-20ms) +
     // deserialization (~5-10ms) + logging (~10-15ms) = ~40-50ms total
-    const uint32_t RECEPTION_PROCESSING_DELAY_MS = 45;
+    const uint32_t RECEPTION_PROCESSING_DELAY_MS = 0;
     uint32_t corrected_reception_timestamp =
         reception_timestamp - RECEPTION_PROCESSING_DELAY_MS;
 
@@ -826,21 +885,13 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
         }
     }
 
-    // Determine node capabilities
-    uint8_t capabilities = 0;
-
-    // Set router capability if we have routes
-    if (routing_table_->GetSize() > 0) {
-        capabilities |= 0x01;  // ROUTER capability
-    }
-
     // Battery level (default to 100%)
     uint8_t battery_level = 100;
 
     // Create join request message with selected sponsor
     auto join_request = JoinRequestMessage::Create(
-        manager_address, node_address_, capabilities, battery_level,
-        requested_slots, {}, 0, selected_sponsor_);
+        manager_address, node_address_, battery_level, requested_slots, {},
+        selected_sponsor_, selected_sponsor_);
 
     if (!join_request) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -889,7 +940,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     // Handle sponsor-based join request forwarding
     if (network_manager_ != node_address_) {
         // If we are the designated sponsor, forward to network manager via routing table
-        if (sponsor_address != 0 && sponsor_address == node_address_) {
+        if (sponsor_address != 0 && sponsor_address == node_address_ &&
+            next_hop == node_address_) {
             LOG_INFO("Acting as sponsor for join request from 0x%04X", source);
             return ForwardJoinRequest(*join_request_opt);
         }
@@ -912,15 +964,24 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     // sponsor_address = sponsor_address == node_address_ ? 0 : sponsor_address;
 
     // Now we're the network manager, process the join request
-    auto capabilities = join_request_opt->GetCapabilities();
     auto battery_level = join_request_opt->GetBatteryLevel();
     auto requested_slots = join_request_opt->GetRequestedSlots();
+    auto hop_count = join_request_opt->GetHopCount();
 
-    LOG_INFO("Join request from 0x%04X: caps=0x%02X, battery=%d%%, slots=%d",
-             source, capabilities, battery_level, requested_slots);
+    LOG_INFO("Join request from 0x%04X: battery=%d%%, slots=%d, hops=%d",
+             source, battery_level, requested_slots, hop_count);
 
     // Check if a join is already pending for this superframe
     if (pending_join_request_) {
+        // Check if this is a duplicate request from the same node
+        if (pending_join_data_ && pending_join_data_->GetSource() == source) {
+            LOG_INFO(
+                "Duplicate join request from 0x%04X - already pending, "
+                "ignoring",
+                source);
+            return Result::Success();  // Silent deduplication
+        }
+
         LOG_INFO(
             "Join request from 0x%04X rejected - join already pending this "
             "superframe",
@@ -931,7 +992,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
 
     // Determine if node should be accepted
     auto [accepted, allocated_slots] =
-        ShouldAcceptJoin(source, capabilities, requested_slots);
+        ShouldAcceptJoin(source, requested_slots);
 
     if (!accepted) {
         LOG_INFO("Join request from 0x%04X rejected - network constraints",
@@ -968,12 +1029,48 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         return result;
     }
 
+    // Update routing information with hop_count from join request
+    // hop_count in message = number of forwards, actual routing hop_count = hop_count + 1
+    // next_hop should be the first hop towards the joining node, NOT the sponsor directly
+    uint8_t routing_hop_count = hop_count + 1;
+    AddressType route_next_hop;
+    if (sponsor_address != 0 && sponsor_address != node_address_) {
+        // Use routing table to find next hop towards the sponsor
+        route_next_hop = routing_table_->FindNextHop(sponsor_address);
+        if (route_next_hop == 0) {
+            // No route to sponsor yet, use sponsor directly (edge case)
+            LOG_WARNING("No route to sponsor 0x%04X, using sponsor directly",
+                        sponsor_address);
+            route_next_hop = sponsor_address;
+        }
+    } else {
+        route_next_hop = source;
+    }
+
+    uint32_t current_time = GetRTOS().getTickCount();
+    bool route_updated = routing_table_->UpdateRoute(
+        route_next_hop,  // source of the route (next hop towards joining node)
+        source,          // destination (the joining node)
+        routing_hop_count,  // hop count to reach the joining node
+        255,                // link quality (max for new join)
+        allocated_slots,    // allocated data slots
+        0,  // capabilities (will be updated from routing table later)
+        current_time);
+
+    if (route_updated) {
+        LOG_INFO(
+            "Route to joining node 0x%04X updated: hop_count=%d, "
+            "next_hop=0x%04X",
+            source, routing_hop_count, route_next_hop);
+    }
+
     // Add the joining node to the network immediately so it appears in network views
     // The full slot allocation will be handled at the superframe boundary
-    bool node_added = UpdateNetworkNode(source, battery_level, false,
-                                        allocated_slots, capabilities);
-    if (node_added) {
-        LOG_INFO("Joining node 0x%04X added to network manager's node list",
+    bool node_updated =
+        UpdateNetworkNode(source, battery_level, false, allocated_slots,
+                          0);  // capabilities will be set from routing table
+    if (node_updated) {
+        LOG_INFO("Joining node 0x%04X updated to network manager's node list",
                  source);
     }
 
@@ -1004,8 +1101,19 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
         LOG_INFO("Forwarding join response to target node 0x%04X",
                  target_address);
         return ForwardJoinResponseToSponsoredNode(*join_response_opt);
-    } else if (dest != node_address_) {
-        // This response is not for us
+    }
+
+    // Check if we should forward this response (we're on the multi-hop path to sponsor)
+    auto next_hop = join_response_opt->GetHeader().GetNextHop();
+    if (dest != node_address_ && next_hop == node_address_) {
+        // We are on the routing path, forward to next hop toward destination (sponsor)
+        LOG_DEBUG("Forwarding join response to 0x%04X (on path to sponsor)",
+                  dest);
+        return ForwardJoinResponse(*join_response_opt);
+    }
+
+    if (dest != node_address_) {
+        // This response is not for us and we're not on the path
         LOG_DEBUG("Ignoring join response - not intended for us (dest: 0x%04X)",
                   dest);
         return Result::Success();
@@ -1026,6 +1134,11 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
              source, static_cast<int>(status), network_id, allocated_slots);
 
     if (status == JoinResponseStatus::ACCEPTED) {
+        // Store the assigned control slot index
+        my_control_slot_index_ = join_response_opt->GetControlSlotIndex();
+        LOG_INFO("Received control slot index %d from NM",
+                 my_control_slot_index_);
+
         // Update network state
         SetNetworkManager(source);
         is_synchronized_ = true;
@@ -1040,6 +1153,8 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
         UpdateNetworkNode(node_address_, 100, false, allocated_slots);
         LOG_INFO("Added local node 0x%04X to network for slot allocation",
                  node_address_);
+
+        SetLocalAllocatedDataSlots(allocated_slots);
 
         LOG_INFO("Successfully joined network 0x%04X", network_id);
 
@@ -1101,22 +1216,38 @@ Result NetworkService::SendJoinResponse(AddressType dest,
     // Special case: if sponsor_address == node_address_, we ARE the sponsor, so route directly
     AddressType response_destination;
     AddressType target_address;
+    AddressType next_hop = 0;
 
     if (sponsor_address != 0 && sponsor_address != node_address_) {
         // External sponsor case: route via sponsor with target for final delivery
         response_destination = sponsor_address;
         target_address = dest;
+
+        // Calculate next hop toward sponsor for multi-hop routing
+        next_hop = routing_table_->FindNextHop(sponsor_address);
+        if (next_hop == 0) {
+            next_hop = sponsor_address;  // Direct if no route found
+        }
     } else {
         // Direct case: no external sponsor OR we are the sponsor
         response_destination = dest;
         target_address = 0;
     }
 
-    // Create join response with corrected addressing
-    auto join_response = JoinResponseMessage::Create(
-        response_destination, node_address_,
-        network_manager_,  // Network ID
-        allocated_slots, status, {}, 0, target_address);
+    // Assign control slot index for ACCEPTED joins
+    uint8_t control_slot_index = 0xFF;  // Default: unassigned
+    if (status == JoinResponseStatus::ACCEPTED) {
+        control_slot_index = join_order_counter_++;
+        LOG_INFO("Assigned control slot index %d to joining node 0x%04X",
+                 control_slot_index, dest);
+    }
+
+    // Create join response with corrected addressing and next_hop for multi-hop forwarding
+    auto join_response =
+        JoinResponseMessage::Create(response_destination, node_address_,
+                                    network_manager_,  // Network ID
+                                    allocated_slots, status, {}, next_hop,
+                                    target_address, control_slot_index);
 
     if (!join_response) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -1132,20 +1263,152 @@ Result NetworkService::SendJoinResponse(AddressType dest,
     if (sponsor_address != 0 && sponsor_address != node_address_) {
         LOG_INFO(
             "Join response queued for 0x%04X via external sponsor 0x%04X: "
-            "status=%d, "
-            "slots=%d",
-            dest, sponsor_address, static_cast<int>(status), allocated_slots);
+            "status=%d, slots=%d, ctrl_idx=%d",
+            dest, sponsor_address, static_cast<int>(status), allocated_slots,
+            control_slot_index);
     } else if (sponsor_address == node_address_) {
         LOG_INFO(
             "Join response queued for 0x%04X (we are the sponsor): status=%d, "
-            "slots=%d",
-            dest, static_cast<int>(status), allocated_slots);
+            "slots=%d, ctrl_idx=%d",
+            dest, static_cast<int>(status), allocated_slots,
+            control_slot_index);
     } else {
         LOG_INFO(
             "Join response queued for 0x%04X (direct, no sponsor): status=%d, "
-            "slots=%d",
-            dest, static_cast<int>(status), allocated_slots);
+            "slots=%d, ctrl_idx=%d",
+            dest, static_cast<int>(status), allocated_slots,
+            control_slot_index);
     }
+
+    return Result::Success();
+}
+
+// Data message implementations
+
+Result NetworkService::ProcessDataMessage(const BaseMessage& message,
+                                          uint32_t reception_timestamp) {
+    // Deserialize the data message
+    auto data_msg_opt = DataMessage::CreateFromSerialized(*message.Serialize());
+    if (!data_msg_opt) {
+        LOG_ERROR("Failed to deserialize DATA message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize data message");
+    }
+
+    const DataMessage& data_msg = *data_msg_opt;
+    AddressType next_hop = data_msg.GetNextHop();
+    AddressType final_dest = data_msg.GetDestination();
+    AddressType original_src = data_msg.GetSource();
+
+    LOG_DEBUG(
+        "DATA message: src=0x%04X, dest=0x%04X, next_hop=0x%04X, "
+        "my_addr=0x%04X, payload_size=%zu",
+        original_src, final_dest, next_hop, node_address_,
+        data_msg.GetPayload().size());
+
+    // Check if we are the intended next hop
+    if (next_hop != node_address_) {
+        // Not for us - ignore (was likely overheard)
+        LOG_DEBUG("DATA not for this node (next_hop=0x%04X), ignoring",
+                  next_hop);
+        return Result::Success();
+    }
+
+    // We are the next hop - check if we are also the final destination
+    if (final_dest == node_address_) {
+        // Deliver to application layer
+        LOG_INFO("DATA reached final destination from 0x%04X, payload_size=%zu",
+                 original_src, data_msg.GetPayload().size());
+
+        if (data_received_callback_) {
+            data_received_callback_(original_src, data_msg.GetPayload());
+            LOG_DEBUG("DATA delivered to application layer");
+        } else {
+            LOG_WARNING("No data callback registered - DATA dropped");
+        }
+    } else {
+        // Forward to next hop toward final destination
+        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X", original_src,
+                 final_dest);
+        return ForwardDataMessage(data_msg);
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
+    // Find the next hop toward the final destination
+    AddressType new_next_hop = FindNextHop(original_msg.GetDestination());
+
+    if (new_next_hop == 0) {
+        LOG_ERROR("No route found to destination 0x%04X for forwarding",
+                  original_msg.GetDestination());
+        return Result(LoraMesherErrorCode::kNoRoute,
+                      "No route to destination for forwarding");
+    }
+
+    // Create forwarded message with updated next_hop
+    auto forwarded_msg = DataMessage::Create(
+        original_msg.GetDestination(),  // Keep final destination
+        original_msg.GetSource(),       // Keep original source
+        new_next_hop,                   // Update next hop
+        original_msg.GetPayload());     // Keep original payload
+
+    if (!forwarded_msg) {
+        LOG_ERROR("Failed to create forwarded DATA message");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create forwarded data message");
+    }
+
+    LOG_DEBUG("Forwarding DATA: dest=0x%04X, src=0x%04X, new_next_hop=0x%04X",
+              original_msg.GetDestination(), original_msg.GetSource(),
+              new_next_hop);
+
+    // Queue for TX slot
+    auto base_msg =
+        std::make_unique<BaseMessage>(forwarded_msg->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
+                                              std::move(base_msg));
+
+    return Result::Success();
+}
+
+Result NetworkService::SendData(AddressType destination,
+                                const std::vector<uint8_t>& data) {
+    // Check if destination is self
+    if (destination == node_address_) {
+        LOG_WARNING("Cannot send data to self");
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Cannot send data to self");
+    }
+
+    // Find the next hop to the destination
+    AddressType next_hop = FindNextHop(destination);
+
+    if (next_hop == 0) {
+        // No route found - check if destination might be a direct neighbor
+        // If we have no route information, assume direct delivery
+        LOG_DEBUG("No route to 0x%04X, attempting direct delivery",
+                  destination);
+        next_hop = destination;
+    }
+
+    // Create the data message
+    auto data_msg =
+        DataMessage::Create(destination, node_address_, next_hop, data);
+    if (!data_msg) {
+        LOG_ERROR("Failed to create DATA message for 0x%04X", destination);
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create data message");
+    }
+
+    LOG_INFO("Sending DATA to 0x%04X via next_hop 0x%04X, payload_size=%zu",
+             destination, next_hop, data.size());
+
+    // Queue for TX slot
+    auto base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
+                                              std::move(base_msg));
 
     return Result::Success();
 }
@@ -1268,17 +1531,47 @@ Result NetworkService::UpdateSlotTable() {
     // Clear existing table
     slot_table_.clear();
 
-    // Get the total data slots allocated inside the network_nodes
-    uint8_t total_data_slots = GetAllocatedDataSlots();
-    if (network_creator_ && total_data_slots == 0) {
-        total_data_slots = config_.default_data_slots;
+    // Get all nodes including self ordered.
+    std::vector<NetworkNodeRoute> ordered_nodes = routing_table_->GetNodes();
+
+    // Ensure self node is included for CONTROL_TX slot allocation
+    // (self may not be in routing table since we removed self-entries)
+    bool self_found = std::any_of(ordered_nodes.begin(), ordered_nodes.end(),
+                                  [this](const NetworkNodeRoute& node) {
+                                      return node.GetAddress() == node_address_;
+                                  });
+
+    if (!self_found) {
+        NetworkNodeRoute self_node(node_address_, 0, 0, false, 0,
+                                   local_allocated_data_slots_, 0);
+        self_node.is_active = true;
+        self_node.is_network_manager = (network_manager_ == node_address_);
+        ordered_nodes.push_back(self_node);
     }
 
-    // Use max_hops from received sync beacons
-    int max_hops_count = network_max_hops_;
+    std::sort(ordered_nodes.begin(), ordered_nodes.end(),
+              [](const NetworkNodeRoute& a, const NetworkNodeRoute& b) {
+                  // Primary: Network Manager transmits first (has most complete routing info)
+                  if (a.is_network_manager != b.is_network_manager) {
+                      return a.is_network_manager > b.is_network_manager;
+                  }
+                  // Secondary: address-based deterministic ordering (same across all nodes)
+                  return a.routing_entry.destination <
+                         b.routing_entry.destination;
+              });
 
-    // Fix slot allocation logic - control and discovery should be calculated separately
-    allocated_control_slots_ = routing_table_->GetSize();
+    // Get the total data slots allocated (includes self's local_allocated_data_slots_)
+    uint8_t total_data_slots = GetAllocatedDataSlots();
+
+    // Use max_hops from received sync beacons
+    int max_hops_count = current_network_depth_;
+
+    // Use max of known nodes OR our assigned control slot index + 1
+    // This ensures enough control slots even if routing table is incomplete
+    // (e.g., joining node may have slot index 5 but only know 3 nodes)
+    allocated_control_slots_ =
+        std::max(static_cast<uint8_t>(ordered_nodes.size()),
+                 static_cast<uint8_t>(my_control_slot_index_ + 1));
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
     allocated_discovery_slots_ = (max_hops_count + 1) * 2;
@@ -1334,6 +1627,8 @@ Result NetworkService::UpdateSlotTable() {
         } else {
             our_hop_distance = 1;  // Default assumption
         }
+        LOG_DEBUG("Our hop distance from NM (0x%04X) is %d", network_manager_,
+                  our_hop_distance);
     }
 
     // Allocate sync beacon slots based on hop-layered forwarding strategy
@@ -1387,75 +1682,66 @@ Result NetworkService::UpdateSlotTable() {
         slot_table_[slot_index - 1] = sync_slot;
     }
 
-    // Allocate control slots with deterministic address-based ordering
-    // This ensures all nodes in the network calculate the same slot allocation order
-    std::vector<NetworkNodeRoute> ordered_nodes = routing_table_->GetNodes();
-    std::sort(ordered_nodes.begin(), ordered_nodes.end(),
-              [](const NetworkNodeRoute& a, const NetworkNodeRoute& b) {
-                  // Primary: Network Manager transmits first (has most complete routing info)
-                  if (a.is_network_manager != b.is_network_manager) {
-                      return a.is_network_manager > b.is_network_manager;
-                  }
-                  // Secondary: address-based deterministic ordering (same across all nodes)
-                  return a.routing_entry.destination <
-                         b.routing_entry.destination;
-              });
-
+    // Allocate control slots using assigned index (join-order-based)
+    // Our CONTROL_TX slot is at sync_beacon_slots + my_control_slot_index_
+    // All other control slots are CONTROL_RX
     for (size_t i = 0;
-         i < ordered_nodes.size() && slot_index < total_superframe_slots; i++) {
-        const auto& node = ordered_nodes[i];
-        AddressType addr = node.GetAddress();
-
+         i < allocated_control_slots_ && slot_index < total_superframe_slots;
+         i++) {
         auto& slot_allocation = slot_table_[slot_index];
         slot_allocation.slot_number = slot_index;
-        slot_allocation.target_address = addr;
 
-        if (addr == node_address_) {
-            // This node's control TX slot for routing table transmission
-            if (node.is_active) {
-                slot_allocation.type = SlotAllocation::SlotType::CONTROL_TX;
-                LOG_DEBUG(
-                    "Allocated CONTROL_TX slot %zu for local node 0x%04X "
-                    "(NM=%d)",
-                    slot_index, addr, node.is_network_manager);
-            }
+        if (i == my_control_slot_index_) {
+            // This is OUR control TX slot (based on assigned index)
+            slot_allocation.type = SlotAllocation::SlotType::CONTROL_TX;
+            slot_allocation.target_address = node_address_;
+            LOG_DEBUG(
+                "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
+                "%d)",
+                slot_index, node_address_, my_control_slot_index_);
         } else {
+            // All other control slots are RX (we listen to everyone)
             slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
-            LOG_DEBUG("Allocated CONTROL_RX slot %zu for node 0x%04X (NM=%d)",
-                      slot_index, addr, node.is_network_manager);
+            slot_allocation.target_address = 0xFFFF;  // Listen to any sender
+            LOG_DEBUG("Allocated CONTROL_RX slot %zu (index %zu)", slot_index,
+                      i);
         }
         slot_index++;
     }
 
     // Allocate the data slots after control slots
     size_t slot_data_index = slot_index;
-
-    const auto& nodes = routing_table_->GetNodes();
-    for (size_t i = 0; i < nodes.size(); i++) {
-        const auto& node = nodes[i];
+    // Then allocate data slots for other nodes in routing table
+    for (size_t i = 0; i < ordered_nodes.size(); i++) {
+        const auto& node = ordered_nodes[i];
         AddressType addr = node.GetAddress();
         uint8_t slot_data_number = node.GetAllocatedDataSlots();
         for (size_t j = 0; j < slot_data_number; j++) {
-            uint8_t slot_index = slot_data_index + j;
-            if (slot_index >= slot_table_.size()) {
+            size_t data_slot_index = slot_data_index + j;
+            if (data_slot_index >= slot_table_.size()) {
                 LOG_ERROR(
-                    "Slot index %d out of bounds for node 0x%04X, skipping",
-                    slot_index, addr);
+                    "Slot index %zu out of bounds for node 0x%04X, skipping",
+                    data_slot_index, addr);
                 return Result(LoraMesherErrorCode::kInvalidState,
                               "Slot index out of bounds");
             }
 
             // Use reference to modify actual vector element
-            auto& slot = slot_table_[slot_index];
+            auto& slot = slot_table_[data_slot_index];
 
-            slot.slot_number = slot_index;
+            slot.slot_number = data_slot_index;
             slot.target_address = addr;
-            if (addr == node_address_) {
-                // If this is our own slot, we can use it for TX
-                slot.type = SlotAllocation::SlotType::TX;
-            } else if (node.IsDirectNeighbor()) {
-                // For other nodes, we use RX
+            if (node.IsDirectNeighbor()) {
+                // For direct neighbors, we use RX
                 slot.type = SlotAllocation::SlotType::RX;
+                LOG_DEBUG(
+                    "Allocated DATA RX slot %zu for direct neighbor 0x%04X",
+                    data_slot_index, addr);
+            } else if (node_address_ == node.GetAddress()) {
+                // For self node, we use TX
+                slot.type = SlotAllocation::SlotType::TX;
+                LOG_DEBUG("Allocated DATA TX slot %zu for local node 0x%04X",
+                          data_slot_index, addr);
             } else {
                 slot.type = SlotAllocation::SlotType::SLEEP;
             }
@@ -1684,10 +1970,16 @@ Result NetworkService::BroadcastSlotAllocation() {
 // Discovery implementation
 
 Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
+    // NODE_ONLY nodes never create a network - keep discovering indefinitely
+    if (node_role_ == NodeRole::NODE_ONLY) {
+        // Still discovering, will wait for sync beacon from existing network
+        return Result::Success();
+    }
+
     uint32_t current_time = GetRTOS().getTickCount();
     uint32_t end_time = discovery_start_time_ + timeout_ms;
 
-    // Check if discovery timeout has elapsed
+    // Check if discovery timeout has elapsed (AUTO role only)
     if (current_time >= end_time) {
         LOG_INFO("Discovery timeout - creating new network");
         return CreateNetwork();
@@ -1720,14 +2012,13 @@ void NetworkService::SetNumberOfSlotsPerSuperframe(uint8_t slots) {
 }
 
 void NetworkService::SetMaxHopCount(uint8_t max_hops) {
-    network_max_hops_ = max_hops;
+    current_network_depth_ = max_hops;
 }
 
 // Helper method implementations
 
 std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
-    AddressType node_address, uint8_t /* capabilities */,
-    uint8_t requested_slots) {
+    AddressType node_address, uint8_t requested_slots) {
 
     // Check network capacity
     if (routing_table_->GetSize() >= config_.max_network_nodes) {
@@ -1800,20 +2091,29 @@ uint16_t NetworkService::FindNextAvailableSlot(uint16_t start_slot) {
 
 uint8_t NetworkService::GetAllocatedDataSlots() const {
     uint8_t total_allocated = 0;
+    bool is_self_active = false;
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
         if (node.is_active) {
             total_allocated += node.GetAllocatedDataSlots();
         }
+        if (node.GetAddress() == node_address_) {
+            is_self_active = true;
+        }
+    }
+    if (!is_self_active) {
+        total_allocated += local_allocated_data_slots_;
     }
 
     return total_allocated;
 }
 
 uint32_t NetworkService::GetJoinTimeout() {
-    // TODO: Since we know the number of nodes and the superframe duration
-    // Calculate it using 3 superframes
-    return 60000;  // TODO: Change to an actual value or configurable.
+    if (!superframe_service_) {
+        return 60000;
+    }
+
+    return superframe_service_->GetSuperframeDuration() * 3;
 }
 
 Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
@@ -1821,7 +2121,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     // Process sync beacons in discovery, joining, normal operation, and network manager states
     if (state_ != ProtocolState::DISCOVERY &&
         state_ != ProtocolState::JOINING &&
-        state_ != ProtocolState::NORMAL_OPERATION) {
+        state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::FAULT_RECOVERY) {
         LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_));
         return Result::Success();
     }
@@ -1854,10 +2155,10 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
         // Store max_hops from the sync beacon for slot allocation calculations
         uint8_t beacon_max_hops = sync_beacon.GetMaxHops();
-        if (beacon_max_hops != network_max_hops_) {
+        if (beacon_max_hops != current_network_depth_) {
             SetMaxHopCount(beacon_max_hops);
             LOG_INFO("Updated network max_hops to %d from sync beacon",
-                     network_max_hops_);
+                     current_network_depth_);
         }
 
         uint8_t total_slots = sync_beacon.GetTotalSlots();
@@ -1867,6 +2168,31 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                 "Updated number_of_slots_per_superframe_ to %d from sync "
                 "beacon",
                 number_of_slots_per_superframe_);
+        }
+    }
+
+    // Add/update route to NM based on sync beacon info
+    // Our hop distance to NM = beacon's hop_count + 1 (we're one hop further than the forwarder)
+    AddressType beacon_source = sync_beacon.GetSource();
+    AddressType beacon_nm = sync_beacon.GetNetworkManager();
+    uint8_t our_hop_count_to_nm = sync_beacon.GetHopCount() + 1;
+    bool nm_node_present = routing_table_->IsNodePresent(beacon_nm);
+
+    // Add route to NM if we're not the NM ourselves
+    if (!nm_node_present && beacon_nm != node_address_) {
+        uint32_t current_time = GetRTOS().getTickCount();
+        bool route_updated = routing_table_->UpdateRoute(
+            beacon_source,        // next_hop: go through the beacon forwarder
+            beacon_nm,            // destination: the network manager
+            our_hop_count_to_nm,  // hop_count: beacon's hop_count + 1
+            200,  // link_quality: reasonable default for sync beacon path
+            config_.default_data_slots,  // allocated_data_slots
+            0,                           // capabilities: unknown
+            current_time);
+
+        if (route_updated) {
+            LOG_INFO("Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
+                     beacon_nm, beacon_source, our_hop_count_to_nm);
         }
     }
 
@@ -1911,6 +2237,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
             // Continue with joining process even if synchronization fails
         }
 
+        no_received_sync_beacon_count_ = 0;  // Reset missed beacon counter
+
         return join_result;
     }
 
@@ -1952,6 +2280,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         }
     }
 
+    no_received_sync_beacon_count_ = 0;  // Reset missed beacon counter
+
     return Result::Success();
 }
 
@@ -1984,9 +2314,12 @@ Result NetworkService::SendSyncBeacon() {
         node_address_,  // TODO: At this moment NetworkId is network Manager
         total_slots,    // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
-        node_address_,       // Network manager address
-        0,                   // Placeholder - will be updated by callback
-        network_max_hops_);  // Use actual max hops from network
+        node_address_,  // Network manager address
+        0,              // Placeholder - will be updated by callback
+        std::min(
+            static_cast<uint8_t>(current_network_depth_),
+            config_
+                .max_hops));  // Dynamic growth (depth+1) capped by configured limit
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
@@ -2051,7 +2384,7 @@ Result NetworkService::SendSyncBeacon() {
         std::move(base_msg_ptr));
 
     LOG_INFO("Queued sync beacon for transmission: %d total slots, %d max hops",
-             total_slots, network_max_hops_);
+             total_slots, current_network_depth_);
     return Result::Success();
 }
 
@@ -2153,12 +2486,12 @@ Result NetworkService::HandleSuperframeStart() {
         // When a change has happened in the routing table, change the slot table when
         // starting a new superframe
 
-        // Update network_max_hops_ from routing table
+        // Update current_network_depth_ from routing table
         uint8_t routing_max_hops = GetMaxHopsFromRoutingTable();
-        if (routing_max_hops != network_max_hops_) {
+        if (routing_max_hops != current_network_depth_) {
             SetMaxHopCount(routing_max_hops);
             LOG_INFO("Updated network max_hops to %d from routing table",
-                     network_max_hops_);
+                     current_network_depth_);
 
             Result result = UpdateSlotTable();
             if (!result) {
@@ -2176,15 +2509,16 @@ Result NetworkService::HandleSuperframeStart() {
     } else if (state_ == ProtocolState::JOINING) {
         // In joining state, the previous message has not been response correctly.
         // Send again a JoinRequest.
-        // Result join_req_result =
-        //     SendJoinRequest(network_manager_, config_.default_data_slots);
-        // if (!join_req_result) {
-        //     LOG_ERROR("Failed to resend JoinRequest: %s",
-        //               join_req_result.GetErrorMessage().c_str());
-        // }
+        Result join_req_result =
+            SendJoinRequest(network_manager_, config_.default_data_slots);
+        if (!join_req_result) {
+            LOG_ERROR("Failed to resend JoinRequest: %s",
+                      join_req_result.GetErrorMessage().c_str());
+        }
 
-    } else {
-        // TODO: If no received sync beacon for x times set to FaultRecovery
+    } else if (state_ == ProtocolState::NORMAL_OPERATION) {
+        no_received_sync_beacon_count_++;
+        // If no received sync beacon for x times set to FaultRecovery
         if (no_received_sync_beacon_count_ >= kMaxNoReceivedSyncBeacons) {
             LOG_WARNING(
                 "No received sync beacon for %d times, entering FaultRecovery",
@@ -2259,15 +2593,17 @@ Result NetworkService::ForwardJoinRequest(
     }
 
     // Create forwarded join request preserving original source and sponsor
+    // Increment hop_count to track how many hops the message has traveled
     auto forwarded_request = JoinRequestMessage::Create(
         join_request.GetDestination(),
         join_request
             .GetSource(),  // Preserve original source for end-to-end tracking
-        join_request.GetCapabilities(), join_request.GetBatteryLevel(),
-        join_request.GetRequestedSlots(), {},  // No additional info
-        next_hop,                              // Set next hop for routing
+        join_request.GetBatteryLevel(), join_request.GetRequestedSlots(),
+        {},        // No additional info
+        next_hop,  // Set next hop for routing
         join_request.GetHeader()
-            .GetSponsorAddress()  // Preserve sponsor address
+            .GetSponsorAddress(),       // Preserve sponsor address
+        join_request.GetHopCount() + 1  // Increment hop count for forwarding
     );
 
     if (!forwarded_request) {
@@ -2284,9 +2620,10 @@ Result NetworkService::ForwardJoinRequest(
 
     LOG_INFO(
         "Forwarded join request from 0x%04X to network manager 0x%04X via "
-        "next hop 0x%04X (sponsor: 0x%04X)",
-        join_request.GetSource(), network_manager_, next_hop,
-        join_request.GetHeader().GetSponsorAddress());
+        "next hop 0x%04X (sponsor: 0x%04X, hop_count: %d)",
+        forwarded_request->GetSource(), network_manager_, next_hop,
+        forwarded_request->GetHeader().GetSponsorAddress(),
+        forwarded_request->GetHopCount());
 
     return Result::Success();
 }
@@ -2301,6 +2638,25 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
 
     // Get the final target node address (stored in target_address field)
     AddressType joining_node = join_response.GetHeader().GetTargetAddress();
+
+    // If the response is ACCEPTED, add the joining node as a direct neighbor
+    // This is CRITICAL: as sponsor, we have a direct link to the joining node
+    // We must add this route BEFORE forwarding so routing tables are consistent
+    if (join_response.GetStatus() ==
+            JoinResponseHeader::ResponseStatus::ACCEPTED &&
+        joining_node != 0) {
+        routing_table_->UpdateRoute(
+            joining_node,  // source: the joining node itself
+            joining_node,  // destination: the joining node
+            1,             // hop_count: direct neighbor (1 hop)
+            200,           // link_quality: good quality for direct link
+            join_response.GetAllocatedSlots(),  // allocated_data_slots
+            0,                                  // capabilities: unknown yet
+            GetRTOS().getTickCount());
+        LOG_DEBUG(
+            "Sponsor added joining node 0x%04X as direct neighbor (hops=1)",
+            joining_node);
+    }
 
     // Sanity check: we should be the current destination (sponsor)
     if (join_response.GetDestination() != node_address_) {
@@ -2324,9 +2680,10 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
         joining_node,               // Direct to joining node now
         join_response.GetSource(),  // From network manager
         join_response.GetNetworkId(), join_response.GetAllocatedSlots(),
-        join_response.GetStatus(), {},  // No additional info
-        0,                              // No next hop (direct delivery)
-        0                               // No sponsor (final delivery)
+        join_response.GetStatus(), {},       // No additional info
+        joining_node,                        // Next hop is the joining node
+        0,                                   // No sponsor (final delivery)
+        join_response.GetControlSlotIndex()  // Control slot index
     );
 
     if (!final_response) {
@@ -2345,6 +2702,82 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
         "Forwarded join response to sponsored node 0x%04X: status=%d, slots=%d",
         joining_node, static_cast<int>(join_response.GetStatus()),
         join_response.GetAllocatedSlots());
+
+    return Result::Success();
+}
+
+Result NetworkService::ForwardJoinResponse(
+    const JoinResponseMessage& join_response) {
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Ignoring join response forwarding in state: %d", state_);
+        return Result::Success();
+    }
+
+    // Schedule discovery slot for forwarding
+    if (!ScheduleDiscoverySlotForwarding()) {
+        LOG_WARNING(
+            "Failed to schedule discovery slot for join response forwarding");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "No available discovery slots for forwarding");
+    }
+
+    // Calculate next hop toward destination (sponsor)
+    AddressType dest = join_response.GetDestination();
+    AddressType next_hop = routing_table_->FindNextHop(dest);
+    if (next_hop == 0) {
+        next_hop = dest;  // Direct if no route found
+        LOG_WARNING("No route to sponsor 0x%04X, attempting direct", dest);
+    }
+
+    // If accepted, add the joining node to our routing table with correct hop count
+    // The joining node is reached via the sponsor, so its hop count = sponsor's hop count + 1
+    AddressType joining_node = join_response.GetHeader().GetTargetAddress();
+    if (join_response.GetStatus() ==
+            JoinResponseHeader::ResponseStatus::ACCEPTED &&
+        joining_node != 0) {
+        auto sponsor_route = routing_table_->GetNode(dest);
+        if (sponsor_route != routing_table_->GetNodes().end()) {
+            uint8_t hops_to_joining =
+                sponsor_route->routing_entry.hop_count + 1;
+            routing_table_->UpdateRoute(
+                dest,             // source: learned via sponsor path
+                joining_node,     // destination: the joining node
+                hops_to_joining,  // hop_count: sponsor's hops + 1
+                200,              // link_quality
+                join_response.GetAllocatedSlots(),  // allocated_data_slots
+                0,                                  // capabilities: unknown yet
+                GetRTOS().getTickCount());
+            LOG_DEBUG(
+                "Added joining node 0x%04X with hops=%d (via sponsor 0x%04X)",
+                joining_node, hops_to_joining, dest);
+        }
+    }
+
+    // Create forwarded response with updated next_hop
+    auto forwarded = JoinResponseMessage::Create(
+        dest, join_response.GetSource(), join_response.GetNetworkId(),
+        join_response.GetAllocatedSlots(), join_response.GetStatus(),
+        {},        // No additional info
+        next_hop,  // Updated next hop
+        join_response.GetHeader().GetTargetAddress(),
+        join_response.GetControlSlotIndex()  // Control slot index
+    );
+
+    if (!forwarded) {
+        LOG_ERROR("Failed to create forwarded join response");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create forwarded join response");
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+
+    LOG_INFO(
+        "Forwarded join response to 0x%04X via next hop 0x%04X (target: "
+        "0x%04X)",
+        dest, next_hop, join_response.GetHeader().GetTargetAddress());
 
     return Result::Success();
 }
@@ -2386,6 +2819,7 @@ void NetworkService::ResetNetworkState() {
     network_creator_ = false;
     is_synchronized_ = false;
     network_manager_ = 0;
+    local_allocated_data_slots_ = 0;
 
     // Reset timing variables
     discovery_start_time_ = 0;

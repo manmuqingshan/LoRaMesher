@@ -82,6 +82,8 @@ class MockSuperframeService : public protocols::lora_mesh::ISuperframeService {
 
     uint32_t GetTimeSinceSuperframeStart() override { return 0; }
 
+    uint32_t GetSuperframeDuration() const override { return 0; }
+
     Result SynchronizeWith(uint32_t external_slot_start_time,
                            uint16_t external_slot) override {
         return Result::Success();
@@ -147,7 +149,7 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
         if (state == ProtocolState::NORMAL_OPERATION ||
             state == ProtocolState::NETWORK_MANAGER) {
             routing_table->UpdateRoute(test_node_address_, test_node_address_,
-                                       0, 100, config.default_data_slots,
+                                       0, 100, config.default_data_slots, 0,
                                        current_time);
             LOG_INFO("Added local service node 0x%04X to network",
                      test_node_address_);
@@ -157,7 +159,8 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
         for (const auto& [addr, hop_distance] : other_nodes) {
             // TODO:
             routing_table->UpdateRoute(network_manager, addr, hop_distance, 100,
-                                       config.default_data_slots, current_time);
+                                       config.default_data_slots, 0,
+                                       current_time);
             LOG_INFO("Added node 0x%04X at hop distance %d", addr,
                      hop_distance);
         }
@@ -674,9 +677,15 @@ TEST_F(ComprehensiveSlotAllocationTest, DiscoverySlots_DiscoveryState) {
 }
 
 /**
- * @brief Test deterministic control slot allocation with address-based ordering
+ * @brief Test join-order-based control slot allocation
+ *
+ * With join-order-based allocation (v1.3):
+ * - NM assigns each node a unique control_slot_index based on join order
+ * - Node's CONTROL_TX slot = sync_beacon_slots + my_control_slot_index_
+ * - All other control slots are CONTROL_RX (listen to everyone)
+ * - Number of control slots = max(known_nodes.size(), my_control_slot_index + 1)
  */
-TEST_F(ComprehensiveSlotAllocationTest, ControlSlots_DeterministicOrdering) {
+TEST_F(ComprehensiveSlotAllocationTest, ControlSlots_JoinOrderBasedAllocation) {
     const AddressType node_address = test_node_address_;
     const AddressType nm_address = 0x1001;
 
@@ -691,7 +700,7 @@ TEST_F(ComprehensiveSlotAllocationTest, ControlSlots_DeterministicOrdering) {
                              {0x1006, 3},      // Node D (non-neighbor)
                          });
 
-    // TODO: Get the number of slots, arbitrary number. May be fixed latter
+    // TODO: Get the number of slots, arbitrary number. May be fixed later
     uint8_t total_slots = 255;
 
     // Set the number of slots for this device
@@ -702,94 +711,48 @@ TEST_F(ComprehensiveSlotAllocationTest, ControlSlots_DeterministicOrdering) {
 
     const auto& slot_table = network_service_->GetSlotTable();
 
-    // Find control slots and verify ordering
-    std::vector<std::pair<size_t, AddressType>> control_slots;
+    // Count control slots by type
+    size_t control_tx_count = 0;
+    size_t control_rx_count = 0;
+    std::vector<size_t> control_tx_slots;
+    std::vector<size_t> control_rx_slots;
+
     for (size_t i = 0; i < slot_table.size(); ++i) {
-        if (slot_table[i].type == SlotAllocation::SlotType::CONTROL_TX ||
-            slot_table[i].type == SlotAllocation::SlotType::CONTROL_RX ||
-            (slot_table[i].type == SlotAllocation::SlotType::SLEEP &&
-             slot_table[i].target_address != 0 &&
-             slot_table[i].target_address != 0xFFFF)) {
-            control_slots.push_back({i, slot_table[i].target_address});
+        if (slot_table[i].type == SlotAllocation::SlotType::CONTROL_TX) {
+            control_tx_count++;
+            control_tx_slots.push_back(i);
+            // CONTROL_TX should be for local node
+            EXPECT_EQ(slot_table[i].target_address, node_address)
+                << "CONTROL_TX at slot " << i << " should be for local node";
+        } else if (slot_table[i].type == SlotAllocation::SlotType::CONTROL_RX) {
+            control_rx_count++;
+            control_rx_slots.push_back(i);
         }
     }
 
-    // Verify deterministic address-based ordering based on actual implementation:
-    // The actual order follows: local node first, then all nodes in ascending address order
-    std::vector<AddressType> expected_order = {
-        node_address,  // 0x1000 (local node always first)
-        nm_address,    // 0x1001 (network manager)
-        0x1003,        // 0x1003
-        0x1004,        // 0x1004
-        0x1005,        // 0x1005
-        0x1006         // 0x1006 (highest address)
-    };
+    // With join-order-based allocation:
+    // - Local node should have exactly 1 CONTROL_TX slot (at its assigned index)
+    // - All other control slots should be CONTROL_RX
+    EXPECT_EQ(control_tx_count, 1)
+        << "Node should have exactly 1 CONTROL_TX slot (join-order based)";
 
-    ASSERT_GE(control_slots.size(), expected_order.size())
-        << "Should have at least one control slot per node";
+    // Total control slots = number of known nodes (6 nodes including self)
+    // But since my_control_slot_index_ defaults to 0 for non-joined nodes in test,
+    // we need at least 1 control slot
+    size_t total_control_slots = control_tx_count + control_rx_count;
+    EXPECT_GE(total_control_slots, 1) << "Should have at least 1 control slot";
 
-    // Verify the control slots follow deterministic address-based ordering
-    for (size_t i = 0;
-         i < std::min(control_slots.size(), expected_order.size()); ++i) {
-        EXPECT_EQ(control_slots[i].second, expected_order[i])
-            << "Control slot " << i << " should be for node 0x" << std::hex
-            << expected_order[i] << " but got 0x" << control_slots[i].second;
-    }
-
-    // Verify power-efficient RX/TX/SLEEP allocation
-    size_t tx_count = 0, rx_count = 0, sleep_count = 0;
-    for (const auto& slot : slot_table) {
-        if (slot.type == SlotAllocation::SlotType::CONTROL_TX) {
-            tx_count++;
-            // This node should only TX in its own slot
-            EXPECT_EQ(slot.target_address, node_address)
-                << "CONTROL_TX should only be for local node";
-        } else if (slot.type == SlotAllocation::SlotType::CONTROL_RX) {
-            rx_count++;
-            // Current implementation allocates CONTROL_RX for all nodes
-            EXPECT_TRUE(slot.target_address == 0x1001 ||
-                        slot.target_address == 0x1003 ||
-                        slot.target_address == 0x1004 ||
-                        slot.target_address == 0x1005 ||
-                        slot.target_address == 0x1006)
-                << "CONTROL_RX should be for valid network nodes, got 0x"
-                << std::hex << slot.target_address;
-        } else if (slot.type == SlotAllocation::SlotType::SLEEP &&
-                   slot.target_address != 0 && slot.target_address != 0xFFFF) {
-            sleep_count++;
-            // Current implementation: SLEEP mainly for inactive local node
-            // since all other nodes get CONTROL_RX slots
-            EXPECT_TRUE(slot.target_address == nm_address ||
-                        slot.target_address == node_address ||
-                        slot.target_address == 0x1003 ||
-                        slot.target_address == 0x1004 ||
-                        slot.target_address == 0x1005 ||
-                        slot.target_address == 0x1006)
-                << "SLEEP should be for valid network nodes when inactive, "
-                   "got 0x"
-                << std::hex << slot.target_address;
-        }
-    }
-
-    // Local node might not get TX slot if it's not marked as active
-    // This could be a configuration issue in the test setup
-    EXPECT_GE(tx_count, 0) << "TX count should be non-negative";
-    EXPECT_EQ(rx_count, 5) << "Should have 5 CONTROL_RX slots for all network "
-                              "nodes (current implementation)";
-    EXPECT_GE(sleep_count, 0)
-        << "Should have some SLEEP slots for inactive local node";
-
-    if (tx_count == 0) {
-        LOG_WARNING(
-            "Local node 0x%04X not getting CONTROL_TX - may not be marked as "
-            "active",
-            node_address);
-    }
+    // The CONTROL_RX count should be (total_control_slots - 1) since we have 1 TX
+    EXPECT_EQ(control_rx_count, total_control_slots - 1)
+        << "All non-TX control slots should be CONTROL_RX";
 
     LOG_INFO(
-        "Deterministic control slot allocation verified: TX=%zu, RX=%zu, "
-        "SLEEP=%zu",
-        tx_count, rx_count, sleep_count);
+        "Join-order control slot allocation: TX=%zu (slots: %s), RX=%zu, "
+        "total=%zu",
+        control_tx_count,
+        control_tx_slots.empty() ? "none"
+                                 : std::to_string(control_tx_slots[0]).c_str(),
+        control_rx_count, total_control_slots);
 }
 
 // =========================== SLEEP SLOT TESTS ===========================

@@ -26,7 +26,8 @@ enum class SuperframeNotificationType : uint8_t {
     NEW_FRAME,       ///< New frame cycle started, recalculate timeout
     CONFIG_CHANGED,  ///< Configuration changed, recalculate timeout
     SYNC_UPDATED,    ///< External sync updated, immediate recalculation
-    SYNC_COMPLETE  ///< Complete sync operation finished (consolidated notification)
+    SYNC_COMPLETE,  ///< Complete sync operation finished (consolidated notification)
+    STOP_REQUESTED  ///< Stop requested, task should exit immediately
 };
 
 /**
@@ -127,7 +128,7 @@ class SuperframeService : public ISuperframeService {
       * 
       * @return uint32_t Duration of the superframe in milliseconds
       */
-    uint32_t GetSuperframeDuration() const;
+    uint32_t GetSuperframeDuration() const override;
 
     /**
      * @brief Get time since superframe started
@@ -284,13 +285,33 @@ class SuperframeService : public ISuperframeService {
 
     /**
       * @brief Set the node address for logging context
-      * 
+      *
       * This ensures that the SuperframeService update task has the correct
       * node address for logging purposes.
-      * 
+      *
       * @param node_address The node address to set
       */
     void SetNodeAddress(uint16_t node_address) { node_address_ = node_address; }
+
+    /**
+     * @brief Set the maximum discovery jitter
+     *
+     * Random jitter is added to the discovery timeout to prevent multiple
+     * nodes starting simultaneously from all timing out at once and each
+     * creating separate networks.
+     *
+     * @param max_jitter_ms Maximum jitter in milliseconds (0 to disable)
+     */
+    void SetDiscoveryJitter(uint32_t max_jitter_ms) {
+        discovery_jitter_max_ms_ = max_jitter_ms;
+    }
+
+    /**
+     * @brief Get the maximum discovery jitter
+     *
+     * @return uint32_t Maximum jitter in milliseconds
+     */
+    uint32_t GetDiscoveryJitter() const { return discovery_jitter_max_ms_; }
 
    private:
     /**
@@ -363,9 +384,14 @@ class SuperframeService : public ISuperframeService {
         0;                       ///< Start time of current superframe cycle
     uint16_t node_address_ = 0;  ///< Node address for logging context
 
+    /// Maximum random jitter added to discovery timeout (ms).
+    /// Prevents simultaneous network creation when multiple nodes start together.
+    /// Default 5000ms provides sufficient spread for nodes starting within 1-10s.
+    uint32_t discovery_jitter_max_ms_ = 5000;
+
     bool is_running_;
     bool is_synchronized_;
-    bool auto_advance_;
+    bool auto_advance_ = true;
     bool update_start_time_in_new_superframe =
         true;  ///< Flag to control start time updates
     bool sync_in_progress_ =

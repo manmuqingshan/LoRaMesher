@@ -15,6 +15,7 @@
 #include "types/application/application_types.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/base_message.hpp"
+#include "types/node_capabilities.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {
@@ -72,8 +73,20 @@ class LoraMesher {
     [[nodiscard]] Result SendMessage(const BaseMessage& msg);
 
     /**
+     * @brief Generate address from hardware ID without full initialization
+     *
+     * This static method allows users to determine the auto-generated hardware
+     * address before building LoraMesher. This is useful for configuring
+     * role-based settings (like NodeRole) based on the address.
+     *
+     * @return AddressType The address that would be auto-generated, or 0 if hardware ID unavailable
+     * @note Can be called before Build() to configure role-based settings
+     */
+    static AddressType GenerateAddressFromHardware();
+
+    /**
      * @brief Get the node's address in the network
-     * 
+     *
      * @return AddressType The node address
      */
     AddressType GetNodeAddress() const;
@@ -158,6 +171,31 @@ class LoraMesher {
     const std::vector<types::protocols::lora_mesh::SlotAllocation>&
     GetSlotTable() const;
 
+    /**
+     * @brief Set local node capabilities
+     *
+     * Updates the capabilities for this node. Changes will be propagated
+     * in the next routing table broadcast.
+     *
+     * @param capabilities Capabilities bitmap (NodeCapabilities flags)
+     */
+    void SetNodeCapabilities(uint8_t capabilities);
+
+    /**
+     * @brief Get local node capabilities
+     *
+     * @return uint8_t Local node capabilities bitmap
+     */
+    uint8_t GetNodeCapabilities() const;
+
+    /**
+     * @brief Get capabilities for a remote node
+     *
+     * @param node_address Address of the node to query
+     * @return uint8_t Node capabilities bitmap (0 if unknown)
+     */
+    uint8_t GetNodeCapabilities(AddressType node_address) const;
+
    private:
     friend class Builder;  // Allow Builder to access private constructor
 
@@ -177,10 +215,21 @@ class LoraMesher {
 
     /**
      * @brief Create and initialize the protocol
-     * 
+     *
      * @return Result Success if protocol initialization was successful
      */
     [[nodiscard]] Result InitializeProtocol();
+
+    /**
+     * @brief Resolve the node address from configuration or auto-generation
+     *
+     * Encapsulates all address resolution logic: checks for configured address,
+     * attempts hardware-based generation, falls back to random generation.
+     *
+     * @param protocol_config The protocol configuration (may be updated with generated address)
+     * @return AddressType The resolved node address
+     */
+    AddressType ResolveNodeAddress(ProtocolConfig& protocol_config);
 
     /**
      * @brief Hardware event callback
@@ -201,8 +250,6 @@ class LoraMesher {
     bool is_initialized_ = false;
     bool is_running_ = false;
     AddressType node_address_ = 0;
-    bool auto_address_from_hardware_ =
-        true;  ///< Use hardware ID for auto address generation
 
     // Callbacks
     MessageReceivedCallback message_callback_ = nullptr;
@@ -278,7 +325,61 @@ class LoraMesher::Builder {
      * @return Builder& Reference to this builder for method chaining
      */
     Builder& withAutoAddressFromHardware(bool enable = true) {
-        auto_address_from_hardware = enable;
+        config_.setAutoAddressFromHardware(enable);
+        return *this;
+    }
+
+    /**
+     * @brief Set node capabilities
+     *
+     * @param capabilities Node capabilities bitmap (NodeCapabilities flags)
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withNodeCapabilities(uint8_t capabilities) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setNodeCapabilities(capabilities);
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Set the callback invoked before device enters sleep
+     *
+     * @param callback Function to call before sleep
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withPrepareSleepCallback(power::PrepareSleepCallback callback) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setPrepareSleepCallback(std::move(callback));
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Set the callback invoked when device wakes from sleep
+     *
+     * @param callback Function to call after wake up
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withWakeUpCallback(power::WakeUpCallback callback) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setWakeUpCallback(std::move(callback));
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
         return *this;
     }
 
@@ -312,7 +413,7 @@ class LoraMesher::Builder {
 
     /**
      * @brief Build the LoraMesher instance
-     * 
+     *
      * @return std::unique_ptr<LoraMesher> The created instance
      * @throws std::invalid_argument If configuration is invalid
      */
@@ -321,15 +422,11 @@ class LoraMesher::Builder {
             throw std::invalid_argument("Invalid configuration: " +
                                         config_.Validate());
         }
-        auto mesher = std::unique_ptr<LoraMesher>(new LoraMesher(config_));
-        mesher->auto_address_from_hardware_ = auto_address_from_hardware;
-        return mesher;
+        return std::unique_ptr<LoraMesher>(new LoraMesher(config_));
     }
 
    private:
     Config config_;  ///< The configuration being built
-    bool auto_address_from_hardware =
-        true;  ///< Use hardware ID for auto address generation
 };
 
 }  // namespace loramesher

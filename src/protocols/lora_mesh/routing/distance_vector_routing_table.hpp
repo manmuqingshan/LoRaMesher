@@ -50,7 +50,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     bool UpdateRoute(AddressType source, AddressType destination,
                      uint8_t hop_count, uint8_t link_quality,
-                     uint8_t allocated_data_slots,
+                     uint8_t allocated_data_slots, uint8_t capabilities,
                      uint32_t current_time) override;
 
     bool AddNode(
@@ -97,7 +97,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
         AddressType source_address,
         const std::vector<RoutingTableEntry>& entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
-        uint8_t max_hops) override;
+        uint8_t max_hops, uint8_t source_capabilities = 0,
+        uint8_t source_allocated_data_slots = 0) override;
 
    private:
     // Internal helper methods
@@ -109,7 +110,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
      * @return Iterator to the node, or end() if not found
      */
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::iterator
-    FindNode(AddressType node_address);
+    GetNode(AddressType node_address);
 
     /**
      * @brief Find a node by address (const version)
@@ -118,7 +119,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
      * @return Const iterator to the node, or end() if not found
      */
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::const_iterator
-    FindNode(AddressType node_address) const;
+    GetNode(AddressType node_address) const override;
 
     /**
      * @brief Check if adding a node would exceed the limit

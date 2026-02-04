@@ -26,20 +26,21 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
       *
       * @param dest Destination address (network manager or broadcast)
       * @param src Source address of the message
-      * @param capabilities Node capabilities bitmap
       * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
       * @param additional_info Optional additional information to include
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param sponsor_address Sponsor node address (0 for no sponsor)
+      * @param hop_count Number of hops from joining node (0 for direct)
       * @return std::optional<JoinRequestMessage> Valid message if creation succeeded,
       *         std::nullopt otherwise
       */
     static std::optional<JoinRequestMessage> Create(
-        AddressType dest, AddressType src, uint8_t capabilities,
-        uint8_t battery_level, uint8_t requested_slots,
+        AddressType dest, AddressType src, uint8_t battery_level,
+        uint8_t requested_slots,
         const std::vector<uint8_t>& additional_info = {},
-        AddressType next_hop = 0, AddressType sponsor_address = 0);
+        AddressType next_hop = 0, AddressType sponsor_address = 0,
+        uint8_t hop_count = 0);
 
     /**
       * @brief Creates a join request message from serialized data
@@ -52,25 +53,25 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
         const std::vector<uint8_t>& data);
 
     /**
-      * @brief Gets the capabilities bitmap
-      * 
-      * @return uint8_t Node capabilities bitmap
-      */
-    uint8_t GetCapabilities() const;
-
-    /**
       * @brief Gets the battery level
-      * 
+      *
       * @return uint8_t Battery level (0-100%)
       */
     uint8_t GetBatteryLevel() const;
 
     /**
       * @brief Gets the requested data slots
-      * 
+      *
       * @return uint8_t Number of data slots requested
       */
     uint8_t GetRequestedSlots() const;
+
+    /**
+      * @brief Gets the hop count from joining node
+      *
+      * @return uint8_t Number of hops from joining node
+      */
+    uint8_t GetHopCount() const;
 
     /**
       * @brief Gets any additional information included in the message

@@ -42,7 +42,8 @@ RoutingTableMessage::RoutingTableMessage(const BaseMessage& message) {
 
 std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     AddressType dest, AddressType src, AddressType network_manager_addr,
-    uint8_t table_version, const std::vector<RoutingTableEntry>& entries) {
+    uint8_t table_version, const std::vector<RoutingTableEntry>& entries,
+    uint8_t source_capabilities, uint8_t source_allocated_data_slots) {
 
     // Check if the number of entries fits in a uint8_t
     if (entries.size() > UINT8_MAX) {
@@ -52,14 +53,16 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
 
     // Create the header with the correct number of entries
     RoutingTableHeader header(dest, src, network_manager_addr, table_version,
-                              static_cast<uint8_t>(entries.size()));
+                              static_cast<uint8_t>(entries.size()),
+                              source_capabilities, source_allocated_data_slots);
 
     LOG_DEBUG(
-        "Created routing table message with source: 0x%04X, "
-        "destination: 0x%04X, network manager: 0x%04X, "
-        "table version: %d, entry count: %d",
+        "Created routing table message "
+        "src: 0x%04X, dest: 0x%04X, NM: 0x%04X, "
+        "table v.: %d, entry count: %d, caps: 0x%02X, data_slots: %d",
         src, dest, network_manager_addr, table_version,
-        static_cast<int>(entries.size()));
+        static_cast<int>(entries.size()), source_capabilities,
+        source_allocated_data_slots);
 
     return RoutingTableMessage(header, entries);
 }
@@ -128,6 +131,14 @@ const RoutingTableHeader& RoutingTableMessage::GetHeader() const {
     return header_;
 }
 
+uint8_t RoutingTableMessage::GetSourceCapabilities() const {
+    return header_.GetSourceCapabilities();
+}
+
+uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
+    return header_.GetSourceAllocatedDataSlots();
+}
+
 uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
     // Find the node entry with the specified address
     for (const auto& entry : entries_) {
@@ -165,9 +176,7 @@ Result RoutingTableMessage::SetLinkQualityFor(AddressType node_address,
 BaseMessage RoutingTableMessage::ToBaseMessage() const {
     // Calculate payload size (only routing table fields + entries, no BaseHeader)
     size_t payload_size = RoutingTableHeader::RoutingTableFieldsSize();
-    for (const auto& entry : entries_) {
-        payload_size += entry.Size();
-    }
+    payload_size += entries_.size() * RoutingTableEntry::Size();
 
     if (payload_size > BaseMessage::kMaxPayloadSize) {
         LOG_ERROR("Routing table message payload too large: %zu > %zu",
@@ -183,6 +192,8 @@ BaseMessage RoutingTableMessage::ToBaseMessage() const {
     serializer.WriteUint16(header_.GetNetworkManager());
     serializer.WriteUint8(header_.GetTableVersion());
     serializer.WriteUint8(header_.GetEntryCount());
+    serializer.WriteUint8(header_.GetSourceCapabilities());
+    serializer.WriteUint8(header_.GetSourceAllocatedDataSlots());
 
     // Serialize all network node routes
     for (const auto& entry : entries_) {

@@ -35,6 +35,7 @@ enum class LoraMesherErrorCode {
     kInvalidArgument,     ///< Invalid argument error
     kNotImplemented,      ///< Feature not implemented
     kSerializationError,  ///< Failed message serialization
+    kNoRoute,             ///< No route to destination
 };
 
 /**

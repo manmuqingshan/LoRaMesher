@@ -30,7 +30,7 @@ class MockRadio;
  * @return test::MockRadio& Reference to the mock radio for setting expectations
  * @throws std::runtime_error if the current module is not a MockRadio
  */
-test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio) {
+inline test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio) {
 #if defined(PLATFORMIO)
     // PlatformIO specific code
     // Maybe use the static type checking approach when in PlatformIO
@@ -54,7 +54,7 @@ namespace loramesher {
 namespace radio {
 namespace test {
 
-void MockRadio::NotifyProcessingTask() {
+inline void MockRadio::NotifyProcessingTask() {
     if (radio_lib_instance_ && radio_lib_instance_->processing_task_) {
         LOG_DEBUG(
             "MockRadio: Notifying processing task for RadioLibRadio instance "

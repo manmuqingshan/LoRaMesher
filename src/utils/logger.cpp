@@ -11,6 +11,30 @@ Logger::Logger() : logger_semaphore_(nullptr) {
 #endif
 }
 
+void Logger::Log(LogLevel level, const char* format, ...) {
+    // Lazy initialization of semaphore to avoid static initialization order issues
+    EnsureSemaphoreInitialized();
+
+    // Use RTOS system semaphore with timeout to prevent blocking
+    if (!logger_semaphore_ ||
+        !GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
+        // If semaphore is unavailable or timeout, skip logging to prevent blocking
+        return;
+    }
+
+    // Format the message using variable arguments
+    char buffer[LOGGER_BUFFER_SIZE];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
+    // Log the formatted message
+    LogMessage(level, std::string(buffer));
+
+    GetRTOS().GiveSystemSemaphore(logger_semaphore_);
+}
+
 void Logger::EnsureSemaphoreInitialized() {
     if (!shutdown_requested_ && !logger_semaphore_) {
         // Use SYSTEM semaphore - logging is infrastructure, not part of simulation
@@ -29,22 +53,10 @@ void Logger::LogMessage(LogLevel level, const std::string& message) {
         return;
     }
 
-    // Lazy initialization of semaphore to avoid static initialization order issues
-    EnsureSemaphoreInitialized();
-
-    // Use RTOS system semaphore with timeout to prevent blocking
-    if (!logger_semaphore_ ||
-        !GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
-        // If semaphore is unavailable or timeout, skip logging to prevent blocking
-        return;
-    }
-
     if (level >= min_log_level_ && handler_) {
         std::string formatted_message = FormatMessageWithAddress(message);
         handler_->Write(level, formatted_message);
     }
-
-    GetRTOS().GiveSystemSemaphore(logger_semaphore_);
 }
 
 void Logger::SetLogLevel(LogLevel level) {

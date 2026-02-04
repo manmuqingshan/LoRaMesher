@@ -3,12 +3,20 @@
  * @brief Implementation of the LoraMesher library
  */
 #include "loramesher.hpp"
+
+#include "hardware/hal_factory.hpp"
 #include "os/os_port.hpp"
 #include "utils/address_generator.hpp"
 
 namespace loramesher {
 
-LoraMesher::LoraMesher(const Config& config) : config_(config) {}
+LoraMesher::LoraMesher(const Config& config) : config_(config) {
+    Result init_result = Initialize();
+    if (!init_result) {
+        LOG_ERROR("LoraMesher initialization failed: %s",
+                  init_result.GetErrorMessage().c_str());
+    }
+}
 
 LoraMesher::~LoraMesher() {
     Stop();
@@ -58,54 +66,9 @@ Result LoraMesher::InitializeProtocol() {
                       "Failed to create protocol manager");
     }
 
-    // Get configuration for protocol setup
+    // Get configuration and resolve node address
     ProtocolConfig protocol_config = config_.getProtocolConfig();
-
-    // Get or generate node address
-    AddressType configured_address = protocol_config.getNodeAddress();
-    if (configured_address == 0) {
-        // Auto-generate address using hardware-based generation
-        LOG_INFO("No address configured, auto-generating from hardware...");
-
-        utils::AddressGenerator::Config addr_config{};
-        addr_config.use_hardware_id = auto_address_from_hardware_;
-        addr_config.avoid_reserved_addresses = true;
-
-        // Try to get hardware unique ID from HAL
-        uint8_t hardware_id[6];
-        bool has_hardware_id = false;
-
-        if (hardware_manager_ && hardware_manager_->getHal()) {
-            has_hardware_id = hardware_manager_->getHal()->GetHardwareUniqueId(
-                hardware_id, sizeof(hardware_id));
-        }
-
-        if (has_hardware_id && auto_address_from_hardware_) {
-            // Generate address from hardware ID
-            node_address_ = utils::AddressGenerator::GenerateFromHardwareId(
-                hardware_id, sizeof(hardware_id), addr_config);
-            LOG_INFO("Generated node address 0x%04X from hardware HAL",
-                     node_address_);
-        } else {
-            // Fallback generation
-            LOG_WARNING("Hardware ID not available, using fallback generation");
-            node_address_ =
-                utils::AddressGenerator::GenerateFallback(addr_config);
-            LOG_INFO("Generated fallback node address 0x%04X", node_address_);
-        }
-
-        if (node_address_ == 0) {
-            // Final fallback - should never happen
-            LOG_ERROR("Address generation failed completely, using 0x0001");
-            node_address_ = 0x0001;
-        }
-
-        // Update the protocol configuration with the generated address
-        protocol_config.setNodeAddress(node_address_);
-    } else {
-        node_address_ = configured_address;
-        LOG_INFO("Using configured node address 0x%04X", node_address_);
-    }
+    node_address_ = ResolveNodeAddress(protocol_config);
 
     // Create the active protocol using configuration
     active_protocol_ = protocol_manager_->CreateProtocolWithConfig(
@@ -240,6 +203,29 @@ void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     } else {
         LOG_WARNING("LoRaMesh protocol not available for data callback");
     }
+}
+
+void LoraMesher::SetNodeCapabilities(uint8_t capabilities) {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        mesh_protocol->SetNodeCapabilities(capabilities);
+    }
+}
+
+uint8_t LoraMesher::GetNodeCapabilities() const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        return mesh_protocol->GetLocalNodeCapabilities();
+    }
+    return 0;
+}
+
+uint8_t LoraMesher::GetNodeCapabilities(AddressType node_address) const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        return mesh_protocol->GetNodeCapabilities(node_address);
+    }
+    return 0;
 }
 
 std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
@@ -379,6 +365,70 @@ void LoraMesher::OnRadioEvent(std::unique_ptr<radio::RadioEvent> event) {
     //     LOG_DEBUG("Dispatching message to application callback");
     //     message_callback_(*msg);
     // }
+}
+
+AddressType LoraMesher::GenerateAddressFromHardware() {
+    // Create temporary HAL via factory
+    auto hal = hal::HalFactory::createHal();
+    if (!hal) {
+        LOG_WARNING("Failed to create HAL for address generation");
+        return 0;
+    }
+
+    uint8_t hardware_id[6] = {0};
+    if (!hal->GetHardwareUniqueId(hardware_id, sizeof(hardware_id))) {
+        LOG_WARNING("Hardware ID not available");
+        return 0;
+    }
+
+    utils::AddressGenerator::Config addr_config{};
+    addr_config.use_hardware_id = true;
+    addr_config.avoid_reserved_addresses = true;
+
+    return utils::AddressGenerator::GenerateFromHardwareId(
+        hardware_id, sizeof(hardware_id), addr_config);
+}
+
+AddressType LoraMesher::ResolveNodeAddress(ProtocolConfig& protocol_config) {
+    AddressType configured_address = protocol_config.getNodeAddress();
+
+    // Use configured address if provided
+    if (configured_address != 0) {
+        LOG_INFO("Using configured node address 0x%04X", configured_address);
+        return configured_address;
+    }
+
+    LOG_INFO("No address configured, auto-generating...");
+    AddressType generated_address = 0;
+
+    // Try hardware-based generation if enabled
+    if (config_.getAutoAddressFromHardware()) {
+        generated_address = GenerateAddressFromHardware();
+        if (generated_address != 0) {
+            LOG_INFO("Generated node address 0x%04X from hardware",
+                     generated_address);
+        }
+    }
+
+    // Fallback generation if hardware failed or disabled
+    if (generated_address == 0) {
+        LOG_WARNING("Using fallback generation");
+        utils::AddressGenerator::Config addr_config{};
+        addr_config.avoid_reserved_addresses = true;
+        generated_address =
+            utils::AddressGenerator::GenerateFallback(addr_config);
+        LOG_INFO("Generated fallback node address 0x%04X", generated_address);
+    }
+
+    // Final safety - should never happen
+    if (generated_address == 0) {
+        LOG_ERROR("Address generation failed completely, using 0x0001");
+        generated_address = 0x0001;
+    }
+
+    // Update config with resolved address
+    protocol_config.setNodeAddress(generated_address);
+    return generated_address;
 }
 
 }  // namespace loramesher

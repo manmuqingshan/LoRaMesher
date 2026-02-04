@@ -11,27 +11,12 @@ namespace loramesher {
 
 /**
   * @brief Header for JOIN_REQUEST messages
-  * 
-  * Extends BaseHeader with join request specific fields: node capabilities,
-  * battery level, and requested data slots.
+  *
+  * Extends BaseHeader with join request specific fields:
+  * battery level and requested data slots.
   */
 class JoinRequestHeader : public BaseHeader {
    public:
-    /**
-      * @brief Bit flags for node capabilities
-      */
-    enum NodeCapabilities : uint8_t {
-        NONE = 0x00,              ///< No special capabilities
-        ROUTER = 0x01,            ///< Node can route messages
-        GATEWAY = 0x02,           ///< Node has internet connectivity
-        BATTERY_POWERED = 0x04,   ///< Node runs on battery
-        HIGH_BANDWIDTH = 0x08,    ///< Node supports high bandwidth
-        TIME_SYNC_SOURCE = 0x10,  ///< Node can provide time synchronization
-        SENSOR_NODE = 0x20,       ///< Node has sensors
-        RESERVED = 0x40,          ///< Reserved for future use
-        EXTENDED_CAPS = 0x80      ///< Has extended capabilities
-    };
-
     /**
       * @brief Default constructor
       */
@@ -42,25 +27,17 @@ class JoinRequestHeader : public BaseHeader {
       *
       * @param dest Destination address (typically broadcast or network manager)
       * @param src Source address
-      * @param capabilities Node capabilities bitmap
       * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param additional_info_size To store the payload size in the base message
       * @param sponsor_address Sponsor node address (0 for no sponsor)
+      * @param hop_count Number of hops from joining node (0 for direct)
       */
-    JoinRequestHeader(AddressType dest, AddressType src, uint8_t capabilities,
-                      uint8_t battery_level, uint8_t requested_slots,
-                      AddressType next_hop = 0,
+    JoinRequestHeader(AddressType dest, AddressType src, uint8_t battery_level,
+                      uint8_t requested_slots, AddressType next_hop = 0,
                       uint8_t additional_info_size = 0,
-                      AddressType sponsor_address = 0);
-
-    /**
-      * @brief Gets the node capabilities
-      * 
-      * @return uint8_t The capabilities bitmap
-      */
-    uint8_t GetCapabilities() const { return capabilities_; }
+                      AddressType sponsor_address = 0, uint8_t hop_count = 0);
 
     /**
       * @brief Gets the battery level
@@ -91,15 +68,25 @@ class JoinRequestHeader : public BaseHeader {
     AddressType GetSponsorAddress() const { return sponsor_address_; }
 
     /**
+      * @brief Gets the hop count from joining node
+      *
+      * @return uint8_t Number of hops from joining node
+      */
+    uint8_t GetHopCount() const { return hop_count_; }
+
+    /**
+      * @brief Increments hop count for forwarding
+      */
+    void IncrementHopCount() { hop_count_++; }
+
+    /**
       * @brief Sets the join request specific information
-      * 
-      * @param capabilities Node capabilities bitmap
+      *
       * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
       * @return Result Success if setting succeeded, error code otherwise
       */
-    Result SetJoinRequestInfo(uint8_t capabilities, uint8_t battery_level,
-                              uint8_t requested_slots);
+    Result SetJoinRequestInfo(uint8_t battery_level, uint8_t requested_slots);
 
     /**
      * @brief Sets the requested data slots
@@ -143,11 +130,11 @@ class JoinRequestHeader : public BaseHeader {
       * @return size_t Size of the join request header fields in bytes
       */
     static constexpr size_t JoinRequestFieldsSize() {
-        return sizeof(uint8_t) +      // Capabilities
-               sizeof(uint8_t) +      // Battery level
+        return sizeof(uint8_t) +      // Battery level
                sizeof(uint8_t) +      // Requested slots
                sizeof(AddressType) +  // Next hop
-               sizeof(AddressType);   // Sponsor address
+               sizeof(AddressType) +  // Sponsor address
+               sizeof(uint8_t);       // Hop count
     }
 
     /**
@@ -160,12 +147,12 @@ class JoinRequestHeader : public BaseHeader {
     }
 
    private:
-    uint8_t capabilities_ = 0;     ///< Node capabilities bitmap
     uint8_t battery_level_ = 100;  ///< Battery level (0-100%)
     uint8_t requested_slots_ = 1;  ///< Requested number of data slots
     AddressType next_hop_ = 0;     ///< Next hop for message forwarding
     AddressType sponsor_address_ =
-        0;  ///< Sponsor node address (0 = no sponsor)
+        0;                   ///< Sponsor node address (0 = no sponsor)
+    uint8_t hop_count_ = 0;  ///< Hops from joining node
 };
 
 }  // namespace loramesher

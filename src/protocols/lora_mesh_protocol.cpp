@@ -210,6 +210,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     lora_mesh::INetworkService::NetworkConfig net_config =
         service_config_.network_config;
     net_config.node_address = config.getNodeAddress();
+    net_config.node_role = config.getNodeRole();
 
     Result result = network_service_->Configure(net_config);
     if (!result) {
@@ -220,6 +221,20 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
 
     // Configure message queue size
     message_queue_service_->SetMaxQueueSize(service_config_.message_queue_size);
+
+    // Set power management callbacks from config
+    if (config.getPrepareSleepCallback()) {
+        prepare_sleep_callback_ = config.getPrepareSleepCallback();
+    }
+    if (config.getWakeUpCallback()) {
+        wake_up_callback_ = config.getWakeUpCallback();
+    }
+
+    // Set node capabilities from config
+    if (config.getNodeCapabilities() != 0) {
+        network_service_->SetLocalNodeCapabilities(
+            config.getNodeCapabilities());
+    }
 
     return Result::Success();
 }
@@ -328,7 +343,7 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
     SlotAllocation::SlotType slot_type;
 
     switch (message.GetType()) {
-        case MessageType::DATA_MSG:
+        case MessageType::DATA:
             slot_type = SlotAllocation::SlotType::TX;
             break;
         case MessageType::ROUTE_TABLE:
@@ -351,6 +366,16 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
               slot_utils::SlotTypeToString(slot_type).c_str());
 
     return Result::Success();
+}
+
+Result LoRaMeshProtocol::SendData(AddressType destination,
+                                  const std::vector<uint8_t>& data) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+
+    return network_service_->SendData(destination, data);
 }
 
 Result LoRaMeshProtocol::Pause() {
@@ -428,6 +453,10 @@ uint16_t LoRaMeshProtocol::GetCurrentSlot() const {
     return superframe_service_->GetCurrentSlot();
 }
 
+uint32_t LoRaMeshProtocol::GetSlotDuration() const {
+    return superframe_service_->GetSlotDuration();
+}
+
 void LoRaMeshProtocol::SetRouteUpdateCallback(
     lora_mesh::INetworkService::RouteUpdateCallback callback) {
     network_service_->SetRouteUpdateCallback(callback);
@@ -436,6 +465,26 @@ void LoRaMeshProtocol::SetRouteUpdateCallback(
 void LoRaMeshProtocol::SetDataReceivedCallback(
     lora_mesh::INetworkService::DataReceivedCallback callback) {
     network_service_->SetDataReceivedCallback(callback);
+}
+
+void LoRaMeshProtocol::SetNodeCapabilities(uint8_t capabilities) {
+    if (network_service_) {
+        network_service_->SetLocalNodeCapabilities(capabilities);
+    }
+}
+
+uint8_t LoRaMeshProtocol::GetLocalNodeCapabilities() const {
+    if (network_service_) {
+        return network_service_->GetLocalNodeCapabilities();
+    }
+    return 0;
+}
+
+uint8_t LoRaMeshProtocol::GetNodeCapabilities(AddressType node_address) const {
+    if (network_service_) {
+        return network_service_->GetNodeCapabilities(node_address);
+    }
+    return 0;
 }
 
 const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
@@ -614,8 +663,20 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     uint32_t reception_timestamp = event->getTimestamp();
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp);
+                    Result result =
+                        hardware_->setState(radio::RadioState::kSleep);
+                    if (!result) {
+                        LOG_WARNING("Failed to set radio to sleep state: %s",
+                                    result.GetErrorMessage().c_str());
+                    }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
+                    Result result =
+                        hardware_->setState(radio::RadioState::kSleep);
+                    if (!result) {
+                        LOG_WARNING("Failed to set radio to sleep state: %s",
+                                    result.GetErrorMessage().c_str());
+                    }
                     // TODO: Handle transmitted events (e.g., update transmission statistics)
                     LOG_DEBUG("Processed radio event for transmitted message");
                 } else {
@@ -713,6 +774,20 @@ void LoRaMeshProtocol::OnNetworkTopologyChange(bool route_updated,
 void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
     Result result;
 
+    // Handle wake-up callback when transitioning from SLEEP to an active slot
+    // This allows applications to restore peripherals that were disabled during sleep
+    if (current_power_state_ == power::PowerState::LIGHT_SLEEP &&
+        slot_type != SlotAllocation::SlotType::SLEEP) {
+        // Invoke wake callback before processing the new slot
+        // This ensures peripherals are ready before any TX/RX operations
+        if (wake_up_callback_) {
+            LOG_DEBUG("Invoking wake-up callback from LIGHT_SLEEP");
+            wake_up_callback_(power::PowerState::LIGHT_SLEEP);
+        }
+        // Update power state to ACTIVE now that we're in an active slot
+        current_power_state_ = power::PowerState::ACTIVE;
+    }
+
     switch (slot_type) {
         case SlotAllocation::SlotType::TX:
         case SlotAllocation::SlotType::CONTROL_TX: {
@@ -752,8 +827,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                               static_cast<int>(state));
                 }
             } else {
-                LOG_DEBUG("No control message to send in state %d",
-                          static_cast<int>(state));
+                LOG_DEBUG("No control message to send in slot %d", slot_type);
             }
             break;
         }
@@ -903,14 +977,52 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
 
         case SlotAllocation::SlotType::SLEEP:
-        default:
+        default: {
+            // Build sleep context for user callback
+            // This provides all information needed to make intelligent sleep decisions
+            power::SleepContext ctx{};
+            ctx.requested_state = power::PowerState::LIGHT_SLEEP;
+            ctx.current_slot = superframe_service_->GetCurrentSlot();
+            ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
+
+            // Calculate sleep duration (time until next slot)
+            // Users can use this to decide if sleep is worthwhile for short durations
+            uint32_t slot_duration = superframe_service_->GetSlotDuration();
+            ctx.sleep_duration_ms = slot_duration;
+
+            // Call user callback if registered
+            // This allows application-level power management (disable GPS, sensors, etc.)
+            if (prepare_sleep_callback_) {
+                LOG_DEBUG("Invoking prepare-sleep callback for slot %u",
+                          ctx.current_slot);
+                auto sleep_result = prepare_sleep_callback_(ctx);
+
+                if (!sleep_result.allow_sleep) {
+                    // User vetoed sleep - still set radio to sleep for power savings
+                    // but don't track as "sleeping" (wake callback won't fire)
+                    LOG_DEBUG("Sleep vetoed by user callback");
+                    result = hardware_->setState(radio::RadioState::kSleep);
+                    if (!result) {
+                        LOG_ERROR("Failed to set radio to sleep: %s",
+                                  result.GetErrorMessage().c_str());
+                    }
+                    // Note: current_power_state_ remains ACTIVE
+                    break;
+                }
+            }
+
             // Set radio to sleep mode
             result = hardware_->setState(radio::RadioState::kSleep);
             if (!result) {
                 LOG_ERROR("Failed to set radio to sleep: %s",
                           result.GetErrorMessage().c_str());
             }
+
+            // Update power state to track for wake callback
+            // This ensures WakeUpCallback fires on next active slot
+            current_power_state_ = power::PowerState::LIGHT_SLEEP;
             break;
+        }
     }
 }
 
@@ -1018,11 +1130,8 @@ Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
                       "Message queue service not initialized");
     }
 
-    // Search if message_queue_service contains a routing_message
-    if (message_queue_service_->HasMessage(
-            loramesher::MessageType::ROUTE_TABLE)) {
-        return Result::Success();  // Already exists, no need to add
-    }
+    // Search if message_queue_service contains a routing_message and remove it
+    message_queue_service_->RemoveMessage(loramesher::MessageType::ROUTE_TABLE);
 
     // Create a new routing message with broadcast destination
     auto routing_message = network_service_->CreateRoutingTableMessage(

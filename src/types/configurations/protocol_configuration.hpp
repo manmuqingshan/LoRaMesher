@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include "types/messages/base_message.hpp"
+#include "types/power/power_types.hpp"
 #include "types/protocols/protocol.hpp"
 
 namespace loramesher {
@@ -165,8 +166,19 @@ class PingPongProtocolConfig : public BaseProtocolConfig {
 };
 
 /**
+ * @brief Node role for network formation behavior
+ *
+ * Controls how a node behaves during network discovery and formation.
+ */
+enum class NodeRole : uint8_t {
+    AUTO = 0,         ///< Create network if discovery times out (default)
+    NETWORK_MANAGER,  ///< Immediately create network (skip discovery wait)
+    NODE_ONLY         ///< Never create network, wait indefinitely to join
+};
+
+/**
  * @brief Configuration for the LoRaMesh protocol
- * 
+ *
  * Contains specific parameters needed for the LoRaMesh routing protocol.
  */
 class LoRaMeshProtocolConfig : public BaseProtocolConfig {
@@ -322,11 +334,77 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
 
     /**
      * @brief Set the TX guard time for RX readiness
-     * 
+     *
      * @param guard_time_ms Guard time in milliseconds
      */
     void setGuardTime(uint32_t guard_time_ms) {
         guard_time_ms_ = guard_time_ms;
+    }
+
+    /**
+     * @brief Get the node role for network formation
+     *
+     * @return NodeRole The configured node role
+     */
+    NodeRole getNodeRole() const { return node_role_; }
+
+    /**
+     * @brief Set the node role for network formation
+     *
+     * @param role Node role (AUTO, NETWORK_MANAGER, or NODE_ONLY)
+     */
+    void setNodeRole(NodeRole role) { node_role_ = role; }
+
+    /**
+     * @brief Get the prepare sleep callback
+     *
+     * @return power::PrepareSleepCallback The callback invoked before sleep
+     */
+    power::PrepareSleepCallback getPrepareSleepCallback() const {
+        return prepare_sleep_callback_;
+    }
+
+    /**
+     * @brief Get the wake up callback
+     *
+     * @return power::WakeUpCallback The callback invoked after wake up
+     */
+    power::WakeUpCallback getWakeUpCallback() const {
+        return wake_up_callback_;
+    }
+
+    /**
+     * @brief Get the node capabilities bitmap
+     *
+     * @return uint8_t Node capabilities flags
+     */
+    uint8_t getNodeCapabilities() const { return node_capabilities_; }
+
+    /**
+     * @brief Set the prepare sleep callback
+     *
+     * @param callback Callback to invoke before device enters sleep
+     */
+    void setPrepareSleepCallback(power::PrepareSleepCallback callback) {
+        prepare_sleep_callback_ = std::move(callback);
+    }
+
+    /**
+     * @brief Set the wake up callback
+     *
+     * @param callback Callback to invoke when device wakes from sleep
+     */
+    void setWakeUpCallback(power::WakeUpCallback callback) {
+        wake_up_callback_ = std::move(callback);
+    }
+
+    /**
+     * @brief Set the node capabilities bitmap
+     *
+     * @param capabilities Node capabilities flags
+     */
+    void setNodeCapabilities(uint8_t capabilities) {
+        node_capabilities_ = capabilities;
     }
 
     /**
@@ -389,6 +467,10 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint8_t max_network_nodes_ =
         50;                        ///< Maximum number of nodes in the network
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
+    NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+    power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
+    power::WakeUpCallback wake_up_callback_ = nullptr;
+    uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
 };
 
 /**

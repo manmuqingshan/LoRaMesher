@@ -91,11 +91,24 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Send a message through the protocol
-     * 
+     *
      * @param message Message to send
      * @return Result Success or error details
      */
     Result SendMessage(const BaseMessage& message) override;
+
+    /**
+     * @brief Send user data to a destination through the mesh network
+     *
+     * Creates a DataMessage with proper next-hop routing and queues
+     * it for transmission. The data will be routed through the mesh
+     * network to reach the destination.
+     *
+     * @param destination Final destination address
+     * @param data User data payload to send
+     * @return Result Success or error (e.g., no route found)
+     */
+    Result SendData(AddressType destination, const std::vector<uint8_t>& data);
 
     /**
      * @brief Pause all protocol services
@@ -140,6 +153,13 @@ class LoRaMeshProtocol : public Protocol {
     uint16_t GetCurrentSlot() const;
 
     /**
+     * @brief Get the Slot duration in ms
+     * 
+     * @return uint32_t Slot duration in milliseconds
+     */
+    uint32_t GetSlotDuration() const;
+
+    /**
      * @brief Set route update callback
      *
      * @param callback Callback function
@@ -154,6 +174,31 @@ class LoRaMeshProtocol : public Protocol {
      */
     void SetDataReceivedCallback(
         lora_mesh::INetworkService::DataReceivedCallback callback);
+
+    /**
+     * @brief Set local node capabilities
+     *
+     * Updates the capabilities for this node. Changes will be propagated
+     * in the next routing table broadcast.
+     *
+     * @param capabilities Capabilities bitmap (NodeCapabilities flags)
+     */
+    void SetNodeCapabilities(uint8_t capabilities);
+
+    /**
+     * @brief Get local node capabilities
+     *
+     * @return uint8_t Local node capabilities bitmap
+     */
+    uint8_t GetLocalNodeCapabilities() const;
+
+    /**
+     * @brief Get capabilities for a specific node
+     *
+     * @param node_address Address of the node to query
+     * @return uint8_t Node capabilities bitmap (0 if node not found)
+     */
+    uint8_t GetNodeCapabilities(AddressType node_address) const;
 
     /**
      * @brief Get all network nodes with their routing information
@@ -316,6 +361,11 @@ class LoRaMeshProtocol : public Protocol {
     // Configuration
     LoRaMeshProtocolConfig config_;
     ServiceConfiguration service_config_;
+
+    // Power management callbacks
+    power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
+    power::WakeUpCallback wake_up_callback_ = nullptr;
+    power::PowerState current_power_state_ = power::PowerState::ACTIVE;
 
     // Constants
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 4096;

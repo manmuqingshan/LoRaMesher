@@ -12,6 +12,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <random>
 #include <vector>
@@ -443,6 +444,8 @@ class VirtualNetwork {
 
     std::map<uint32_t, NodeInfo> nodes_;
     std::vector<PendingMessage> pending_messages_;
+    mutable std::mutex
+        pending_messages_mutex_;  ///< Mutex for thread-safe access to pending_messages_
     std::map<uint32_t, std::vector<std::vector<uint8_t>>>
         sent_messages_;  ///< Store sent messages per node
     uint32_t current_time_;
@@ -494,7 +497,10 @@ class VirtualNetwork {
         msg.rssi = rssi;
         msg.snr = snr;
 
-        pending_messages_.push_back(msg);
+        {
+            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+            pending_messages_.push_back(msg);
+        }
 
         LOG_DEBUG(
             "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery at %u "
@@ -506,14 +512,24 @@ class VirtualNetwork {
      * @brief Process any pending messages that are due for delivery
      */
     void ProcessPendingMessages() {
-        auto it = pending_messages_.begin();
-        while (it != pending_messages_.end()) {
-            if (it->delivery_time <= current_time_) {
-                DeliverMessage(*it);
-                it = pending_messages_.erase(it);
-            } else {
-                ++it;
+        // Extract messages due for delivery under lock
+        std::vector<PendingMessage> messages_to_deliver;
+        {
+            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+            auto it = pending_messages_.begin();
+            while (it != pending_messages_.end()) {
+                if (it->delivery_time <= current_time_) {
+                    messages_to_deliver.push_back(*it);
+                    it = pending_messages_.erase(it);
+                } else {
+                    ++it;
+                }
             }
+        }
+
+        // Deliver messages outside the lock to avoid deadlocks
+        for (const auto& msg : messages_to_deliver) {
+            DeliverMessage(msg);
         }
     }
 
@@ -692,7 +708,7 @@ class VirtualTimeController {
 };
 
 // Initialize static member
-VirtualTimeController* VirtualTimeController::instance_ = nullptr;
+inline VirtualTimeController* VirtualTimeController::instance_ = nullptr;
 
 /**
  * @brief Adapter class to connect MockRadio to VirtualNetwork

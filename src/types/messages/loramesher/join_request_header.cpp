@@ -8,20 +8,19 @@
 namespace loramesher {
 
 JoinRequestHeader::JoinRequestHeader(
-    AddressType dest, AddressType src, uint8_t capabilities,
-    uint8_t battery_level, uint8_t requested_slots, AddressType next_hop,
-    uint8_t additional_info_size, AddressType sponsor_address)
+    AddressType dest, AddressType src, uint8_t battery_level,
+    uint8_t requested_slots, AddressType next_hop, uint8_t additional_info_size,
+    AddressType sponsor_address, uint8_t hop_count)
     : BaseHeader(
           dest, src, MessageType::JOIN_REQUEST,
           JoinRequestHeader::JoinRequestFieldsSize() + additional_info_size),
-      capabilities_(capabilities),
       battery_level_(battery_level),
       requested_slots_(requested_slots),
       next_hop_(next_hop),
-      sponsor_address_(sponsor_address) {}
+      sponsor_address_(sponsor_address),
+      hop_count_(hop_count) {}
 
-Result JoinRequestHeader::SetJoinRequestInfo(uint8_t capabilities,
-                                             uint8_t battery_level,
+Result JoinRequestHeader::SetJoinRequestInfo(uint8_t battery_level,
                                              uint8_t requested_slots) {
     // Validate battery level
     if (battery_level > 100) {
@@ -29,7 +28,6 @@ Result JoinRequestHeader::SetJoinRequestInfo(uint8_t capabilities,
                       "Battery level must be between 0-100%");
     }
 
-    capabilities_ = capabilities;
     battery_level_ = battery_level;
     requested_slots_ = requested_slots;
 
@@ -44,11 +42,11 @@ Result JoinRequestHeader::Serialize(utils::ByteSerializer& serializer) const {
     }
 
     // Then serialize join request specific fields
-    serializer.WriteUint8(capabilities_);
     serializer.WriteUint8(battery_level_);
     serializer.WriteUint8(requested_slots_);
     serializer.WriteUint16(next_hop_);
     serializer.WriteUint16(sponsor_address_);
+    serializer.WriteUint8(hop_count_);
 
     return Result::Success();
 }
@@ -71,22 +69,22 @@ std::optional<JoinRequestHeader> JoinRequestHeader::Deserialize(
     }
 
     // Deserialize join request specific fields
-    auto capabilities = deserializer.ReadUint8();
     auto battery_level = deserializer.ReadUint8();
     auto requested_slots = deserializer.ReadUint8();
     auto next_hop = deserializer.ReadUint16();
     auto sponsor_address = deserializer.ReadUint16();
+    auto hop_count = deserializer.ReadUint8();
 
-    if (!capabilities || !battery_level || !requested_slots || !next_hop ||
-        !sponsor_address) {
+    if (!battery_level || !requested_slots || !next_hop || !sponsor_address ||
+        !hop_count) {
         LOG_ERROR("Failed to deserialize join request header fields");
         return std::nullopt;
     }
 
     // Create and return the join request header
     JoinRequestHeader header(
-        base_header->GetDestination(), base_header->GetSource(), *capabilities,
-        *battery_level, *requested_slots, *next_hop, 0, *sponsor_address);
+        base_header->GetDestination(), base_header->GetSource(), *battery_level,
+        *requested_slots, *next_hop, 0, *sponsor_address, *hop_count);
 
     return header;
 }

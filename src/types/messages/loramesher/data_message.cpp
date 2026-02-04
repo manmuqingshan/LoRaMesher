@@ -1,0 +1,138 @@
+/**
+ * @file data_message.cpp
+ * @brief Implementation of data message functionality
+ */
+
+#include "data_message.hpp"
+
+namespace loramesher {
+
+DataMessage::DataMessage(const DataHeader& header,
+                         const std::vector<uint8_t>& payload)
+    : header_(header), payload_(payload) {}
+
+std::optional<DataMessage> DataMessage::Create(
+    AddressType dest, AddressType src, AddressType next_hop,
+    const std::vector<uint8_t>& payload) {
+
+    // Validate payload size
+    if (payload.size() >
+        BaseMessage::kMaxPayloadSize - DataHeader::DataFieldsSize()) {
+        LOG_ERROR("Payload too large: %zu bytes (max %zu)", payload.size(),
+                  BaseMessage::kMaxPayloadSize - DataHeader::DataFieldsSize());
+        return std::nullopt;
+    }
+
+    // Create the header with the data information
+    DataHeader header(dest, src, next_hop, payload.size());
+
+    return DataMessage(header, payload);
+}
+
+std::optional<DataMessage> DataMessage::CreateFromSerialized(
+    const std::vector<uint8_t>& data) {
+
+    static const size_t kMinHeaderSize =
+        DataHeader::DataFieldsSize() + BaseHeader::Size();
+
+    // Check minimum size requirements for header
+    if (data.size() < kMinHeaderSize) {
+        LOG_ERROR("Data too small for data message: %zu < %zu", data.size(),
+                  kMinHeaderSize);
+        return std::nullopt;
+    }
+
+    utils::ByteDeserializer deserializer(data);
+
+    // Deserialize the header
+    auto header = DataHeader::Deserialize(deserializer);
+    if (!header) {
+        LOG_ERROR("Failed to deserialize data header");
+        return std::nullopt;
+    }
+
+    // Read any payload that might be present
+    std::vector<uint8_t> payload;
+    if (data.size() > kMinHeaderSize) {
+        size_t payload_size = data.size() - kMinHeaderSize;
+        payload.resize(payload_size);
+
+        // Copy the remaining data as payload
+        std::copy(data.begin() + kMinHeaderSize, data.end(), payload.begin());
+    }
+
+    return DataMessage(*header, payload);
+}
+
+AddressType DataMessage::GetDestination() const {
+    return header_.GetDestination();
+}
+
+AddressType DataMessage::GetSource() const {
+    return header_.GetSource();
+}
+
+AddressType DataMessage::GetNextHop() const {
+    return header_.GetNextHop();
+}
+
+const std::vector<uint8_t>& DataMessage::GetPayload() const {
+    return payload_;
+}
+
+const DataHeader& DataMessage::GetHeader() const {
+    return header_;
+}
+
+DataHeader& DataMessage::GetMutableHeader() {
+    return header_;
+}
+
+size_t DataMessage::GetTotalSize() const {
+    return header_.GetSize() + payload_.size();
+}
+
+Result DataMessage::SetNextHop(AddressType next_hop) {
+    return header_.SetNextHop(next_hop);
+}
+
+BaseMessage DataMessage::ToBaseMessage() const {
+    // Calculate payload size (only DATA specific fields + user payload)
+    size_t total_payload_size = DataHeader::DataFieldsSize() + payload_.size();
+    std::vector<uint8_t> msg_payload(total_payload_size);
+    utils::ByteSerializer serializer(msg_payload);
+
+    // Serialize only the DATA specific fields (not the BaseHeader part)
+    serializer.WriteUint16(header_.GetNextHop());
+
+    // Add user payload
+    if (!payload_.empty()) {
+        serializer.WriteBytes(payload_.data(), payload_.size());
+    }
+
+    // Create the base message with the correct type and our payload
+    return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                       MessageType::DATA, msg_payload);
+}
+
+std::optional<std::vector<uint8_t>> DataMessage::Serialize() const {
+    // Create a buffer for the serialized message
+    std::vector<uint8_t> serialized(GetTotalSize());
+    utils::ByteSerializer serializer(serialized);
+
+    // Serialize the header
+    Result result = header_.Serialize(serializer);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to serialize data header");
+        return std::nullopt;
+    }
+
+    // Add user payload
+    if (!payload_.empty()) {
+        serializer.WriteBytes(payload_.data(), payload_.size());
+    }
+
+    return serialized;
+}
+
+}  // namespace loramesher

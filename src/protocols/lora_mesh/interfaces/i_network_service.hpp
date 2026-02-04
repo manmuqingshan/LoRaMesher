@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <vector>
+#include "types/configurations/protocol_configuration.hpp"
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
@@ -73,6 +74,10 @@ class INetworkService {
             1.5f;  ///< Exponential backoff multiplier (default: 1.5)
         uint32_t max_retry_delay_ms =
             60000;  ///< Maximum retry delay cap in ms (default: 60s)
+
+        // Node role configuration
+        NodeRole node_role =
+            NodeRole::AUTO;  ///< Node role for network formation
     };
 
     static constexpr AddressType kBroadcastAddress =
@@ -177,7 +182,8 @@ class INetworkService {
      */
     virtual bool UpdateRouteEntry(AddressType source, AddressType destination,
                                   uint8_t hop_count, uint8_t link_quality,
-                                  uint8_t allocated_slots) = 0;
+                                  uint8_t allocated_slots,
+                                  uint8_t capabilities) = 0;
 
     /**
      * @brief Set route update callback

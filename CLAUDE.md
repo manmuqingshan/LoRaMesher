@@ -8,6 +8,17 @@ LoRaMesher is a C++20 library implementing a distance-vector routing protocol fo
 
 ## Build System & Commands
 
+### Desktop Testing (Pio testing [Recommended])
+
+Allways use it as a background task, it takes some time
+
+```bash
+pio test -e test_native -v 
+```
+
+- Use `-f {test_name}` to filter a function.
+- Use `--list-tests` to get the tests names.
+
 ### CMake (Desktop Testing)
 ```bash
 mkdir build && cd build
@@ -16,15 +27,6 @@ cmake --build . --target loramesher_lib     # Build library only
 cmake --build . --target build_all_tests   # Build all tests
 cmake --build . --target run_all_tests     # Build and run tests
 ctest                                       # Alternative test runner
-```
-
-### PlatformIO (ESP32 Development)
-```bash
-pio run                                     # Build for ESP32
-pio run -e native                          # Build for native/desktop
-pio run -e test_native                     # Build native tests with debug flags
-pio test                                   # Run tests
-pio device monitor                         # Monitor serial output
 ```
 
 ## Architecture Overview
@@ -91,3 +93,9 @@ Uses GoogleTest with comprehensive coverage:
 - **Hardware mocks**: Full radio and RTOS simulation
 - **Network simulation**: Multi-node mesh testing framework
 - **PlatformIO Native Tests**: Run native tests using `pio test -e test_native`
+
+## Documentation
+
+Update these files when protocol or library behavior changes:
+- **PROTOCOL_SPEC.md**: Protocol specifications and message formats
+- **README.md**: User-facing documentation and API usage

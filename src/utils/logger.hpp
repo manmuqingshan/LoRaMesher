@@ -222,17 +222,7 @@ class Logger {
      * @param ... Variable arguments for formatting.
      * @thread_safety Thread-safe
      */
-    void Log(LogLevel level, const char* format, ...) {
-        static char buffer
-            [LOGGER_BUFFER_SIZE];  // Static buffer to avoid stack allocations
-
-        va_list args;
-        va_start(args, format);
-        vsnprintf(buffer, sizeof(buffer), format, args);
-        va_end(args);
-
-        LogMessage(level, buffer);
-    }
+    void Log(LogLevel level, const char* format, ...);
 
     /**
      * @brief Flushes all pending log messages.
