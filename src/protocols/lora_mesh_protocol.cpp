@@ -773,6 +773,20 @@ void LoRaMeshProtocol::OnNetworkTopologyChange(bool route_updated,
 void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
     Result result;
 
+    // Handle wake-up callback when transitioning from SLEEP to an active slot
+    // This allows applications to restore peripherals that were disabled during sleep
+    if (current_power_state_ == power::PowerState::LIGHT_SLEEP &&
+        slot_type != SlotAllocation::SlotType::SLEEP) {
+        // Invoke wake callback before processing the new slot
+        // This ensures peripherals are ready before any TX/RX operations
+        if (wake_up_callback_) {
+            LOG_DEBUG("Invoking wake-up callback from LIGHT_SLEEP");
+            wake_up_callback_(power::PowerState::LIGHT_SLEEP);
+        }
+        // Update power state to ACTIVE now that we're in an active slot
+        current_power_state_ = power::PowerState::ACTIVE;
+    }
+
     switch (slot_type) {
         case SlotAllocation::SlotType::TX:
         case SlotAllocation::SlotType::CONTROL_TX: {
@@ -962,14 +976,52 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
 
         case SlotAllocation::SlotType::SLEEP:
-        default:
+        default: {
+            // Build sleep context for user callback
+            // This provides all information needed to make intelligent sleep decisions
+            power::SleepContext ctx{};
+            ctx.requested_state = power::PowerState::LIGHT_SLEEP;
+            ctx.current_slot = superframe_service_->GetCurrentSlot();
+            ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
+
+            // Calculate sleep duration (time until next slot)
+            // Users can use this to decide if sleep is worthwhile for short durations
+            uint32_t slot_duration = superframe_service_->GetSlotDuration();
+            ctx.sleep_duration_ms = slot_duration;
+
+            // Call user callback if registered
+            // This allows application-level power management (disable GPS, sensors, etc.)
+            if (prepare_sleep_callback_) {
+                LOG_DEBUG("Invoking prepare-sleep callback for slot %u",
+                          ctx.current_slot);
+                auto sleep_result = prepare_sleep_callback_(ctx);
+
+                if (!sleep_result.allow_sleep) {
+                    // User vetoed sleep - still set radio to sleep for power savings
+                    // but don't track as "sleeping" (wake callback won't fire)
+                    LOG_DEBUG("Sleep vetoed by user callback");
+                    result = hardware_->setState(radio::RadioState::kSleep);
+                    if (!result) {
+                        LOG_ERROR("Failed to set radio to sleep: %s",
+                                  result.GetErrorMessage().c_str());
+                    }
+                    // Note: current_power_state_ remains ACTIVE
+                    break;
+                }
+            }
+
             // Set radio to sleep mode
             result = hardware_->setState(radio::RadioState::kSleep);
             if (!result) {
                 LOG_ERROR("Failed to set radio to sleep: %s",
                           result.GetErrorMessage().c_str());
             }
+
+            // Update power state to track for wake callback
+            // This ensures WakeUpCallback fires on next active slot
+            current_power_state_ = power::PowerState::LIGHT_SLEEP;
             break;
+        }
     }
 }
 

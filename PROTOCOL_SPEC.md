@@ -1653,6 +1653,77 @@ Power-Optimized Superframe:
 - Actual Duty Cycle = Total Active / Superframe Size
 ```
 
+#### 5.7.3 Application Power Management Callbacks
+
+The protocol provides callback hooks allowing applications to implement device-specific power management during SLEEP slots. This enables optimal power consumption without adding hardware dependencies to the core library.
+
+##### Power State Transitions
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: System Start
+    ACTIVE --> LIGHT_SLEEP: SLEEP slot (with callback)
+    LIGHT_SLEEP --> ACTIVE: Active slot (TX/RX/etc.)
+
+    note right of ACTIVE: Radio active, peripherals enabled
+    note right of LIGHT_SLEEP: Radio sleep, peripherals controlled by app
+```
+
+##### Callback Invocation Points
+
+| Transition | Callback | When Invoked |
+|------------|----------|--------------|
+| Active → Sleep | `PrepareSleepCallback` | Beginning of SLEEP slot |
+| Sleep → Active | `WakeUpCallback` | Beginning of any active slot |
+
+##### PrepareSleepCallback
+
+Invoked before the device enters a SLEEP slot. Receives a `SleepContext` with:
+- `requested_state`: The target power state (LIGHT_SLEEP)
+- `sleep_duration_ms`: Time until next slot (slot duration)
+- `current_slot`: Current slot number in superframe
+- `has_pending_messages`: Whether TX queue has messages
+
+Returns a `SleepResult`:
+- `allow_sleep`: If false, radio sleeps but device state remains ACTIVE
+- `max_sleep_duration_ms`: Maximum allowed sleep (reserved for future use)
+
+##### WakeUpCallback
+
+Invoked when transitioning from a SLEEP slot to any active slot (TX, RX, CONTROL_*, SYNC_*, DISCOVERY_*). Receives the previous power state to allow appropriate restoration.
+
+##### Usage Example
+
+```cpp
+auto mesher = LoraMesher::Builder()
+    .withLoRaMeshProtocol()
+    .withPrepareSleepCallback([](const power::SleepContext& ctx) {
+        // Only sleep if duration is worthwhile
+        if (ctx.sleep_duration_ms < 50) {
+            return power::SleepResult{false};  // Too short, stay active
+        }
+
+        // Disable peripherals for power saving
+        GPS::disable();
+        Sensors::powerDown();
+
+        return power::SleepResult{true};  // Allow sleep
+    })
+    .withWakeUpCallback([](power::PowerState previous) {
+        // Restore peripherals
+        GPS::enable();
+        Sensors::powerUp();
+    })
+    .Build();
+```
+
+##### Timing Considerations
+
+- Callbacks execute in protocol task context
+- Keep callback execution time minimal (< 5ms recommended)
+- Long operations may cause slot timing issues
+- Sleep veto still allows radio sleep for power saving
+
 ### 5.8 Network Manager Election Sequence
 
 > **Note**: Automatic Network Manager election is planned but not yet implemented. See Section 10 (Future Work) for the planned election protocol.
