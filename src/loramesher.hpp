@@ -337,7 +337,8 @@ class LoraMesher::Builder {
      */
     Builder& withNodeCapabilities(uint8_t capabilities) {
         auto protocol_config = config_.getProtocolConfig();
-        if (protocol_config.getProtocolType() == protocols::ProtocolType::kLoraMesh) {
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
             auto lora_config = protocol_config.getLoRaMeshConfig();
             lora_config.setNodeCapabilities(capabilities);
             protocol_config.setLoRaMeshConfig(lora_config);
@@ -354,7 +355,8 @@ class LoraMesher::Builder {
      */
     Builder& withPrepareSleepCallback(power::PrepareSleepCallback callback) {
         auto protocol_config = config_.getProtocolConfig();
-        if (protocol_config.getProtocolType() == protocols::ProtocolType::kLoraMesh) {
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
             auto lora_config = protocol_config.getLoRaMeshConfig();
             lora_config.setPrepareSleepCallback(std::move(callback));
             protocol_config.setLoRaMeshConfig(lora_config);
@@ -371,7 +373,8 @@ class LoraMesher::Builder {
      */
     Builder& withWakeUpCallback(power::WakeUpCallback callback) {
         auto protocol_config = config_.getProtocolConfig();
-        if (protocol_config.getProtocolType() == protocols::ProtocolType::kLoraMesh) {
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
             auto lora_config = protocol_config.getLoRaMeshConfig();
             lora_config.setWakeUpCallback(std::move(callback));
             protocol_config.setLoRaMeshConfig(lora_config);
