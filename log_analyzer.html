@@ -1178,6 +1178,7 @@
                 fileData.usesLineNumbers = false;
                 let pendingTransmission = null;
                 let lineNumber = 0;
+                let hasValidTimestamps = false;  // Track if any valid timestamps found
 
                 const lines = logContent.split('\n');
                 for (let i = 0; i < lines.length; i++) {
@@ -1196,6 +1197,7 @@
                         timestamp = parseInt(msTimestampMatch[1]);
                         const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
                         nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                        hasValidTimestamps = true;
                     } else if (timeTimestampMatch) {
                         // Store original time format and convert to milliseconds
                         const hours = parseInt(timeTimestampMatch[1]);
@@ -1210,17 +1212,22 @@
 
                         const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
                         nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                        hasValidTimestamps = true;
                     } else {
                         // No timestamp found - use line number as pseudo-timestamp
                         lineNumber++;
                         timestamp = lineNumber;
                         const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
                         nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
-                        fileData.usesLineNumbers = true;
                     }
 
                     // Use existing parsing logic
                     pendingTransmission = this.parseLineForFile(line, timestamp, nodeId, fileData, pendingTransmission);
+                }
+
+                // Only mark as using line numbers if NO valid timestamps were found
+                if (!hasValidTimestamps) {
+                    fileData.usesLineNumbers = true;
                 }
 
                 // Calculate time range for this file
