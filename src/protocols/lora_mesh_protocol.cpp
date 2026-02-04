@@ -232,7 +232,8 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
 
     // Set node capabilities from config
     if (config.getNodeCapabilities() != 0) {
-        network_service_->SetLocalNodeCapabilities(config.getNodeCapabilities());
+        network_service_->SetLocalNodeCapabilities(
+            config.getNodeCapabilities());
     }
 
     return Result::Success();

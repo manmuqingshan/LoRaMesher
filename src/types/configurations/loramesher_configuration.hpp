@@ -96,7 +96,9 @@ class Config {
      * @brief Gets the auto address from hardware setting
      * @return True if hardware ID should be used for address generation
      */
-    bool getAutoAddressFromHardware() const { return auto_address_from_hardware_; }
+    bool getAutoAddressFromHardware() const {
+        return auto_address_from_hardware_;
+    }
 
     /**
      * @brief Sets whether to use hardware ID for automatic address generation
@@ -131,7 +133,8 @@ class Config {
 
     uint32_t sleepDuration_;  ///< Sleep duration in milliseconds
     bool enableDeepSleep_;    ///< Flag controlling deep sleep functionality
-    bool auto_address_from_hardware_ = true;  ///< Use hardware ID for address generation
+    bool auto_address_from_hardware_ =
+        true;  ///< Use hardware ID for address generation
 };
 
 }  // namespace loramesher
