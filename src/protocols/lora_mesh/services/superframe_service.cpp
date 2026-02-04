@@ -903,4 +903,5 @@ uint32_t SuperframeService::GetTimeSinceSuperframeStart() {
 
 }  // namespace lora_mesh
 }  // namespace protocols
+
 }  // namespace loramesher
