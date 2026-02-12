@@ -27,11 +27,12 @@ struct SlotAllocation {
      * @brief Types of slots in the TDMA schedule
      */
     enum class SlotType : uint8_t {
-        TX = 0x01,            ///< Transmission slot
-        RX = 0x02,            ///< Reception slot
-        SLEEP = 0x03,         ///< Sleep slot (radio off)
-        DISCOVERY_RX = 0x04,  ///< Discovery reception slot
-        DISCOVERY_TX = 0x05,  ///< Discovery transmission slot
+        TX = 0x01,     ///< Transmission slot
+        RX = 0x02,     ///< Reception slot
+        SLEEP = 0x03,  ///< Sleep slot (radio off)
+        DISCOVERY_RX =
+            0x04,  ///< Discovery reception slot (may also send queued discovery messages)
+        DISCOVERY_TX = 0x05,  ///< Discovery transmission slot (subslotted)
         CONTROL_RX = 0x06,    ///< Control message reception slot
         CONTROL_TX = 0x07,    ///< Control message transmission slot
         SYNC_BEACON_TX =

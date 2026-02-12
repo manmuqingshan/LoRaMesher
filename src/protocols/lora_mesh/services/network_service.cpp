@@ -986,8 +986,9 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             "Join request from 0x%04X rejected - join already pending this "
             "superframe",
             source);
-        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
-                                sponsor_address);
+        return Result::Success();
+        // return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
+        //                         sponsor_address);
     }
 
     // Determine if node should be accepted
@@ -1114,8 +1115,10 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
 
     if (dest != node_address_) {
         // This response is not for us and we're not on the path
-        LOG_DEBUG("Ignoring join response - not intended for us (dest: 0x%04X)",
-                  dest);
+        LOG_DEBUG(
+            "Ignoring join response - not intended for us (dest: 0x%04X, "
+            "next_hop: 0x%04X)",
+            dest, next_hop);
         return Result::Success();
     }
 
@@ -2015,6 +2018,26 @@ void NetworkService::SetMaxHopCount(uint8_t max_hops) {
     current_network_depth_ = max_hops;
 }
 
+uint8_t NetworkService::GetHopDistanceToNM() const {
+    if (network_manager_ == node_address_) {
+        return 0;  // We are the Network Manager
+    }
+
+    // Find network manager in routing table
+    const auto& nodes = routing_table_->GetNodes();
+    auto nm_it = std::find_if(
+        nodes.begin(), nodes.end(),
+        [this](const types::protocols::lora_mesh::NetworkNodeRoute& node) {
+            return node.routing_entry.destination == network_manager_;
+        });
+    if (nm_it != nodes.end()) {
+        return nm_it->routing_entry.hop_count;
+    }
+
+    // If we don't know our distance, default to 1
+    return 1;
+}
+
 // Helper method implementations
 
 std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
@@ -2143,6 +2166,17 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
              sync_beacon.GetSource(), sync_beacon.GetHopCount(),
              reception_timestamp);
 
+    uint32_t current_time = GetRTOS().getTickCount();
+    if (current_time < last_sync_beacon_received_ +
+                           superframe_service_->GetSuperframeDuration() / 2 &&
+        last_sync_beacon_received_ != 0) {
+        LOG_WARNING(
+            "Received sync beacon too soon after previous one, ignoring");
+        return Result::Success();
+    }
+
+    last_sync_beacon_received_ = current_time;
+
     {
         std::lock_guard<std::mutex> lock(network_mutex_);
         // Update network manager from the sync beacon header
@@ -2180,7 +2214,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
     // Add route to NM if we're not the NM ourselves
     if (!nm_node_present && beacon_nm != node_address_) {
-        uint32_t current_time = GetRTOS().getTickCount();
+        current_time = GetRTOS().getTickCount();
         bool route_updated = routing_table_->UpdateRoute(
             beacon_source,        // next_hop: go through the beacon forwarder
             beacon_nm,            // destination: the network manager
@@ -2285,6 +2319,49 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     return Result::Success();
 }
 
+void NetworkService::SetSyncBeaconPreSendCallback(BaseMessage& base_msg) {
+    base_msg.SetPreSendCallback([this](BaseMessage& msg) {
+        const uint32_t SERIALIZATION_OVERHEAD_MS = 1;
+        uint32_t actual_time =
+            superframe_service_->GetTimeSinceSuperframeStart() +
+            SERIALIZATION_OVERHEAD_MS;
+
+        auto serialized_opt = msg.Serialize();
+        if (!serialized_opt.has_value()) {
+            LOG_ERROR("Pre-send callback: Failed to serialize base message");
+            return;
+        }
+
+        auto beacon_opt =
+            SyncBeaconMessage::CreateFromSerialized(*serialized_opt);
+        if (!beacon_opt.has_value()) {
+            LOG_ERROR("Pre-send callback: Failed to deserialize sync beacon");
+            return;
+        }
+
+        beacon_opt->UpdatePropagationDelay(actual_time);
+
+        auto updated_serialized_opt = beacon_opt->Serialize();
+        if (!updated_serialized_opt.has_value()) {
+            LOG_ERROR("Pre-send callback: Failed to re-serialize sync beacon");
+            return;
+        }
+
+        auto updated_msg_opt =
+            BaseMessage::CreateFromSerialized(*updated_serialized_opt);
+        if (!updated_msg_opt.has_value()) {
+            LOG_ERROR(
+                "Pre-send callback: Failed to create updated base message");
+            return;
+        }
+
+        msg = *updated_msg_opt;
+
+        LOG_DEBUG("Pre-send callback: updated propagation_delay to %u ms",
+                  actual_time);
+    });
+}
+
 Result NetworkService::SendSyncBeacon() {
     // Only network manager can send original sync beacons
     if (state_ != ProtocolState::NETWORK_MANAGER ||
@@ -2330,52 +2407,7 @@ Result NetworkService::SendSyncBeacon() {
     BaseMessage base_msg = sync_beacon_opt.value().ToBaseMessage();
 
     // Set callback to update propagation_delay right before transmission
-    base_msg.SetPreSendCallback([this](BaseMessage& msg) {
-        const uint32_t SERIALIZATION_OVERHEAD_MS = 1;
-        uint32_t actual_time =
-            superframe_service_->GetTimeSinceSuperframeStart() +
-            SERIALIZATION_OVERHEAD_MS;
-
-        // Serialize the current BaseMessage to get the full data
-        auto serialized_opt = msg.Serialize();
-        if (!serialized_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to serialize base message");
-            return;
-        }
-
-        // Deserialize to SyncBeaconMessage
-        auto beacon_opt =
-            SyncBeaconMessage::CreateFromSerialized(*serialized_opt);
-        if (!beacon_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to deserialize sync beacon");
-            return;
-        }
-
-        // Update the propagation delay
-        beacon_opt->UpdatePropagationDelay(actual_time);
-
-        // Re-serialize the updated beacon (this gives us BaseHeader + sync fields)
-        auto updated_serialized_opt = beacon_opt->Serialize();
-        if (!updated_serialized_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to re-serialize sync beacon");
-            return;
-        }
-
-        // Recreate the BaseMessage from the updated serialization
-        auto updated_msg_opt =
-            BaseMessage::CreateFromSerialized(*updated_serialized_opt);
-        if (!updated_msg_opt.has_value()) {
-            LOG_ERROR(
-                "Pre-send callback: Failed to create updated base message");
-            return;
-        }
-
-        // Update the current message with the new data
-        msg = *updated_msg_opt;
-
-        LOG_DEBUG("Pre-send callback: updated propagation_delay to %u ms",
-                  actual_time);
-    });
+    SetSyncBeaconPreSendCallback(base_msg);
 
     // Add to sync beacon TX queue - protocol layer handles actual transmission
     auto base_msg_ptr = std::make_unique<BaseMessage>(std::move(base_msg));
@@ -2402,10 +2434,11 @@ Result NetworkService::ForwardSyncBeacon(
     // Convert to base message and queue for transmission
     BaseMessage base_msg = forwarded_beacon_opt.value().ToBaseMessage();
 
-    // Note: For forwarded beacons, CreateForwardedBeacon already adds processing_delay
-    // to the original propagation_delay, providing a reasonable approximation.
-    // To improve accuracy further would require tracking reception timestamps,
-    // which is not currently implemented.
+    // Set pre-send callback to capture actual TX time including subslot wait.
+    // CreateForwardedBeacon sets an initial propagation_delay estimate, but the
+    // callback overwrites it with GetTimeSinceSuperframeStart() right before TX,
+    // which naturally includes any subslot delay that has elapsed.
+    SetSyncBeaconPreSendCallback(base_msg);
 
     // Add to sync beacon TX queue for forwarding
     auto base_msg_ptr = std::make_unique<BaseMessage>(std::move(base_msg));
@@ -2423,8 +2456,7 @@ Result NetworkService::ForwardSyncBeacon(
 
 bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
     // Don't forward if we're the network manager (we generate original beacons)
-    if (state_ == ProtocolState::NETWORK_MANAGER &&
-        network_manager_ == node_address_) {
+    if (state_ != ProtocolState::NORMAL_OPERATION) {
         return false;
     }
 
@@ -2437,25 +2469,7 @@ bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
     // }
 
     // Find our hop distance from the network manager
-    uint8_t our_hop_distance = 0;
-    if (network_manager_ == node_address_) {
-        our_hop_distance = 0;  // We are the Network Manager
-    } else {
-        // Find network manager in routing table
-        const auto& nodes = routing_table_->GetNodes();
-        auto nm_it = std::find_if(
-            nodes.begin(), nodes.end(),
-            [this](const types::protocols::lora_mesh::NetworkNodeRoute& node) {
-                return node.routing_entry.destination == network_manager_;
-            });
-        if (nm_it != nodes.end()) {
-            our_hop_distance = nm_it->routing_entry.hop_count;
-        } else {
-            // TODO: This is okey? Default maybe should be to not forward.
-            // If we don't know our distance, assume we can forward
-            our_hop_distance = 1;
-        }
-    }
+    uint8_t our_hop_distance = GetHopDistanceToNM();
 
     // Use hop-layered forwarding: only forward if beacon is from previous layer
     bool should_forward = beacon.ShouldBeForwardedBy(our_hop_distance);
@@ -2472,6 +2486,23 @@ bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
 }
 
 Result NetworkService::HandleSuperframeStart() {
+    // Link quality tracking for active operational states only
+    if (state_ == ProtocolState::NETWORK_MANAGER ||
+        state_ == ProtocolState::NORMAL_OPERATION) {
+        ScheduleRoutingMessageExpectations();
+    }
+
+    // Periodic route cleanup runs in all states — stale routes should
+    // expire regardless of protocol state (e.g., after entering
+    // FAULT_RECOVERY or DISCOVERY following neighbor loss)
+    {
+        uint32_t current_time = GetRTOS().getTickCount();
+        if ((current_time - last_cleanup_time_) >= kCleanupIntervalMs) {
+            last_cleanup_time_ = current_time;
+            RemoveInactiveNodes();
+        }
+    }
+
     // Sync beacon transmission is handled by slot-based processing
     // in ProcessSlotMessages() when SYNC_BEACON_TX slot is encountered.
     // This prevents duplicate transmissions at superframe start.
@@ -2825,6 +2856,7 @@ void NetworkService::ResetNetworkState() {
     discovery_start_time_ = 0;
     joining_start_time_ = 0;
     last_sync_time_ = 0;
+    last_cleanup_time_ = 0;
 
     // Clear join data
     pending_join_data_.reset();

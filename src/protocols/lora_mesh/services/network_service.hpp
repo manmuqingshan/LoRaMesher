@@ -34,6 +34,9 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons // TODO: set it configurable?
 
+static constexpr uint32_t kCleanupIntervalMs =
+    60000;  ///< Route cleanup every 60s
+
 static const uint8_t kMinSlots = 16;  ///< Minimum number of slots in superframe
 static const float kTargetDutyCycle = 0.3f;  ///< Target duty cycle (percentage)
 
@@ -703,6 +706,13 @@ class NetworkService : public INetworkService {
      */
     void SetMaxHopCount(uint8_t max_hops) override;
 
+    /**
+     * @brief Get this node's hop distance to the network manager
+     *
+     * @return uint8_t Hop distance to NM (0 if NM, 1 if unknown)
+     */
+    uint8_t GetHopDistanceToNM() const override;
+
    private:
     /**
      * @brief Get comprehensive link quality for a node
@@ -866,8 +876,20 @@ class NetworkService : public INetworkService {
     Result SlotTableToSuperframe();
 
     /**
+     * @brief Set pre-send callback on a sync beacon message
+     *
+     * Attaches a callback that captures GetTimeSinceSuperframeStart() right
+     * before transmission and writes it into the beacon's propagation_delay
+     * field. Used for both original (NM) and forwarded sync beacons so the
+     * delay accurately includes any subslot wait time.
+     *
+     * @param base_msg The base message to attach the callback to
+     */
+    void SetSyncBeaconPreSendCallback(BaseMessage& base_msg);
+
+    /**
      * @brief Get max hops from routing table
-     * 
+     *
      * @return uint8_t Maximum hops from routing table
      */
     uint8_t GetMaxHopsFromRoutingTable() const;
@@ -893,6 +915,7 @@ class NetworkService : public INetworkService {
     bool network_creator_;
     bool is_synchronized_;
     uint32_t last_sync_time_;
+    uint32_t last_sync_beacon_received_ = 0;
     uint8_t table_version_;
     uint32_t discovery_start_time_;
     uint32_t joining_start_time_;
@@ -932,6 +955,9 @@ class NetworkService : public INetworkService {
 
     // Node role configuration
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+
+    // Periodic cleanup
+    uint32_t last_cleanup_time_ = 0;  ///< Last time route cleanup was performed
 
     // Thread safety
     mutable std::mutex network_mutex_;

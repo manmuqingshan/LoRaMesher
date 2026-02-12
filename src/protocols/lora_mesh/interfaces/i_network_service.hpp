@@ -318,6 +318,16 @@ class INetworkService {
      * @brief Set the max number of hops of the actual network
      */
     virtual void SetMaxHopCount(uint8_t max_hops) = 0;
+
+    /**
+     * @brief Get this node's hop distance to the network manager
+     *
+     * Returns 0 if this node is the network manager.
+     * Looks up the network manager in the routing table.
+     *
+     * @return uint8_t Hop distance to network manager (0 if NM, 1 if unknown)
+     */
+    virtual uint8_t GetHopDistanceToNM() const = 0;
 };
 
 }  // namespace lora_mesh
