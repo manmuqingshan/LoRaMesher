@@ -854,6 +854,12 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 - `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
 - `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
 
+**Link Quality-Based Fast Invalidation**:
+
+In addition to the time-based route aging above, direct neighbor routes are also invalidated via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0. After `kMaxConsecutiveMissed` (3) consecutive misses, the route is marked inactive immediately, without waiting for the full `route_timeout_ms`.
+
+This provides fast detection of link failures (typically 3 superframes, ~6-15s) while the time-based timeout handles multi-hop route expiration.
+
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
 ### 4.5 Network Topology Examples and Routing Behavior
@@ -1363,6 +1369,8 @@ void ProcessSyncBeacon(const SyncMessage& sync) {
 }
 ```
 
+> **Note**: Only one sync beacon is processed per superframe. If a sync beacon is received within half the superframe duration of the previously processed one, it is silently ignored. This prevents redundant timing adjustments when a node receives multiple forwarded copies of the same beacon from different hops.
+
 ### 5.4 Slot Allocation
 
 #### 5.4.1 Initial Allocation
@@ -1447,6 +1455,97 @@ for (hop_layer = 0; hop_layer < max_hops; hop_layer++) {
 - **Zero inter-hop collisions**: Different hops transmit in different slots
 - **Controlled same-hop collisions**: LoRa's capture effect handles simultaneous same-hop forwards
 - **Predictable timing**: Each hop knows when to forward based on distance from Network Manager
+
+#### 5.5.3 Intra-Slot Collision Mitigation (Subslot Scheduling)
+
+While Section 5.5.2 eliminates inter-hop collisions by assigning different hops to different slots, nodes at the **same hop distance** still transmit in the same slot. This section describes the deterministic subslot division mechanism that mitigates collisions among same-hop forwarders and among discovering nodes.
+
+**Affected Slot Types:**
+- `SYNC_BEACON_TX` — Multiple same-hop nodes forwarding sync beacons
+- `DISCOVERY_TX` — Multiple discovering nodes transmitting discovery messages
+- `DISCOVERY_RX` — Also transmits queued discovery messages as fallback (see TODO in code)
+
+**Subslot Division Model:**
+
+Each slot is divided into `N` subslots. Each node is deterministically assigned to one subslot based on a node-specific identifier.
+
+```
+|--- Slot Duration (e.g., 1000ms) ----------------------------------------|
+|Guard|Subslot0_TX|Guard|Subslot1_TX|...|Guard|SubslotN-1_TX|  RX_Tail    |
+```
+
+**Configuration Parameters** (`SubslotConfig`):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_subslots` | 5 | Number of subslots per slot |
+| `guard_time_ms` | 10 ms | Guard time before each subslot TX window |
+| `strategy` | Slot-dependent | `HOP_BASED` or `ADDRESS_MODULO` |
+
+**Timing Formulas:**
+```
+total_guard     = num_subslots × guard_time_ms
+available_tx    = slot_duration - total_guard
+tx_window       = available_tx / num_subslots
+subslot_duration = guard_time_ms + tx_window
+tx_start_offset(i) = i × subslot_duration + guard_time_ms
+```
+
+**Example** (slot_duration=1000ms, num_subslots=5, guard=10ms):
+```
+total_guard     = 50 ms
+available_tx    = 950 ms
+tx_window       = 190 ms
+subslot_duration = 200 ms
+
+Subslot 0: TX at [10, 200) ms
+Subslot 1: TX at [210, 400) ms
+Subslot 2: TX at [410, 600) ms
+Subslot 3: TX at [610, 800) ms
+Subslot 4: TX at [810, 1000) ms
+```
+
+**Assignment Strategies:**
+
+| Strategy | Formula | When Used |
+|----------|---------|-----------|
+| `HOP_BASED` | `subslot = hop_count % N` | Sync beacon TX — NM gets subslot 0, hop-1 nodes get subslot 1, etc. |
+| `ADDRESS_MODULO` | `subslot = node_address % N` | Discovery TX — no hop info available during discovery |
+
+**Radio State Behavior During Subslotted Slots:**
+
+1. At slot start: radio is set to `kReceive` immediately (catch transmissions from earlier subslots)
+2. At `tx_start_offset`: node transmits its message
+3. After TX completes: radio returns to `kReceive` (not `kSleep`)
+4. After any RX event: radio stays in `kReceive` (not `kSleep`)
+5. At slot transition: `in_subslotted_slot` flag resets, normal sleep behavior resumes
+
+**Sequence for SYNC_BEACON_TX Slot (3-hop network):**
+```
+Time    NM (hop=0, subslot=0)    NodeA (hop=1, subslot=1)    NodeB (hop=2, subslot=2)
+─────   ────────────────────     ───────────────────────     ───────────────────────
+0ms     RX (guard)               RX (guard)                  RX (guard)
+10ms    TX sync beacon           RX (listen)                 RX (listen)
+200ms   RX (done TX)             RX (guard for subslot 1)    RX (listen)
+210ms   RX (listen)              TX sync beacon              RX (listen)
+400ms   RX (listen)              RX (done TX)                RX (guard for subslot 2)
+410ms   RX (listen)              RX (listen)                 TX sync beacon
+600ms   RX (listen)              RX (listen)                 RX (done TX)
+1000ms  Slot transition          Slot transition             Slot transition
+```
+
+**Same-Hop Collision Handling:**
+
+Nodes at the same hop distance map to the same subslot. This is an accepted design trade-off:
+- LoRa's **capture effect** means the stronger signal is received successfully (3-6 dB advantage typical)
+- For denser networks, a secondary address-based subdivision can be added within each hop-based subslot as a future enhancement
+
+**Validation:**
+
+The `SubslotScheduler::ValidateConfig()` method checks feasibility:
+1. Guard times must not exceed total slot duration
+2. Each subslot TX window must accommodate the estimated time-on-air (ToA)
+3. At higher spreading factors (SF12), packets may exceed subslot windows — increase `slot_duration_ms` accordingly
 
 ### 5.6 Control Slot Allocation Strategy
 
@@ -1630,8 +1729,8 @@ void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_ty
 | SYNC_BEACON_RX | Receive beacon synchronization | Active (Medium Power) |
 | CONTROL_TX | Transmit network management | Active (High Power) |
 | CONTROL_RX | Receive network management | Active (Medium Power) |
-| DISCOVERY_TX | Transmit network beacons | Active (High Power) |
-| DISCOVERY_RX | Listen for network activity | Active (Medium Power) |
+| DISCOVERY_TX | Transmit discovery messages (subslotted) | Active (High Power) |
+| DISCOVERY_RX | Listen for discovery; fallback TX if queued | Active (Medium Power) |
 | SLEEP | Radio power down | Sleep (Minimal Power) |
 
 #### 5.7.2 Power-Optimized Slot Allocation Formula
@@ -2444,15 +2543,8 @@ Recovery flow when sync is lost:
 - Study impact of propagation delay on superframe synchronization
 
 #### 10.1.3 Collision Mitigation for Same-Hop Forwarders
-**Problem**: We need to think how collision mitigation for same-hop forwarders would be implemented.
 
-**Research Direction**:
-- **LoRa Parameter Diversity**: Different hops use SF7, SF8, SF9
-- **Frequency Separation**: Each hop uses different frequency channels  
-- **Power Optimization**: Closer hops use lower power to reduce interference
-- **Temporal Collision Reduction**: 0-50ms random delay for same-hop forwarders
-- **Slot Subdivision**: Divide forwarding slots into sub-intervals
-- **Capture Effect Utilization**: Stronger signals dominate in LoRa collisions
+**Status**: Implemented. See Section 5.5.3 for the full specification of the deterministic subslot scheduling mechanism.
 
 ### 10.2 Implementation and Testing Requirements
 
@@ -2523,6 +2615,12 @@ DATA_MULTICAST = 0x13,  // Group communication (planned)
 ```
 
 **DATA_BROADCAST**: Will enable network-wide broadcast capability for messages that need to reach all nodes.
+
+Implementation considerations:
+- Broadcast addressing uses destination `0xFFFF`
+- `ProcessDataMessage()` needs broadcast detection: deliver locally AND forward to neighbors
+- Loop prevention required: TTL-based forwarding with sequence-number de-duplication
+- Current gap: `ProcessDataMessage()` checks `next_hop != node_address_` and drops broadcast messages since no node has `0xFFFF` as its address
 
 **DATA_MULTICAST**: Will support group-based messaging where messages are delivered to a subset of nodes subscribed to a multicast group.
 
