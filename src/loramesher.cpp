@@ -228,6 +228,52 @@ uint8_t LoraMesher::GetNodeCapabilities(AddressType node_address) const {
     return 0;
 }
 
+std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
+    uint8_t capability) const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return std::nullopt;
+    }
+
+    const auto& network_nodes = mesh_protocol->GetNetworkNodes();
+
+    std::optional<RouteEntry> best;
+    uint16_t best_cost = UINT16_MAX;
+
+    for (const auto& node : network_nodes) {
+        if (!node.is_active) {
+            continue;
+        }
+        if ((node.routing_entry.capabilities & capability) == 0) {
+            continue;
+        }
+
+        uint16_t cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                node.routing_entry.hop_count, node.GetLinkQuality());
+
+        if (cost < best_cost) {
+            best_cost = cost;
+            RouteEntry entry;
+            entry.destination = node.routing_entry.destination;
+            entry.next_hop = node.next_hop;
+            entry.hop_count = node.routing_entry.hop_count;
+            entry.link_quality = node.GetLinkQuality();
+            entry.last_seen_ms = node.last_seen;
+            entry.is_valid = node.is_active;
+            entry.capabilities = node.routing_entry.capabilities;
+            entry.is_network_manager = node.is_network_manager;
+            best = entry;
+        }
+    }
+
+    return best;
+}
+
+std::optional<RouteEntry> LoraMesher::GetClosestGateway() const {
+    return GetClosestNodeByCapability(NodeCapabilities::GATEWAY);
+}
+
 std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
     std::vector<RouteEntry> routes;
 
@@ -248,6 +294,8 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         entry.link_quality = node.GetLinkQuality();
         entry.last_seen_ms = node.last_seen;
         entry.is_valid = node.is_active;
+        entry.capabilities = node.routing_entry.capabilities;
+        entry.is_network_manager = node.is_network_manager;
         routes.push_back(entry);
     }
 

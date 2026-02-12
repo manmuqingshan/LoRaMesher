@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -195,6 +196,29 @@ class LoraMesher {
      * @return uint8_t Node capabilities bitmap (0 if unknown)
      */
     uint8_t GetNodeCapabilities(AddressType node_address) const;
+
+    /**
+     * @brief Find the closest node that has a specific capability
+     *
+     * Searches all active routes for nodes matching the given capability flag
+     * and returns the one with the lowest route cost (based on hop count and
+     * link quality).
+     *
+     * @param capability Capability bitmap to match (e.g. NodeCapabilities::GATEWAY)
+     * @return std::optional<RouteEntry> The closest matching node, or nullopt if none found
+     */
+    std::optional<RouteEntry> GetClosestNodeByCapability(
+        uint8_t capability) const;
+
+    /**
+     * @brief Find the closest gateway node in the network
+     *
+     * Convenience method equivalent to
+     * GetClosestNodeByCapability(NodeCapabilities::GATEWAY).
+     *
+     * @return std::optional<RouteEntry> The closest gateway, or nullopt if none found
+     */
+    std::optional<RouteEntry> GetClosestGateway() const;
 
    private:
     friend class Builder;  // Allow Builder to access private constructor

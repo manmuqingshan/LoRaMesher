@@ -23,6 +23,10 @@ struct RouteEntry {
     uint8_t link_quality;     ///< Link quality metric (0-255)
     uint32_t last_seen_ms;    ///< Timestamp when route was last updated
     bool is_valid;            ///< Whether route is currently valid
+    uint8_t capabilities =
+        0;  ///< Node capabilities bitmap (NodeCapabilities flags)
+    bool is_network_manager =
+        false;  ///< Whether this node is the network manager
 };
 
 /**
