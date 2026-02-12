@@ -408,6 +408,7 @@ The nodes have 6 protocol states:
 - **Update validation**: Currently, routing table updates from devices outside the network are not accepted. This behavior should be documented and verified.
 - **Table order verification**: The order of the routing table entries should be carefully verified to prevent potential synchronization issues.
 - **Distributed message routing**: Consider implementing an inverse routing table order to better distribute messages up and down the network hierarchy. This requires careful implementation to avoid complete desynchronization.
+- **Route uptade callback**: Should be a class with types, easy to modify, not only parameters.
 
 ## Sync Beacon Management
 - **Multi-device sync beacons**: How to manage sync beacons across multiple devices? Consider implementing a dedicated sync beacon TX slot for each device.
@@ -421,3 +422,4 @@ The nodes have 6 protocol states:
 
 
 - Error when testing messages, when send messages it should know if the message is at the air, some times it will start receiving and it will get messages from 10 slots ago. Fix this.
+- Be aware if slot time is changed, discovery and join timeouts should be carefully changed too.

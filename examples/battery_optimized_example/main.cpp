@@ -87,17 +87,16 @@ void printRoutingTable() {
     std::cout << "Routes: " << routes.size() << std::endl;
     for (const auto& route : routes) {
         std::cout << "  0x" << std::hex << route.destination << " via 0x"
-                  << route.next_hop << std::dec
-                  << " (" << static_cast<int>(route.hop_count) << " hops)"
-                  << std::endl;
+                  << route.next_hop << std::dec << " ("
+                  << static_cast<int>(route.hop_count) << " hops)" << std::endl;
     }
 }
 
 void printNetworkStatus() {
     auto status = mesher->GetNetworkStatus();
-    std::cout << "Network: nodes=" << status.connected_nodes
-              << ", manager=0x" << std::hex << status.network_manager
-              << std::dec << ", sync=" << (status.is_synchronized ? "yes" : "no")
+    std::cout << "Network: nodes=" << status.connected_nodes << ", manager=0x"
+              << std::hex << status.network_manager << std::dec
+              << ", sync=" << (status.is_synchronized ? "yes" : "no")
               << std::endl;
 }
 
@@ -172,16 +171,15 @@ void configureLoraMesher() {
     // 7. Set up route update callback
     auto protocol = mesher->GetLoRaMeshProtocol();
     if (protocol) {
-        protocol->SetRouteUpdateCallback(
-            [](bool updated, AddressType dest, AddressType next_hop,
-               uint8_t hops) {
-                if (updated) {
-                    std::cout << "Route: 0x" << std::hex << dest << " via 0x"
-                              << next_hop << std::dec
-                              << " (" << static_cast<int>(hops) << " hops)"
-                              << std::endl;
-                }
-            });
+        protocol->SetRouteUpdateCallback([](bool updated, AddressType dest,
+                                            AddressType next_hop,
+                                            uint8_t hops) {
+            if (updated) {
+                std::cout << "Route: 0x" << std::hex << dest << " via 0x"
+                          << next_hop << std::dec << " ("
+                          << static_cast<int>(hops) << " hops)" << std::endl;
+            }
+        });
     }
 }
 
