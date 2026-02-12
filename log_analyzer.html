@@ -222,9 +222,26 @@
             background: linear-gradient(135deg, #b2babb, #a6acaf);
             color: white;
         }
-        .message-unknown-rx { 
+        .message-unknown-rx {
             background: linear-gradient(135deg, #d5dbdb, #cacfd2);
             color: white;
+        }
+        /* Collision messages (red with warning pattern) */
+        .message-collision {
+            background: repeating-linear-gradient(
+                45deg,
+                #c0392b,
+                #c0392b 5px,
+                #e74c3c 5px,
+                #e74c3c 10px
+            );
+            color: white;
+            border: 2px solid #922b21 !important;
+            animation: collision-pulse 1s ease-in-out infinite;
+        }
+        @keyframes collision-pulse {
+            0%, 100% { opacity: 0.9; }
+            50% { opacity: 1; }
         }
         .message-indicator:hover {
             opacity: 1;
@@ -870,7 +887,7 @@
                 }
 
                 if (this.timestampFormat === 'milliseconds') {
-                    return `${timestamp}ms`;
+                    return `${timestamp} ms`;
                 }
 
                 // Check if we have original time format stored
@@ -1364,6 +1381,51 @@
                             fileId: fileData.id
                         });
                     }
+                }
+
+                // Parse collision events - "[COLLISION] Messages from 0xXXXX and 0xYYYY collided at destination 0xZZZZ"
+                const collisionMatch = line.match(/\[COLLISION\] Messages from 0x([0-9A-Fa-f]+) and 0x([0-9A-Fa-f]+) collided at destination 0x([0-9A-Fa-f]+)/);
+                if (collisionMatch) {
+                    const source1 = collisionMatch[1];
+                    const source2 = collisionMatch[2];
+                    const destination = collisionMatch[3];
+
+                    // Add collision event for both colliding messages
+                    fileData.messages.push({
+                        timestamp,
+                        from: source1,
+                        to: destination,
+                        type: 'collision',
+                        typeName: 'COLLISION',
+                        category: 'collision',
+                        nodeId: destination,
+                        direction: 'collision',
+                        collisionWith: source2,
+                        fileId: fileData.id
+                    });
+
+                    fileData.messages.push({
+                        timestamp,
+                        from: source2,
+                        to: destination,
+                        type: 'collision',
+                        typeName: 'COLLISION',
+                        category: 'collision',
+                        nodeId: destination,
+                        direction: 'collision',
+                        collisionWith: source1,
+                        fileId: fileData.id
+                    });
+
+                    // Also add as an event for statistics
+                    fileData.events.push({
+                        timestamp,
+                        nodeId: destination,
+                        type: 'collision',
+                        source1,
+                        source2,
+                        fileId: fileData.id
+                    });
                 }
 
                 // Track nodes
@@ -1916,6 +1978,7 @@
                     'join': 'J',
                     'routing': 'R',
                     'system': 'S',
+                    'collision': '💥',
                     'unknown': '?'
                 };
                 
@@ -2038,16 +2101,24 @@ ${directionIcon} Direction: ${direction}
                 const statsGrid = document.getElementById('statsGrid');
                 statsGrid.innerHTML = '';
 
+                // Count collisions from events
+                const collisionCount = this.events.filter(e => e.type === 'collision').length;
+
                 const stats = [
                     { label: 'Total Nodes', value: this.nodes.size },
                     { label: 'Total Events', value: this.events.length },
                     { label: 'Messages Sent', value: this.messages.length },
+                    { label: 'Collisions', value: collisionCount, highlight: collisionCount > 0 },
                     { label: 'Duration (ms)', value: this.timeRange.end - this.timeRange.start }
                 ];
 
                 stats.forEach(stat => {
                     const card = document.createElement('div');
                     card.className = 'stat-card';
+                    if (stat.highlight) {
+                        card.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+                        card.style.color = 'white';
+                    }
                     card.innerHTML = `
                         <div class="stat-value">${stat.value}</div>
                         <div class="stat-label">${stat.label}</div>
