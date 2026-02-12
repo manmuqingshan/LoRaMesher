@@ -663,21 +663,48 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     uint32_t reception_timestamp = event->getTimestamp();
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp);
-                    Result result =
-                        hardware_->setState(radio::RadioState::kSleep);
-                    if (!result) {
-                        LOG_WARNING("Failed to set radio to sleep state: %s",
-                                    result.GetErrorMessage().c_str());
+                    // During subslotted slots, stay in RX to catch more
+                    // transmissions from other subslots
+                    if (in_subslotted_slot_) {
+                        Result result =
+                            hardware_->setState(radio::RadioState::kReceive);
+                        if (!result) {
+                            LOG_WARNING(
+                                "Failed to set radio to receive in "
+                                "subslotted slot: %s",
+                                result.GetErrorMessage().c_str());
+                        }
+                    } else {
+                        Result result =
+                            hardware_->setState(radio::RadioState::kSleep);
+                        if (!result) {
+                            LOG_WARNING(
+                                "Failed to set radio to sleep state: %s",
+                                result.GetErrorMessage().c_str());
+                        }
                     }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
-                    Result result =
-                        hardware_->setState(radio::RadioState::kSleep);
-                    if (!result) {
-                        LOG_WARNING("Failed to set radio to sleep state: %s",
-                                    result.GetErrorMessage().c_str());
+                    // After TX in subslotted slots, return to RX to catch
+                    // transmissions from later subslots
+                    if (in_subslotted_slot_) {
+                        Result result =
+                            hardware_->setState(radio::RadioState::kReceive);
+                        if (!result) {
+                            LOG_WARNING(
+                                "Failed to set radio to receive after TX "
+                                "in subslotted slot: %s",
+                                result.GetErrorMessage().c_str());
+                        }
+                    } else {
+                        Result result =
+                            hardware_->setState(radio::RadioState::kSleep);
+                        if (!result) {
+                            LOG_WARNING(
+                                "Failed to set radio to sleep state: %s",
+                                result.GetErrorMessage().c_str());
+                        }
                     }
-                    // TODO: Handle transmitted events (e.g., update transmission statistics)
                     LOG_DEBUG("Processed radio event for transmitted message");
                 } else {
                     LOG_DEBUG("Processed radio event with message of type %d",
@@ -693,6 +720,9 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
 
 void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
                                         bool new_superframe) {
+    // Reset subslotted slot flag at every slot transition
+    in_subslotted_slot_ = false;
+
     // Handle new superframe
     if (new_superframe) {
         network_service_->HandleSuperframeStart();
@@ -832,136 +862,181 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
         }
         case SlotAllocation::SlotType::DISCOVERY_TX: {
-            // Apply guard time delay for discovery transmission
-            uint32_t guard_time_ms = config_.getGuardTime();
-            if (guard_time_ms > 0) {
-                LOG_DEBUG("Applying guard time delay for discovery: %u ms",
-                          guard_time_ms);
-                GetRTOS().delay(guard_time_ms);
+            // Subslot-based collision mitigation: discovering nodes transmit
+            // at different offsets based on their address (ADDRESS_MODULO).
+            // Radio starts in RX immediately to catch messages from other
+            // subslots.
+            result = hardware_->setState(radio::RadioState::kReceive);
+            if (!result) {
+                LOG_WARNING(
+                    "Failed to set radio to receive for discovery TX: %s",
+                    result.GetErrorMessage().c_str());
             }
+            in_subslotted_slot_ = true;
 
-            // Get next message from queue
+            // Extract discovery message from queue
             auto message =
                 message_queue_service_->ExtractMessageOfType(slot_type);
             if (message) {
-                // Send via hardware
+                // Compute subslot timing using ADDRESS_MODULO strategy
+                auto subslot_timing =
+                    lora_mesh::SubslotScheduler::ComputeTiming(
+                        superframe_service_->GetSlotDuration(),
+                        config_.getDiscoverySubslotConfig(), node_address_);
+
+                // Wait until our subslot TX offset
+                if (subslot_timing.is_valid) {
+                    uint32_t time_in_slot =
+                        superframe_service_->GetTimeInSlot();
+                    if (time_in_slot < subslot_timing.tx_start_offset_ms) {
+                        uint32_t delay_ms =
+                            subslot_timing.tx_start_offset_ms - time_in_slot;
+                        LOG_DEBUG(
+                            "Waiting %u ms for discovery subslot %d "
+                            "(addr=0x%04X)",
+                            delay_ms, subslot_timing.assigned_subslot,
+                            node_address_);
+                        GetRTOS().delay(delay_ms);
+                    }
+                }
+
+                // Send discovery message
                 result = hardware_->SendMessage(*message);
                 if (!result) {
-                    LOG_ERROR("Failed to send message: %s",
+                    LOG_ERROR("Failed to send discovery message: %s",
                               result.GetErrorMessage().c_str());
+                } else {
+                    LOG_DEBUG(
+                        "Sent discovery message in subslot %d (addr=0x%04X)",
+                        subslot_timing.assigned_subslot, node_address_);
                 }
+                // Radio will return to RX after TX via ProcessRadioEvents
             } else {
-                if (slot_type == SlotAllocation::SlotType::CONTROL_TX) {
-                    // Create a new routing message with broadcast destination
-                    auto routing_message =
-                        network_service_->CreateRoutingTableMessage(
-                            lora_mesh::INetworkService::kBroadcastAddress);
-                    if (!routing_message) {
-                        LOG_ERROR("Failed to create routing message");
-                        return;
-                    }
-                    result = hardware_->SendMessage(*routing_message);
-                }
+                LOG_DEBUG("No discovery message to send in DISCOVERY_TX slot");
             }
             break;
         }
 
         case SlotAllocation::SlotType::SYNC_BEACON_TX: {
-            // Apply guard time delay for sync beacon transmission
-            uint32_t guard_time_ms = config_.getGuardTime();
-            if (guard_time_ms > 0) {
-                LOG_DEBUG("Applying guard time delay for sync beacon: %u ms",
-                          guard_time_ms);
-                GetRTOS().delay(guard_time_ms);
-            }
-
-            // Handle sync beacon transmission based on network role and hop distance
+            // Subslot-based collision mitigation: nodes at different hop
+            // distances transmit at different offsets within the slot.
+            // Radio starts in RX immediately to catch beacons from earlier
+            // subslots.
             auto state = network_service_->GetState();
+
+            // Compute subslot timing using ADDRESS_MODULO strategy
+            auto subslot_timing = lora_mesh::SubslotScheduler::ComputeTiming(
+                superframe_service_->GetSlotDuration(),
+                config_.getSyncBeaconSubslotConfig(), node_address_);
+
+            // Start in RX to catch beacons from earlier subslots
+            result = hardware_->setState(radio::RadioState::kReceive);
+            if (!result) {
+                LOG_WARNING(
+                    "Failed to set radio to receive for sync beacon: %s",
+                    result.GetErrorMessage().c_str());
+            }
+            in_subslotted_slot_ = true;
 
             if (state ==
                 lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
-                // Network Manager: First queue the sync beacon, then extract and send it
+                // Network Manager: queue the sync beacon
                 result = network_service_->SendSyncBeacon();
                 if (!result) {
                     LOG_ERROR("Failed to queue sync beacon: %s",
                               result.GetErrorMessage().c_str());
                     break;
                 }
+            }
 
-                // Extract the queued sync beacon and send it
-                auto message =
-                    message_queue_service_->ExtractMessageOfType(slot_type);
-                if (message) {
-                    // Invoke pre-send callback to update time-sensitive fields
-                    message->InvokePreSendCallback();
-
-                    // TODO: Send using this -> 10.1.3 Collision Mitigation for Same-Hop Forwarders
-                    result = hardware_->SendMessage(*message);
-                    if (!result) {
-                        LOG_ERROR("Failed to send sync beacon: %s",
-                                  result.GetErrorMessage().c_str());
-                    } else {
-                        LOG_DEBUG("Network Manager sent sync beacon");
+            // Extract the message (NM's own beacon or forwarded beacon)
+            auto message =
+                message_queue_service_->ExtractMessageOfType(slot_type);
+            if (message) {
+                // Wait until our subslot TX offset
+                if (subslot_timing.is_valid) {
+                    uint32_t time_in_slot =
+                        superframe_service_->GetTimeInSlot();
+                    if (time_in_slot < subslot_timing.tx_start_offset_ms) {
+                        uint32_t delay_ms =
+                            subslot_timing.tx_start_offset_ms - time_in_slot;
+                        LOG_DEBUG("Waiting %u ms for subslot %d (addr=0x%04X)",
+                                  delay_ms, subslot_timing.assigned_subslot,
+                                  node_address_);
+                        GetRTOS().delay(delay_ms);
                     }
+                }
+
+                // Invoke pre-send callback to update time-sensitive fields
+                message->InvokePreSendCallback();
+
+                result = hardware_->SendMessage(*message);
+                if (!result) {
+                    LOG_ERROR("Failed to send sync beacon: %s",
+                              result.GetErrorMessage().c_str());
                 } else {
-                    LOG_ERROR("Failed to extract queued sync beacon");
+                    LOG_DEBUG("Sent sync beacon in subslot %d (addr=0x%04X)",
+                              subslot_timing.assigned_subslot, node_address_);
                 }
             } else {
-                // Regular nodes: Check queue for sync beacon to forward
-                auto message =
-                    message_queue_service_->ExtractMessageOfType(slot_type);
-                if (message) {
-                    // Invoke pre-send callback to update time-sensitive fields
-                    message->InvokePreSendCallback();
-
-                    // Forward the sync beacon
-                    result = hardware_->SendMessage(*message);
-                    if (!result) {
-                        LOG_ERROR("Failed to forward sync beacon: %s",
-                                  result.GetErrorMessage().c_str());
-                    } else {
-                        LOG_DEBUG("Regular node forwarded sync beacon");
-                    }
-                } else {
-                    LOG_DEBUG("No sync beacon to forward for regular node");
-                }
+                LOG_DEBUG("No sync beacon to send/forward");
             }
             break;
         }
 
         case SlotAllocation::SlotType::DISCOVERY_RX: {
-            // Check if there are any discovery messages to transmit first
+            // Pure listen slot for receiving discovery messages.
+            result = hardware_->setState(radio::RadioState::kReceive);
+            if (!result) {
+                LOG_ERROR("Failed to set radio to receive for discovery: %s",
+                          result.GetErrorMessage().c_str());
+            }
+            in_subslotted_slot_ = true;
+
+            // TODO: Join responses are queued as DISCOVERY_TX but the joining
+            // node doesn't allocate a DISCOVERY_TX slot. The message is sent
+            // from the first DISCOVERY_RX slot instead. This should be
+            // refactored so that joining allocates a proper DISCOVERY_TX slot.
+
+            // Check if there are any queued discovery TX messages (fallback)
             auto discovery_message =
                 message_queue_service_->ExtractMessageOfType(
                     SlotAllocation::SlotType::DISCOVERY_TX);
             if (discovery_message) {
-                // Apply guard time delay for discovery transmission
-                uint32_t guard_time_ms = config_.getGuardTime();
-                if (guard_time_ms > 0) {
-                    LOG_DEBUG(
-                        "Applying guard time delay for discovery in RX slot: "
-                        "%u ms",
-                        guard_time_ms);
-                    GetRTOS().delay(guard_time_ms);
+                // Compute subslot timing using ADDRESS_MODULO strategy
+                auto subslot_timing =
+                    lora_mesh::SubslotScheduler::ComputeTiming(
+                        superframe_service_->GetSlotDuration(),
+                        config_.getDiscoverySubslotConfig(), node_address_);
+
+                // Wait until our subslot TX offset
+                if (subslot_timing.is_valid) {
+                    uint32_t time_in_slot =
+                        superframe_service_->GetTimeInSlot();
+                    if (time_in_slot < subslot_timing.tx_start_offset_ms) {
+                        uint32_t delay_ms =
+                            subslot_timing.tx_start_offset_ms - time_in_slot;
+                        LOG_DEBUG(
+                            "Waiting %u ms for discovery subslot %d "
+                            "(addr=0x%04X)",
+                            delay_ms, subslot_timing.assigned_subslot,
+                            node_address_);
+                        GetRTOS().delay(delay_ms);
+                    }
                 }
 
-                // TODO: Send using this -> 10.1.3 Collision Mitigation for Same-Hop Forwarders
-                // Send discovery message instead of receiving
+                // Send discovery message
                 result = hardware_->SendMessage(*discovery_message);
                 if (!result) {
                     LOG_ERROR("Failed to send discovery message: %s",
                               result.GetErrorMessage().c_str());
                 } else {
                     LOG_DEBUG(
-                        "Sent discovery message during DISCOVERY_RX slot");
+                        "Sent discovery message in subslot %d (addr=0x%04X) "
+                        "from DISCOVERY_RX fallback",
+                        subslot_timing.assigned_subslot, node_address_);
                 }
-            } else {
-                // No discovery messages to send, set radio to receive mode
-                result = hardware_->setState(radio::RadioState::kReceive);
-                if (!result) {
-                    LOG_ERROR("Failed to set radio to receive: %s",
-                              result.GetErrorMessage().c_str());
-                }
+                // Radio will return to RX after TX via ProcessRadioEvents
             }
             break;
         }

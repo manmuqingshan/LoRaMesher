@@ -11,6 +11,7 @@
 #include "hardware/hardware_manager.hpp"
 #include "lora_mesh/services/message_queue_service.hpp"
 #include "lora_mesh/services/network_service.hpp"
+#include "lora_mesh/services/subslot_scheduler.hpp"
 #include "lora_mesh/services/superframe_service.hpp"
 #include "os/rtos.hpp"
 #include "types/configurations/protocol_configuration.hpp"
@@ -366,6 +367,10 @@ class LoRaMeshProtocol : public Protocol {
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;
     power::PowerState current_power_state_ = power::PowerState::ACTIVE;
+
+    // Subslot scheduling state
+    bool in_subslotted_slot_ =
+        false;  ///< True during subslotted slots (radio stays in RX)
 
     // Constants
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 4096;

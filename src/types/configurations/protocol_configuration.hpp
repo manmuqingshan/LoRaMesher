@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include "protocols/lora_mesh/services/subslot_scheduler.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/power/power_types.hpp"
 #include "types/protocols/protocol.hpp"
@@ -408,6 +409,46 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
     /**
+     * @brief Get the subslot config for sync beacon slots
+     *
+     * @return const SubslotConfig& Sync beacon subslot configuration
+     */
+    const protocols::lora_mesh::SubslotConfig& getSyncBeaconSubslotConfig()
+        const {
+        return sync_beacon_subslot_config_;
+    }
+
+    /**
+     * @brief Set the subslot config for sync beacon slots
+     *
+     * @param config Subslot configuration
+     */
+    void setSyncBeaconSubslotConfig(
+        const protocols::lora_mesh::SubslotConfig& config) {
+        sync_beacon_subslot_config_ = config;
+    }
+
+    /**
+     * @brief Get the subslot config for discovery slots
+     *
+     * @return const SubslotConfig& Discovery subslot configuration
+     */
+    const protocols::lora_mesh::SubslotConfig& getDiscoverySubslotConfig()
+        const {
+        return discovery_subslot_config_;
+    }
+
+    /**
+     * @brief Set the subslot config for discovery slots
+     *
+     * @param config Subslot configuration
+     */
+    void setDiscoverySubslotConfig(
+        const protocols::lora_mesh::SubslotConfig& config) {
+        discovery_subslot_config_ = config;
+    }
+
+    /**
      * @brief Check if configuration is valid
      * 
      * @return bool True if configuration is valid
@@ -471,6 +512,16 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;
     uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
+
+    /// Subslot config for sync beacon TX slots (ADDRESS_MODULO by default)
+    protocols::lora_mesh::SubslotConfig sync_beacon_subslot_config_{
+        5, guard_time_ms_,
+        protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
+
+    /// Subslot config for discovery RX/TX slots (ADDRESS_MODULO by default)
+    protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
+        5, guard_time_ms_,
+        protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
 };
 
 /**
