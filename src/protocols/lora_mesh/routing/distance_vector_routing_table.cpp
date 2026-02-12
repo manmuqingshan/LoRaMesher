@@ -413,9 +413,34 @@ std::string DistanceVectorRoutingTable::GetStatistics() const {
 void DistanceVectorRoutingTable::UpdateLinkStatistics() {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
-    // For each direct neighbor, expect a routing message
     for (auto& node : nodes_) {
-        if (node.IsDirectNeighbor()) {
+        if (node.routing_entry.hop_count == 1 && node.is_active) {
+            // Step 1: Calculate quality using complete previous-superframe data
+            //         (received and expected are balanced — no off-by-one)
+            //         Only degrade if we've actually heard from this node enough
+            //         times to establish it as a real link (avoids degrading
+            //         routes learned indirectly before the node starts sending)
+            constexpr uint32_t kMinExpectedForDegradation = 5;
+            if (node.link_stats.messages_expected >=
+                    kMinExpectedForDegradation &&
+                node.link_stats.messages_received >=
+                    kMinMessagesBeforeInvalidation) {
+                node.routing_entry.link_quality =
+                    node.link_stats.CalculateQuality();
+            }
+
+            // Step 2: Check fast invalidation BEFORE incrementing
+            //         (consecutive_missed reflects previous superframe state)
+            if (node.link_stats.consecutive_missed >= kMaxConsecutiveMissed &&
+                node.link_stats.messages_received >=
+                    kMinMessagesBeforeInvalidation) {
+                node.is_active = false;
+                NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
+            }
+
+            // Step 3: THEN expect a new message for this superframe
+            //         (expected++, consecutive_missed++ — gives node time to
+            //         respond; ReceivedMessage() resets consecutive_missed)
             node.ExpectRoutingMessage();
         }
     }
@@ -582,6 +607,10 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                                       hop_count_via_source);
                 }
             }
+
+            // Always refresh last_seen — receiving routing info about this
+            // node proves it's still alive in the network
+            node_it->UpdateLastSeen(reception_timestamp);
         } else {
             // Add new node
             if (WouldExceedLimit()) {

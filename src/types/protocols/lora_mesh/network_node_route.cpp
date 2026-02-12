@@ -15,7 +15,9 @@ namespace lora_mesh {
 // LinkQualityStats implementation
 uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
     if (messages_expected == 0) {
-        return 0;
+        // No tracking started yet — use remote quality if available,
+        // otherwise assume good quality (we just received a message)
+        return remote_link_quality > 0 ? remote_link_quality : 200;
     }
 
     // Calculate local quality (0-255)
@@ -39,12 +41,14 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
 
 void NetworkNodeRoute::LinkQualityStats::ExpectMessage() {
     messages_expected++;
+    consecutive_missed++;
 }
 
 void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(
     uint32_t current_time) {
     messages_received++;
     last_message_time = current_time;
+    consecutive_missed = 0;
 }
 
 void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
@@ -280,9 +284,9 @@ RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
 
 void NetworkNodeRoute::ExpectRoutingMessage() {
     link_stats.ExpectMessage();
-
-    // Update link quality from statistics
-    routing_entry.link_quality = link_stats.CalculateQuality();
+    // Quality is NOT updated here — it's calculated separately in
+    // UpdateLinkStatistics() BEFORE ExpectMessage() is called,
+    // using complete previous-superframe data.
 }
 
 void NetworkNodeRoute::ReceivedRoutingMessage(uint8_t remote_quality,

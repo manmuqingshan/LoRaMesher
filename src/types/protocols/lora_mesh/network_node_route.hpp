@@ -34,6 +34,7 @@ class NetworkNodeRoute {
         uint32_t messages_received = 0;   ///< Received messages count
         uint32_t last_message_time = 0;   ///< Last message received time
         uint8_t remote_link_quality = 0;  ///< Link quality as reported by peer
+        uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
 
         /**
          * @brief Calculate link quality (0-255)

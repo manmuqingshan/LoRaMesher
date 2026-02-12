@@ -165,6 +165,14 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     void NotifyRouteUpdate(bool route_added, AddressType destination,
                            AddressType next_hop, uint8_t hop_count);
 
+    // Constants
+
+    /// Maximum consecutive missed routing messages before marking route inactive
+    static constexpr uint8_t kMaxConsecutiveMissed = 3;
+    /// Minimum received messages before fast invalidation applies (avoids
+    /// killing links during network formation when routing is still stabilizing)
+    static constexpr uint8_t kMinMessagesBeforeInvalidation = 1;
+
     // Member variables
 
     AddressType node_address_;        ///< Local node address
