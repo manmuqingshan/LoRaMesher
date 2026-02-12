@@ -236,9 +236,9 @@ class VirtualNetwork {
             uint32_t delay = GetLinkDelay(source, dest_address);
             uint32_t delivery_time = current_time_ + delay + toa;
 
-            // Queue the message for delivery
-            QueueMessageDelivery(source, dest_address, data, delivery_time,
-                                 rssi, snr);
+            // Queue the message for delivery with timing metadata
+            QueueMessageDelivery(source, dest_address, data, current_time_, toa,
+                                 delivery_time, rssi, snr);
         }
     }
 
@@ -437,9 +437,30 @@ class VirtualNetwork {
         uint32_t source;
         uint32_t destination;
         std::vector<uint8_t> data;
-        uint32_t delivery_time;
+        uint32_t transmission_start_time;  ///< When transmission started
+        uint32_t time_on_air;              ///< Duration of transmission in ms
+        uint32_t delivery_time;            ///< transmission_start + delay + toa
         int8_t rssi;
         int8_t snr;
+
+        /**
+         * @brief Get the end time of this transmission's on-air window
+         * @return Time when this transmission ends (start + toa)
+         */
+        uint32_t GetTransmissionEndTime() const {
+            return transmission_start_time + time_on_air;
+        }
+
+        /**
+         * @brief Check if this message's on-air window overlaps with another
+         * @param other The other pending message to check against
+         * @return true if the on-air windows overlap
+         */
+        bool OverlapsWith(const PendingMessage& other) const {
+            // Two windows overlap if: start_A < end_B AND start_B < end_A
+            return transmission_start_time < other.GetTransmissionEndTime() &&
+                   other.transmission_start_time < GetTransmissionEndTime();
+        }
     };
 
     std::map<uint32_t, NodeInfo> nodes_;
@@ -488,11 +509,15 @@ class VirtualNetwork {
      */
     void QueueMessageDelivery(uint32_t source, uint32_t destination,
                               const std::vector<uint8_t>& data,
-                              uint32_t delivery_time, int8_t rssi, int8_t snr) {
+                              uint32_t transmission_start_time,
+                              uint32_t time_on_air, uint32_t delivery_time,
+                              int8_t rssi, int8_t snr) {
         PendingMessage msg;
         msg.source = source;
         msg.destination = destination;
         msg.data = data;
+        msg.transmission_start_time = transmission_start_time;
+        msg.time_on_air = time_on_air;
         msg.delivery_time = delivery_time;
         msg.rssi = rssi;
         msg.snr = snr;
@@ -504,12 +529,69 @@ class VirtualNetwork {
 
         LOG_DEBUG(
             "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery at %u "
-            "ms",
-            current_time_, source, destination, delivery_time);
+            "ms (tx_start: %u, toa: %u)",
+            current_time_, source, destination, delivery_time,
+            transmission_start_time, time_on_air);
+    }
+
+    /**
+     * @brief Detect collisions among messages targeting the same destination
+     *
+     * @param messages Vector of messages for a single destination
+     * @return Vector of messages that did not collide (safe to deliver)
+     */
+    std::vector<PendingMessage> DetectAndFilterCollisions(
+        std::vector<PendingMessage>& messages) {
+        if (messages.size() <= 1) {
+            return messages;  // No collision possible with 0 or 1 message
+        }
+
+        // Track which messages are involved in collisions
+        std::vector<bool> collided(messages.size(), false);
+
+        // Check each pair of messages for overlapping on-air windows
+        for (size_t i = 0; i < messages.size(); ++i) {
+            for (size_t j = i + 1; j < messages.size(); ++j) {
+                if (messages[i].OverlapsWith(messages[j])) {
+                    // Both messages in the collision are affected
+                    collided[i] = true;
+                    collided[j] = true;
+
+                    LOG_WARNING(
+                        "[COLLISION] Messages from 0x%04X and 0x%04X collided "
+                        "at destination 0x%04X (windows: [%u-%u] vs [%u-%u])",
+                        messages[i].source, messages[j].source,
+                        messages[i].destination,
+                        messages[i].transmission_start_time,
+                        messages[i].GetTransmissionEndTime(),
+                        messages[j].transmission_start_time,
+                        messages[j].GetTransmissionEndTime());
+                }
+            }
+        }
+
+        // Collect non-collided messages
+        std::vector<PendingMessage> non_collided;
+        for (size_t i = 0; i < messages.size(); ++i) {
+            if (!collided[i]) {
+                non_collided.push_back(messages[i]);
+            } else {
+                LOG_DEBUG(
+                    "[COLLISION] Dropping message from 0x%04X to 0x%04X due to "
+                    "collision",
+                    messages[i].source, messages[i].destination);
+            }
+        }
+
+        return non_collided;
     }
 
     /**
      * @brief Process any pending messages that are due for delivery
+     *
+     * This method groups messages by destination and performs collision
+     * detection. Messages with overlapping on-air windows at the same
+     * receiver are dropped (simulating real radio behavior).
      */
     void ProcessPendingMessages() {
         // Extract messages due for delivery under lock
@@ -527,9 +609,18 @@ class VirtualNetwork {
             }
         }
 
-        // Deliver messages outside the lock to avoid deadlocks
-        for (const auto& msg : messages_to_deliver) {
-            DeliverMessage(msg);
+        // Group messages by destination for collision detection
+        std::map<uint32_t, std::vector<PendingMessage>> by_destination;
+        for (auto& msg : messages_to_deliver) {
+            by_destination[msg.destination].push_back(msg);
+        }
+
+        // For each destination, detect collisions and deliver non-collided messages
+        for (auto& [dest, dest_messages] : by_destination) {
+            auto non_collided = DetectAndFilterCollisions(dest_messages);
+            for (const auto& msg : non_collided) {
+                DeliverMessage(msg);
+            }
         }
     }
 
