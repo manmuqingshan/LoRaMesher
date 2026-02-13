@@ -67,12 +67,18 @@ RadioConfig RadioConfig::CreateDefaultSx1278() {
     return RadioConfig{RadioType::kSx1278, 433.0, 7, 125.0, 5, 20};
 }
 
+RadioConfig RadioConfig::CreateDefaultSx1262() {
+    return RadioConfig{RadioType::kSx1262};
+}
+
 std::string RadioConfig::getRadioTypeString() const {
     switch (radio_type_) {
         case RadioType::kSx1276:
             return "SX1276";
         case RadioType::kSx1278:
             return "SX1278";
+        case RadioType::kSx1262:
+            return "SX1262";
         case RadioType::kMockRadio:
             return "MockRadio";
         default:

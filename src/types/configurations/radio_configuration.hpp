@@ -14,10 +14,8 @@ namespace loramesher {
 enum class RadioType {
     kSx1276,    ///< Semtech SX1276 radio module
     kSx1278,    ///< Semtech SX1278 radio module
+    kSx1262,    ///< Semtech SX1262 radio module (SX126x family)
     kMockRadio  ///< Mock radio module for testing
-    // TODO: Implement these types
-    // kRfm95,   ///< HopeRF RFM95 radio module
-    // kRfm96    ///< HopeRF RFM96 radio module
 };
 
 /**
@@ -60,6 +58,12 @@ class RadioConfig {
      * @return RadioConfig Optimized configuration for SX1278
      */
     static RadioConfig CreateDefaultSx1278();
+
+    /**
+     * @brief Create default configuration for SX1262
+     * @return RadioConfig Optimized configuration for SX1262
+     */
+    static RadioConfig CreateDefaultSx1262();
 
     /**
      * @brief Get the configured radio type
