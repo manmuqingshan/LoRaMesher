@@ -184,6 +184,16 @@ class IRoutingTable {
     virtual void SetMaxNodes(size_t max_nodes) = 0;
 
     /**
+     * @brief Set the control slot index for a node (NM-local tracking)
+     *
+     * @param node_address Address of the node
+     * @param control_slot_index Assigned control slot index
+     * @return bool True if the node was found and updated
+     */
+    virtual bool SetControlSlotIndex(AddressType node_address,
+                                     uint8_t control_slot_index) = 0;
+
+    /**
      * @brief Clear all routes and nodes from the table
      */
     virtual void Clear() = 0;

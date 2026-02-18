@@ -373,6 +373,17 @@ void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
     }
 }
 
+bool DistanceVectorRoutingTable::SetControlSlotIndex(
+    AddressType node_address, uint8_t control_slot_index) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(node_address);
+    if (it == nodes_.end()) {
+        return false;
+    }
+    it->control_slot_index = control_slot_index;
+    return true;
+}
+
 void DistanceVectorRoutingTable::Clear() {
     std::lock_guard<std::mutex> lock(table_mutex_);
 

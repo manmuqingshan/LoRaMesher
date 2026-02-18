@@ -353,6 +353,10 @@ class NetworkNodeRoute {
     // Link quality statistics (not serialized for network transmission)
     LinkQualityStats link_stats;  ///< Link quality statistics
 
+    // Control slot tracking (NM-local, not serialized for network transmission)
+    uint8_t control_slot_index =
+        0xFF;  ///< Assigned control slot index (0xFF = unassigned)
+
     /**
      * @brief Equality operator (based on address)
      */

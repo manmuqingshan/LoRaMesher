@@ -85,6 +85,9 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     void SetMaxNodes(size_t max_nodes) override;
 
+    bool SetControlSlotIndex(AddressType node_address,
+                             uint8_t control_slot_index) override;
+
     void Clear() override;
 
     // Statistics and diagnostics
