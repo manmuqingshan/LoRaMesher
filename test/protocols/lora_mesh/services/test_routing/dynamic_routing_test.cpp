@@ -99,10 +99,11 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
         std::vector<uint8_t> payload = {0x11, 0x22, 0x33};
         ASSERT_TRUE(SendMessage(*nodes[0], *nodes[2], payload));
 
-        bool received = AdvanceTime(5000, 10000, 200, 2, [&]() {
-            return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
-                                          MessageType::DATA);
-        });
+        bool received =
+            AdvanceTime(superframe_time * 2, superframe_time * 2, 50, 2, [&]() {
+                return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
+                                              MessageType::DATA);
+            });
 
         EXPECT_TRUE(received) << "Message not received after route change";
     }
