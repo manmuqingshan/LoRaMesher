@@ -25,8 +25,9 @@ namespace lora_mesh {
  * @brief Strategy for assigning a node to a subslot
  */
 enum class SubslotAssignment : uint8_t {
-    HOP_BASED,      ///< subslot = hop_count (sync beacon forwarding)
-    ADDRESS_MODULO  ///< subslot = address % num_subslots (discovery)
+    HOP_BASED,       ///< subslot = hop_count (sync beacon forwarding)
+    ADDRESS_MODULO,  ///< subslot = address % num_subslots (discovery)
+    RANDOM  ///< caller provides random value; subslot = value % num_subslots
 };
 
 /**

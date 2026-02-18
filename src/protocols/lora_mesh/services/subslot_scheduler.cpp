@@ -32,6 +32,10 @@ SubslotTiming SubslotScheduler::ComputeTiming(uint32_t slot_duration_ms,
             timing.assigned_subslot =
                 static_cast<uint8_t>(node_identifier % config.num_subslots);
             break;
+        case SubslotAssignment::RANDOM:
+            timing.assigned_subslot =
+                static_cast<uint8_t>(node_identifier % config.num_subslots);
+            break;
     }
 
     // Each subslot = guard_time + tx_window

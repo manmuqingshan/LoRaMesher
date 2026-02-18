@@ -518,10 +518,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         5, guard_time_ms_,
         protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
 
-    /// Subslot config for discovery RX/TX slots (ADDRESS_MODULO by default)
+    /// Subslot config for discovery RX/TX slots (RANDOM for Slotted ALOHA)
     protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
-        5, guard_time_ms_,
-        protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
+        5, guard_time_ms_, protocols::lora_mesh::SubslotAssignment::RANDOM};
 };
 
 /**
