@@ -70,7 +70,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
     // Wait for routing tables to update
     // The route from N1 to N3 should now go through N2 or N4
     bool updated =
-        AdvanceTime(superframe_time * 8, superframe_time * 8, 100, 2, [&]() {
+        AdvanceTime(superframe_time * 8, superframe_time * 8, 25, 2, [&]() {
             // N1 should still have a route to N3, but with more hops
             if (!HasRouteTo(*nodes[0], nodes[2]->address)) {
                 return false;
@@ -100,7 +100,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
         ASSERT_TRUE(SendMessage(*nodes[0], *nodes[2], payload));
 
         bool received =
-            AdvanceTime(superframe_time * 2, superframe_time * 2, 50, 2, [&]() {
+            AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 2, [&]() {
                 return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                               MessageType::DATA);
             });
@@ -155,7 +155,7 @@ TEST_F(DynamicRoutingTests, RouteRecoveryAfterNodeReconnect) {
 
     // Wait for route to be marked inactive or removed
     // Note: This may take up to route_timeout_ms
-    AdvanceTime(superframe_time * 6, superframe_time * 6, 100, 2,
+    AdvanceTime(superframe_time * 6, superframe_time * 6, 50, 2,
                 [&]() { return false; });
 
     std::cout << "=== After disconnect ===" << std::endl;
@@ -190,14 +190,14 @@ TEST_F(DynamicRoutingTests, RouteRecoveryAfterNodeReconnect) {
     // Verify message delivery after recovery
     if (recovered) {
         // Allow extra time for data slot allocation to stabilize
-        AdvanceTime(superframe_time * 2, superframe_time * 2, 100, 2,
+        AdvanceTime(superframe_time * 2, superframe_time * 2, 50, 2,
                     [&]() { return false; });
 
         std::vector<uint8_t> payload = {0xAA, 0xBB};
         ASSERT_TRUE(SendMessage(*nodes[0], *nodes[2], payload));
 
-        bool received = AdvanceTime(
-            superframe_time * 4, superframe_time * 4, 200, 2, [&]() {
+        bool received =
+            AdvanceTime(superframe_time * 4, superframe_time * 4, 50, 2, [&]() {
                 return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                               MessageType::DATA);
             });
