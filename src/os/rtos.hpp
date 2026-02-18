@@ -376,6 +376,12 @@ class RTOS {
     virtual void YieldTask() = 0;
 
     /**
+     * @brief Generate a random 32-bit unsigned integer
+     * @return uint32_t Random value
+     */
+    virtual uint32_t GetRandom() = 0;
+
+    /**
      * @brief Set the node address for the current task
      * @param address The node address as a string (e.g., "0x1001")
      */

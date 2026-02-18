@@ -18,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <queue>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -74,7 +75,10 @@ class RTOSMock : public RTOS {
           virtualTimeMs_(0),
           timeMutex_(),
           waitingTasks_(),
-          timerCallbacks_() {}
+          timerCallbacks_(),
+          prng_engine_(static_cast<uint32_t>(
+              std::chrono::steady_clock::now().time_since_epoch().count() ^
+              reinterpret_cast<uintptr_t>(this))) {}
 
     /**
      * @brief Sets the time mode for the RTOS mock
@@ -516,7 +520,7 @@ class RTOSMock : public RTOS {
             // Wait with a reasonable timeout (500ms)
             // Use our waitFor helper that respects virtual time
             bool acknowledged =
-                waitFor(task_info->suspend_ack_cv, lock, 500, [task_info]() {
+                waitFor(task_info->suspend_ack_cv, lock, 10, [task_info]() {
                     return task_info->suspension_acknowledged ||
                            task_info->stop_requested.load(
                                std::memory_order_relaxed);
@@ -1749,6 +1753,11 @@ class RTOSMock : public RTOS {
         return pred();
     }
 
+    uint32_t GetRandom() override {
+        std::lock_guard<std::mutex> lock(prng_mutex_);
+        return prng_distribution_(prng_engine_);
+    }
+
     /**
      * @brief Set the node address for the current task
      * @param address The node address as a string (e.g., "0x1001")
@@ -2042,6 +2051,11 @@ class RTOSMock : public RTOS {
     mutable std::timed_mutex tasksMutex_;
     std::vector<void (*)()> registeredISRs_;
     std::mutex isrMutex_;
+
+    // PRNG for GetRandom()
+    std::mt19937 prng_engine_;
+    std::uniform_int_distribution<uint32_t> prng_distribution_;
+    std::mutex prng_mutex_;
 };
 
 }  // namespace os

@@ -385,6 +385,8 @@ class RTOSFreeRTOS : public RTOS {
      */
     inline void YieldTask() override { taskYIELD(); }
 
+    uint32_t GetRandom() override { return esp_random(); }
+
     /**
      * @brief Set the node address for the current task
      * @param address The node address as a string (e.g., "0x1001")
