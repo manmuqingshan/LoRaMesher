@@ -990,8 +990,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             "Join request from 0x%04X deferred - join already pending this "
             "superframe",
             source);
-        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
-                                sponsor_address);
+        // return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
+        //                         sponsor_address);
     }
 
     uint8_t routing_hop_count = hop_count + 1;
