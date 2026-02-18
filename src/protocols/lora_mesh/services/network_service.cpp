@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <set>
 
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
@@ -371,6 +372,10 @@ Result NetworkService::StartJoining(AddressType /* manager_address */,
     network_found_ = true;
     network_creator_ = false;
 
+    // Reset join retry backoff
+    join_retry_count_ = 0;
+    join_backoff_remaining_ = 0;
+
     // Record discovery start time
     joining_start_time_ = GetRTOS().getTickCount();
 
@@ -616,7 +621,6 @@ Result NetworkService::CreateNetwork() {
 
     // Initialize control slot assignment for NM
     my_control_slot_index_ = 0;  // NM always has slot index 0
-    join_order_counter_ = 1;     // Next joining node will get index 1
 
     // Initialize local data slots for network creator
     SetLocalAllocatedDataSlots(config_.default_data_slots);
@@ -983,17 +987,18 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         }
 
         LOG_INFO(
-            "Join request from 0x%04X rejected - join already pending this "
+            "Join request from 0x%04X deferred - join already pending this "
             "superframe",
             source);
-        return Result::Success();
-        // return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
-        //                         sponsor_address);
+        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
+                                sponsor_address);
     }
+
+    uint8_t routing_hop_count = hop_count + 1;
 
     // Determine if node should be accepted
     auto [accepted, allocated_slots] =
-        ShouldAcceptJoin(source, requested_slots);
+        ShouldAcceptJoin(source, requested_slots, routing_hop_count);
 
     if (!accepted) {
         LOG_INFO("Join request from 0x%04X rejected - network constraints",
@@ -1020,9 +1025,35 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         "slots",
         source, allocated_slots);
 
+    // Compute control slot index for ACCEPTED joins
+    uint8_t control_slot_index = 0xFF;
+    {
+        // Check if this node already has a control slot (re-join case)
+        const auto& nodes = routing_table_->GetNodes();
+        for (const auto& node : nodes) {
+            if (node.GetAddress() == source &&
+                node.control_slot_index != 0xFF) {
+                control_slot_index = node.control_slot_index;
+                LOG_INFO(
+                    "Reusing control slot index %d for re-joining node 0x%04X",
+                    control_slot_index, source);
+                break;
+            }
+        }
+
+        if (control_slot_index == 0xFF) {
+            // New node: find lowest available control slot index
+            control_slot_index = FindLowestAvailableControlSlot();
+            LOG_INFO(
+                "Assigned new control slot index %d to joining node 0x%04X",
+                control_slot_index, source);
+        }
+    }
+
     // Send immediate acceptance response
-    Result result = SendJoinResponse(source, JoinResponseHeader::ACCEPTED,
-                                     allocated_slots, sponsor_address);
+    Result result =
+        SendJoinResponse(source, JoinResponseHeader::ACCEPTED, allocated_slots,
+                         sponsor_address, control_slot_index);
     if (!result) {
         // Clear pending join if response fails
         pending_join_request_ = false;
@@ -1033,7 +1064,6 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     // Update routing information with hop_count from join request
     // hop_count in message = number of forwards, actual routing hop_count = hop_count + 1
     // next_hop should be the first hop towards the joining node, NOT the sponsor directly
-    uint8_t routing_hop_count = hop_count + 1;
     AddressType route_next_hop;
     if (sponsor_address != 0 && sponsor_address != node_address_) {
         // Use routing table to find next hop towards the sponsor
@@ -1074,6 +1104,9 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         LOG_INFO("Joining node 0x%04X updated to network manager's node list",
                  source);
     }
+
+    // Store the assigned control slot index in the routing table
+    routing_table_->SetControlSlotIndex(source, control_slot_index);
 
     return Result::Success();
 }
@@ -1168,25 +1201,12 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
             selected_sponsor_ = 0;
         }
     } else if (status == JoinResponseStatus::RETRY_LATER) {
-        LOG_INFO("Join request temporarily rejected, retrying after delay");
-        // TODO: Check this.
-        // Calculate retry delay based on configuration
-        // Approximate superframe duration if service is available
-        uint32_t estimated_superframe_duration = 20000;  // Default fallback
-        if (superframe_service_) {
-            // Estimate based on slot count and duration
-            estimated_superframe_duration =
-                slot_table_.size() * superframe_service_->GetSlotDuration();
-        }
-        uint32_t base_delay_ms =
-            config_.retry_delay_superframes * estimated_superframe_duration;
-
-        // TODO: Implement retry scheduling mechanism
-        // For now, just return to discovery which will eventually retry
-        LOG_DEBUG(
-            "Retry delay calculated as %u ms, returning to discovery for now",
-            base_delay_ms);
-        SetState(ProtocolState::DISCOVERY);
+        LOG_INFO("Join request deferred (NM busy), will retry next superframe");
+        // NM received our request but is busy processing another join.
+        // Set a short backoff (1 superframe) and reset retry count since
+        // the message was delivered successfully - this isn't a collision.
+        join_backoff_remaining_ = 1;
+        join_retry_count_ = 0;
     } else {
         LOG_WARNING("Join rejected with status %d", static_cast<int>(status));
 
@@ -1199,7 +1219,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
 
         // TODO: Check this
         // Return to discovery
-        SetState(ProtocolState::DISCOVERY);
+        SetState(ProtocolState::FAULT_RECOVERY);
     }
 
     return Result::Success();
@@ -1208,7 +1228,8 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
 Result NetworkService::SendJoinResponse(AddressType dest,
                                         JoinResponseStatus status,
                                         uint8_t allocated_slots,
-                                        AddressType sponsor_address) {
+                                        AddressType sponsor_address,
+                                        uint8_t control_slot_index) {
     // Only network manager sends join responses
     if (network_manager_ != node_address_) {
         return Result(LoraMesherErrorCode::kInvalidState,
@@ -1235,14 +1256,6 @@ Result NetworkService::SendJoinResponse(AddressType dest,
         // Direct case: no external sponsor OR we are the sponsor
         response_destination = dest;
         target_address = 0;
-    }
-
-    // Assign control slot index for ACCEPTED joins
-    uint8_t control_slot_index = 0xFF;  // Default: unassigned
-    if (status == JoinResponseStatus::ACCEPTED) {
-        control_slot_index = join_order_counter_++;
-        LOG_INFO("Assigned control slot index %d to joining node 0x%04X",
-                 control_slot_index, dest);
     }
 
     // Create join response with corrected addressing and next_hop for multi-hop forwarding
@@ -1569,12 +1582,20 @@ Result NetworkService::UpdateSlotTable() {
     // Use max_hops from received sync beacons
     int max_hops_count = current_network_depth_;
 
-    // Use max of known nodes OR our assigned control slot index + 1
-    // This ensures enough control slots even if routing table is incomplete
-    // (e.g., joining node may have slot index 5 but only know 3 nodes)
-    allocated_control_slots_ =
-        std::max(static_cast<uint8_t>(ordered_nodes.size()),
-                 static_cast<uint8_t>(my_control_slot_index_ + 1));
+    if (network_manager_ == node_address_) {
+        // NM: compute from actual assignments
+        uint8_t max_index = my_control_slot_index_;
+        for (const auto& node : routing_table_->GetNodes()) {
+            if (node.control_slot_index != 0xFF &&
+                node.control_slot_index > max_index) {
+                max_index = node.control_slot_index;
+            }
+        }
+        allocated_control_slots_ = max_index + 1;
+    } else {
+        // Non-NM: use authoritative node_count from sync beacon
+        allocated_control_slots_ = beacon_node_count_;
+    }
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
     allocated_discovery_slots_ = (max_hops_count + 1) * 2;
@@ -2041,11 +2062,17 @@ uint8_t NetworkService::GetHopDistanceToNM() const {
 // Helper method implementations
 
 std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
-    AddressType node_address, uint8_t requested_slots) {
+    AddressType node_address, uint8_t requested_slots, uint8_t hops) {
 
     // Check network capacity
     if (routing_table_->GetSize() >= config_.max_network_nodes) {
         LOG_WARNING("Network at capacity, rejecting node 0x%04X", node_address);
+        return {false, 0};
+    }
+
+    if (hops > config_.max_hops) {
+        LOG_WARNING("Node 0x%04X is too far (hops %d), rejecting", node_address,
+                    hops);
         return {false, 0};
     }
 
@@ -2202,6 +2229,14 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                 "Updated number_of_slots_per_superframe_ to %d from sync "
                 "beacon",
                 number_of_slots_per_superframe_);
+        }
+
+        // Store authoritative node count from NM's sync beacon
+        uint8_t node_count = sync_beacon.GetNodeCount();
+        if (node_count != beacon_node_count_) {
+            beacon_node_count_ = node_count;
+            LOG_INFO("Updated beacon_node_count_ to %d from sync beacon",
+                     beacon_node_count_);
         }
     }
 
@@ -2396,7 +2431,8 @@ Result NetworkService::SendSyncBeacon() {
         std::min(
             static_cast<uint8_t>(current_network_depth_),
             config_
-                .max_hops));  // Dynamic growth (depth+1) capped by configured limit
+                .max_hops),  // Dynamic growth (depth+1) capped by configured limit
+        allocated_control_slots_);  // Authoritative node count for slot alignment
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
@@ -2538,13 +2574,28 @@ Result NetworkService::HandleSuperframeStart() {
             "slot 0");
 
     } else if (state_ == ProtocolState::JOINING) {
-        // In joining state, the previous message has not been response correctly.
-        // Send again a JoinRequest.
-        Result join_req_result =
-            SendJoinRequest(network_manager_, config_.default_data_slots);
-        if (!join_req_result) {
-            LOG_ERROR("Failed to resend JoinRequest: %s",
-                      join_req_result.GetErrorMessage().c_str());
+        // Exponential backoff for join retries (Slotted ALOHA)
+        if (join_backoff_remaining_ > 0) {
+            join_backoff_remaining_--;
+            LOG_DEBUG("Join backoff: %d superframes remaining",
+                      join_backoff_remaining_);
+        } else {
+            Result join_req_result =
+                SendJoinRequest(network_manager_, config_.default_data_slots);
+            if (!join_req_result) {
+                LOG_ERROR("Failed to resend JoinRequest: %s",
+                          join_req_result.GetErrorMessage().c_str());
+            }
+            join_retry_count_++;
+            // Binary exponential backoff capped at 4 superframes to ensure
+            // convergence in dense networks (e.g., 9 nodes, 5 subslots).
+            uint8_t max_backoff = std::min(
+                static_cast<uint8_t>(
+                    1 << std::min(join_retry_count_, static_cast<uint8_t>(2))),
+                static_cast<uint8_t>(4));
+            join_backoff_remaining_ = GetRTOS().GetRandom() % (max_backoff + 1);
+            LOG_DEBUG("Join retry #%d, next backoff: %d superframes",
+                      join_retry_count_, join_backoff_remaining_);
         }
 
     } else if (state_ == ProtocolState::NORMAL_OPERATION) {
@@ -2772,7 +2823,7 @@ Result NetworkService::ForwardJoinResponse(
             uint8_t hops_to_joining =
                 sponsor_route->routing_entry.hop_count + 1;
             routing_table_->UpdateRoute(
-                dest,             // source: learned via sponsor path
+                next_hop,  // source: learned via sponsor path but add next_hop
                 joining_node,     // destination: the joining node
                 hops_to_joining,  // hop_count: sponsor's hops + 1
                 200,              // link_quality
@@ -2879,6 +2930,23 @@ uint8_t NetworkService::GetMaxHopsFromRoutingTable() const {
     }
 
     return max_hop_count;
+}
+
+uint8_t NetworkService::FindLowestAvailableControlSlot() {
+    std::set<uint8_t> used_indices;
+    used_indices.insert(my_control_slot_index_);  // NM's own slot (0)
+    for (const auto& node : routing_table_->GetNodes()) {
+        if (node.control_slot_index != 0xFF) {
+            used_indices.insert(node.control_slot_index);
+        }
+    }
+    // Find lowest gap
+    for (uint8_t i = 0; i < 255; i++) {
+        if (used_indices.find(i) == used_indices.end()) {
+            return i;
+        }
+    }
+    return 255;  // Fallback (shouldn't happen with <255 nodes)
 }
 
 }  // namespace lora_mesh

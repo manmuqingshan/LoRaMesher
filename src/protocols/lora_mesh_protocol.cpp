@@ -536,6 +536,10 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
             case lora_mesh::INetworkService::ProtocolState::JOINING:
                 timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;
+            case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
+                timeout_ms =
+                    std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                break;
             default:
                 // Use default timeout for other states
                 break;
@@ -623,6 +627,16 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                         protocol->GetJoinTimeout());
                     if (!result) {
                         LOG_ERROR("Joining failed: %s",
+                                  result.GetErrorMessage().c_str());
+                    }
+                    break;
+
+                case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
+                    LOG_WARNING(
+                        "Fault recovery timeout - restarting discovery");
+                    result = protocol->StartDiscovery();
+                    if (!result) {
+                        LOG_ERROR("Failed to restart discovery: %s",
                                   result.GetErrorMessage().c_str());
                     }
                     break;
@@ -878,11 +892,16 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             auto message =
                 message_queue_service_->ExtractMessageOfType(slot_type);
             if (message) {
-                // Compute subslot timing using ADDRESS_MODULO strategy
+                // Compute subslot timing; use random identifier for RANDOM strategy
+                uint16_t identifier = node_address_;
+                if (config_.getDiscoverySubslotConfig().strategy ==
+                    lora_mesh::SubslotAssignment::RANDOM) {
+                    identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
+                }
                 auto subslot_timing =
                     lora_mesh::SubslotScheduler::ComputeTiming(
                         superframe_service_->GetSlotDuration(),
-                        config_.getDiscoverySubslotConfig(), node_address_);
+                        config_.getDiscoverySubslotConfig(), identifier);
 
                 // Wait until our subslot TX offset
                 if (subslot_timing.is_valid) {
@@ -1003,11 +1022,17 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 message_queue_service_->ExtractMessageOfType(
                     SlotAllocation::SlotType::DISCOVERY_TX);
             if (discovery_message) {
-                // Compute subslot timing using ADDRESS_MODULO strategy
+                // Compute subslot timing; use random identifier for RANDOM strategy
+                uint16_t disc_identifier = node_address_;
+                if (config_.getDiscoverySubslotConfig().strategy ==
+                    lora_mesh::SubslotAssignment::RANDOM) {
+                    disc_identifier =
+                        static_cast<uint16_t>(GetRTOS().GetRandom());
+                }
                 auto subslot_timing =
                     lora_mesh::SubslotScheduler::ComputeTiming(
                         superframe_service_->GetSlotDuration(),
-                        config_.getDiscoverySubslotConfig(), node_address_);
+                        config_.getDiscoverySubslotConfig(), disc_identifier);
 
                 // Wait until our subslot TX offset
                 if (subslot_timing.is_valid) {
@@ -1161,6 +1186,12 @@ Result LoRaMeshProtocol::StartDiscovery() {
     if (!superframe_service_) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Superframe service not initialized");
+    }
+
+    // Clean DISCOVERY_TX data messages
+    if (message_queue_service_) {
+        message_queue_service_->ClearQueue(
+            SlotAllocation::SlotType::DISCOVERY_TX);
     }
 
     // Start discovery in superframe service

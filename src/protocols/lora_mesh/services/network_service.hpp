@@ -484,7 +484,8 @@ class NetworkService : public INetworkService {
      */
     Result SendJoinResponse(
         AddressType dest, loramesher::JoinResponseHeader::ResponseStatus status,
-        uint8_t allocated_slots, AddressType sponsor_address = 0);
+        uint8_t allocated_slots, AddressType sponsor_address = 0,
+        uint8_t control_slot_index = 0xFF);
 
     // Data message methods
 
@@ -707,6 +708,17 @@ class NetworkService : public INetworkService {
     void SetMaxHopCount(uint8_t max_hops) override;
 
     /**
+     * @brief Set the authoritative node count from sync beacon
+     *
+     * Non-NM nodes use this to determine control slot allocation.
+     *
+     * @param node_count Number of nodes in the network
+     */
+    void SetBeaconNodeCount(uint8_t node_count) {
+        beacon_node_count_ = node_count;
+    }
+
+    /**
      * @brief Get this node's hop distance to the network manager
      *
      * @return uint8_t Hop distance to NM (0 if NM, 1 if unknown)
@@ -793,10 +805,12 @@ class NetworkService : public INetworkService {
      *
      * @param node_address Requesting node address
      * @param requested_slots Requested slots
+     * @param hops Hop count from requesting node to network manager
      * @return std::pair<bool, uint8_t> Accept decision and allocated slots
      */
     std::pair<bool, uint8_t> ShouldAcceptJoin(AddressType node_address,
-                                              uint8_t requested_slots);
+                                              uint8_t requested_slots,
+                                              uint8_t hops);
 
     /**
      * @brief Forward a join request to the network manager
@@ -894,6 +908,16 @@ class NetworkService : public INetworkService {
      */
     uint8_t GetMaxHopsFromRoutingTable() const;
 
+    /**
+     * @brief Find lowest available control slot index
+     *
+     * Scans routing table for used control slot indices and returns the
+     * lowest unused index. Used by NM when assigning slots to new joiners.
+     *
+     * @return uint8_t Lowest available control slot index
+     */
+    uint8_t FindLowestAvailableControlSlot();
+
     // Member variables
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
@@ -940,11 +964,11 @@ class NetworkService : public INetworkService {
     std::optional<JoinRequestMessage>
         pending_join_data_;  ///< Buffered join request data
 
-    // Control slot assignment (join-order-based)
-    uint8_t join_order_counter_ =
-        1;  ///< NM: next control slot index to assign (starts at 1, 0 is NM)
+    // Control slot assignment
     uint8_t my_control_slot_index_ =
         0;  ///< This node's assigned control slot index (NM=0, others assigned at join)
+    uint8_t beacon_node_count_ =
+        1;  ///< Authoritative node count from NM's sync beacon
 
     // Local node capabilities
     uint8_t local_capabilities_ = 0;  ///< Local node capabilities bitmap
@@ -955,6 +979,11 @@ class NetworkService : public INetworkService {
 
     // Node role configuration
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+
+    // Join retry backoff (Slotted ALOHA)
+    uint8_t join_retry_count_ = 0;  ///< Number of join retries so far
+    uint8_t join_backoff_remaining_ =
+        0;  ///< Superframes to skip before next retry
 
     // Periodic cleanup
     uint32_t last_cleanup_time_ = 0;  ///< Last time route cleanup was performed

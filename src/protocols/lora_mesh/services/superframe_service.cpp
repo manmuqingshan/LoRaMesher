@@ -98,6 +98,15 @@ Result SuperframeService::StartSuperframe() {
 
     is_running_ = true;
 
+    // Drain stale notifications from previous Stop/Start cycle
+    if (notification_queue_) {
+        SuperframeNotificationType stale;
+        while (GetRTOS().ReceiveFromQueue(notification_queue_, &stale, 0) ==
+               os::QueueResult::kOk) {
+            // Discard
+        }
+    }
+
     // Create the update task
     if (update_task_handle_ != nullptr) {
         GetRTOS().ResumeTask(update_task_handle_);
@@ -131,9 +140,9 @@ Result SuperframeService::StopSuperframe() {
     if (update_task_handle_) {
         bool suspended = GetRTOS().SuspendTask(update_task_handle_);
         if (!suspended) {
-            LOG_WARNING("Failed to suspend superframe update task");
-            GetRTOS().DeleteTask(update_task_handle_);
-            update_task_handle_ = nullptr;
+            LOG_WARNING(
+                "Failed to suspend superframe update task within timeout, "
+                "continuing anyway");
         }
     }
 
@@ -692,7 +701,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         // Log timeout periodically to reduce log spam (every 10th call)
         static uint32_t timeout_log_counter = 0;
         if (++timeout_log_counter % 10 == 0) {
-            LOG_DEBUG("Next event timeout: %d ms", timeout_ms);
+            LOG_DEBUG("Next event timeout: %u ms", timeout_ms);
         }
 
         // Wait for notification or timeout
@@ -787,7 +796,7 @@ void SuperframeService::UpdateTimingStats() {
 
 uint32_t SuperframeService::CalculateNextEventTimeout() const {
     if (!is_running_) {
-        return MAX_DELAY;  // Not running, sleep indefinitely
+        return 1;  // 1s bounded wait instead of indefinite sleep
     }
 
     uint32_t current_time = GetRTOS().getTickCount();
