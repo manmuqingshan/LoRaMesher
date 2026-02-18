@@ -164,6 +164,18 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
             LOG_INFO("Added node 0x%04X at hop distance %d", addr,
                      hop_distance);
         }
+
+        // Assign control_slot_index values to simulate what the join flow does
+        uint8_t slot_idx = 1;
+        for (const auto& [addr, hop_distance] : other_nodes) {
+            routing_table->SetControlSlotIndex(addr, slot_idx++);
+        }
+
+        // For non-NM nodes, simulate having received a sync beacon with node_count
+        if (state != ProtocolState::NETWORK_MANAGER) {
+            network_service_->SetBeaconNodeCount(
+                static_cast<uint8_t>(other_nodes.size() + 1));
+        }
     }
 
     /**

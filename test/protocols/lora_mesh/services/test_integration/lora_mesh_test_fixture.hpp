@@ -4,7 +4,7 @@
  */
 #pragma once
 
-// #define LORAMESHER_TEST_STORE_LOGS // If defined it will enable file logging for tests
+#define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
 
 #include <gtest/gtest.h>
 #include <filesystem>
@@ -818,7 +818,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
         auto* first_node = nodes.front();
         uint32_t timeout_ms =
-            GetDiscoveryTimeout(*first_node) * (nodes.size() + 3);
+            GetDiscoveryTimeout(*first_node) * (nodes.size() + 4);
         LOG_DEBUG("Using default timeout of %u ms for network formation",
                   timeout_ms);
 
