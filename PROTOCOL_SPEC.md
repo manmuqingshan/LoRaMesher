@@ -366,14 +366,15 @@ struct JoinResponseHeader {
 };
 ```
 
-**Control Slot Index (v1.3)**:
-The Network Manager assigns each joining node a unique `control_slot_index` based on join order:
+**Control Slot Index (v1.4)**:
+The Network Manager assigns each joining node a unique `control_slot_index` tracked in-memory in the NM's routing table:
 - NM itself has `control_slot_index = 0`
-- First joining node gets `control_slot_index = 1`
-- Second joining node gets `control_slot_index = 2`, etc.
+- New joining nodes get the **lowest available** index not currently assigned
+- **Re-joining nodes** reuse their previously assigned index (looked up from NM's routing table)
+- Departed nodes' indices are recycled for future joiners
 - Value `0xFF` indicates unassigned (used for non-ACCEPTED responses)
 
-This ensures collision-free CONTROL slot allocation without requiring complete routing table knowledge. Each node's CONTROL_TX slot position is: `sync_beacon_slots + control_slot_index`.
+This ensures collision-free CONTROL slot allocation, prevents index inflation on re-join, and recycles indices from departed nodes. Each node's CONTROL_TX slot position is: `sync_beacon_slots + control_slot_index`.
 
 **JOIN_RESPONSE Status Codes**:
 - `ACCEPTED = 0x00`: Join request accepted, slot allocated
@@ -502,8 +503,8 @@ SYNC_BEACON = 0x46,  // Multi-hop synchronization beacon
 
 **SYNC_BEACON Format (Optimized)**:
 
-*Message Size*: 19 bytes total (6-byte base header + 13-byte sync fields)
-- **Optimization**: Reduced from 31 bytes (39% size reduction)  
+*Message Size*: 20 bytes total (6-byte base header + 14-byte sync fields)
+- **Optimization**: Reduced from 31 bytes (35% size reduction)
 - **Power Impact**: Lower transmission time and energy consumption
 
 ```cpp
@@ -513,7 +514,7 @@ struct SyncBeaconHeader {
     AddressType source;                  // Current transmitter address (2 bytes)
     MessageType type = SYNC_BEACON;      // Message type 0x46 (1 byte)
     uint8_t payload_size = 0;            // No payload data (1 byte)
-    
+
     // Core synchronization fields (7 bytes)
     uint16_t network_id;                 // Network identifier (2 bytes)
     uint8_t total_slots;                 // Slots in complete superframe (1 byte)
@@ -524,11 +525,16 @@ struct SyncBeaconHeader {
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
     uint32_t propagation_delay_ms;       // Accumulated forwarding delay (4 bytes)
     uint8_t max_hops;                    // Network diameter limit (1 byte)
+
+    // Network topology field (1 byte) [v1.4]
+    uint8_t node_count;                  // Active nodes in network (1 byte)
 };
 
 // Calculated fields (not transmitted):
 // - superframe_duration_ms = total_slots * slot_duration_ms
 ```
+
+**Node Count (v1.4)**: The `node_count` field carries the Network Manager's authoritative count of control slots needed. All nodes use this value to determine `allocated_control_slots` in their slot frame, replacing the previous independent computation `max(routing_table.size(), my_control_slot_index + 1)`. This ensures all nodes agree on the slot frame structure regardless of their routing table view. The NM computes this as `max_assigned_control_slot_index + 1`.
 
 #### 3.3.5 Data Messages
 ```cpp
@@ -1276,50 +1282,48 @@ struct SyncBeaconHeader {
     AddressType source;                  // Current transmitter address (2 bytes)
     MessageType type = SYNC_BEACON;      // Message type 0x46 (1 byte)
     uint8_t payload_size = 0;            // No payload data (1 byte)
-    
-    // Core synchronization fields (11 bytes)
+
+    // Core synchronization fields (7 bytes)
     uint16_t network_id;                 // Network identifier (2 bytes)
     uint8_t total_slots;                 // Slots in complete superframe (1 byte)
     uint16_t slot_duration_ms;           // Individual slot duration (2 bytes)
     AddressType network_manager;         // Network Manager address (2 bytes)
-    
-    // Multi-hop forwarding fields (4 bytes)
+
+    // Multi-hop forwarding fields (6 bytes)
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
     uint32_t propagation_delay_ms;       // Accumulated forwarding delay (4 bytes)
     uint8_t max_hops;                    // Network diameter limit (1 byte)
+
+    // Network topology field (1 byte) [v1.4]
+    uint8_t node_count;                  // Active nodes in network (1 byte)
 };
-// Total: 21 bytes (optimized from 33 bytes - 36% reduction)
+// Total: 20 bytes (6 base + 14 sync fields)
 ```
 
 #### 5.3.1.1 Slot Allocation Updates via Sync Beacon
 
-The sync beacon serves dual purposes: network synchronization and slot allocation coordination. When a new node joins the network, the `total_slots` field communicates the updated superframe structure to all nodes.
+The sync beacon serves dual purposes: network synchronization and slot allocation coordination. When a new node joins the network, the `total_slots` and `node_count` fields communicate the updated superframe structure to all nodes.
 
 **Slot Allocation Update Process**:
 
 1. **Join Request Buffering**: Network Manager buffers join requests until superframe boundary
 2. **Superframe Boundary**: At sync beacon transmission, apply pending joins
-3. **Updated Sync Beacon**: `total_slots` field reflects new network size
-4. **Network-Wide Update**: All nodes recalculate slot allocations based on new `total_slots`
+3. **Updated Sync Beacon**: `total_slots` field reflects new superframe size, `node_count` field reflects authoritative control slot count
+4. **Network-Wide Update**: All nodes recalculate slot allocations based on new `total_slots` and `node_count`
 
 ```cpp
 void ProcessSyncBeaconForSlotUpdates(const SyncBeaconHeader& beacon) {
     // Check if slot allocation has changed
-    if (beacon.total_slots_ != current_total_slots_) {
-        LOG_INFO("Slot allocation update detected: %d -> %d slots", 
-                 current_total_slots_, beacon.total_slots_);
-        
-        // Recalculate slot allocations for new network size
+    if (beacon.total_slots_ != current_total_slots_ ||
+        beacon.node_count_ != current_node_count_) {
+
+        // Use NM's authoritative node_count for control slot allocation
+        allocated_control_slots_ = beacon.node_count_;
+
         RecalculateSlotAllocation(beacon.total_slots_);
         current_total_slots_ = beacon.total_slots_;
-        
-        // If joining node, complete join process
-        if (current_state_ == JOINING_PENDING) {
-            CompleteJoinProcess();
-        }
+        current_node_count_ = beacon.node_count_;
     }
-    
-    // Continue with normal synchronization processing
     ProcessTimeSynchronization(beacon);
 }
 ```
@@ -1480,7 +1484,7 @@ Each slot is divided into `N` subslots. Each node is deterministically assigned 
 |-----------|---------|-------------|
 | `num_subslots` | 5 | Number of subslots per slot |
 | `guard_time_ms` | 10 ms | Guard time before each subslot TX window |
-| `strategy` | Slot-dependent | `HOP_BASED` or `ADDRESS_MODULO` |
+| `strategy` | Slot-dependent | `HOP_BASED`, `ADDRESS_MODULO`, or `RANDOM` |
 
 **Timing Formulas:**
 ```
@@ -1510,7 +1514,8 @@ Subslot 4: TX at [810, 1000) ms
 | Strategy | Formula | When Used |
 |----------|---------|-----------|
 | `HOP_BASED` | `subslot = hop_count % N` | Sync beacon TX — NM gets subslot 0, hop-1 nodes get subslot 1, etc. |
-| `ADDRESS_MODULO` | `subslot = node_address % N` | Discovery TX — no hop info available during discovery |
+| `ADDRESS_MODULO` | `subslot = node_address % N` | Fixed subslot based on address — deterministic but collision-prone with many nodes |
+| `RANDOM` | `subslot = random() % N` | Discovery TX (default) — Slotted ALOHA approach; caller provides a hardware-generated random value via `RTOS::GetRandom()`, so each attempt picks a different subslot, resolving collisions probabilistically |
 
 **Radio State Behavior During Subslotted Slots:**
 
@@ -1547,50 +1552,24 @@ The `SubslotScheduler::ValidateConfig()` method checks feasibility:
 2. Each subslot TX window must accommodate the estimated time-on-air (ToA)
 3. At higher spreading factors (SF12), packets may exceed subslot windows — increase `slot_duration_ms` accordingly
 
-### 5.6 Control Slot Allocation Strategy
+### 5.6 Control Slot Allocation Strategy (v1.4)
 
-#### 5.6.1 Deterministic Address-Based Ordering
+Control slots are allocated using NM-assigned indices tracked in the routing table. The NM is the single authority for slot assignments:
 
-Control slots are allocated using a deterministic address-based ordering system to ensure all nodes calculate identical slot allocation schedules, preventing conflicts and ensuring reliable routing table exchange.
-
-**Allocation Algorithm:**
-```cpp
-// 1. Collect all network nodes
-std::vector<NetworkNodeRoute> ordered_nodes;
-for (const auto& node : network_nodes_) {
-    ordered_nodes.emplace_back(node.node_address, node.is_network_manager, 
-                               node.routing_entry);
-}
-
-// 2. Sort nodes deterministically by address
-std::sort(ordered_nodes.begin(), ordered_nodes.end(), 
-    [](const NetworkNodeRoute& a, const NetworkNodeRoute& b) {
-        // Network Manager always gets first control slot
-        if (a.is_network_manager != b.is_network_manager) {
-            return a.is_network_manager > b.is_network_manager;
-        }
-        // Then sort by address for deterministic ordering
-        return a.routing_entry.destination < b.routing_entry.destination;
-    });
-
-// 3. Assign TX/RX slots based on order
-for (size_t i = 0; i < ordered_nodes.size(); ++i) {
-    uint8_t control_slot = sync_beacon_slots + i;
-    
-    if (ordered_nodes[i].routing_entry.destination == local_node_address) {
-        slots[control_slot] = SlotType::CONTROL_TX;  // Send routing table
-    } else {
-        slots[control_slot] = SlotType::CONTROL_RX;  // Receive routing table
-    }
-}
-```
+1. **NM assigns `control_slot_index`** to each node at join time (in JOIN_RESPONSE)
+2. NM tracks assignments in its routing table (`NetworkNodeRoute.control_slot_index`)
+3. Re-joining nodes reuse their existing index; new nodes get the lowest available
+4. NM broadcasts `node_count` in SYNC_BEACON = max assigned index + 1
+5. All nodes use `node_count` as `allocated_control_slots_`
+6. Each node's CONTROL_TX slot = `sync_beacon_slots + my_control_slot_index_`
+7. All other control slots are CONTROL_RX
 
 **Key Benefits:**
-- **Deterministic**: All nodes calculate identical slot allocation using same address ordering
+- **Authoritative**: NM is the single source of truth for slot assignments
 - **Conflict-Free**: Each node gets exactly one CONTROL_TX slot per superframe
-- **Network Manager Priority**: Network Manager always gets first control slot
-- **Scalable**: Works reliably across 2-50 node networks
-- **Synchronization Independent**: No coordination required between nodes
+- **Re-join Safe**: Re-joining nodes reuse their previous slot, preventing index inflation
+- **Gap Recycling**: Departed nodes' indices are recycled for future joiners
+- **Consistent**: All nodes agree on `allocated_control_slots_` via `node_count` in sync beacon
 
 ### 5.6 TX Guard Time Mechanism
 
@@ -2118,40 +2097,29 @@ void ProcessSyncBeacon(const SyncBeaconHeader& beacon) {
 }
 ```
 
-#### 6.3.3 RETRY_LATER Behavior and Configuration
+#### 6.3.3 RETRY_LATER Behavior and Join Backoff
 
-Nodes receiving `RETRY_LATER` responses implement exponential backoff with configurable parameters:
+When the Network Manager receives a join request while another is already pending for the current superframe, it responds with `RETRY_LATER`. This tells the joining node to try again in a future superframe.
 
-```cpp
-struct JoinRetryConfig {
-    uint8_t retry_delay_superframes;    // Base delay: 2-3 superframes (default: 3)
-    uint8_t max_join_retries;           // Maximum retry attempts (default: 5)
-    float backoff_multiplier;           // Exponential backoff factor (default: 1.5)
-    uint32_t max_retry_delay_ms;        // Maximum retry delay cap (default: 60000ms)
-};
+**Exponential Backoff at Superframe Boundaries:**
 
-void ScheduleJoinRetry(uint32_t base_delay_ms) {
-    if (join_retry_count_ >= config_.max_join_retries) {
-        LOG_ERROR("Maximum join retries exceeded, returning to discovery");
-        changeState(DISCOVERY);
-        return;
-    }
-    
-    // Calculate exponential backoff delay
-    uint32_t retry_delay = base_delay_ms * 
-        std::pow(config_.backoff_multiplier, join_retry_count_);
-    retry_delay = std::min(retry_delay, config_.max_retry_delay_ms);
-    
-    // Add random jitter to prevent synchronized retry storms
-    uint32_t jitter = GetRandomDelay(0, retry_delay / 4);
-    uint32_t final_delay = retry_delay + jitter;
-    
-    scheduleTimer(final_delay, &RetryJoinRequest);
-    join_retry_count_++;
-    
-    LOG_INFO("Scheduled join retry %d in %dms", join_retry_count_, final_delay);
-}
-```
+Join retries use binary exponential backoff measured in superframes. At each superframe start while in JOINING state:
+
+1. If `join_backoff_remaining > 0`: decrement and skip this superframe
+2. Otherwise: send the join request and compute a random backoff:
+   - `max_backoff = min(2^min(retry_count, 4), 16)` superframes
+   - `backoff = RTOS::GetRandom() % (max_backoff + 1)`
+
+This ensures that multiple nodes competing to join will naturally desynchronize their retries, preventing persistent collisions. Combined with the `RANDOM` subslot assignment strategy (Slotted ALOHA), each retry attempt also picks a different subslot within the discovery slot, further reducing collision probability.
+
+**Example progression:**
+| Retry # | Max Backoff (superframes) |
+|---------|--------------------------|
+| 0       | 1                        |
+| 1       | 2                        |
+| 2+      | 4                        |
+
+When a node receives `RETRY_LATER` (its message was delivered but NM is busy), the retry counter resets to 0 and backoff is set to 1 superframe. This prevents over-backing-off when the collision was at the NM scheduling level rather than the radio level.
 
 ### 6.4 Sponsor-Based Join Protocol (New v1.2)
 

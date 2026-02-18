@@ -421,5 +421,17 @@ The nodes have 6 protocol states:
 - **Fix function**: CreateRoutingTableMessage() in networ_service.cpp there is 3 loops there, you can do better.
 
 
-- Error when testing messages, when send messages it should know if the message is at the air, some times it will start receiving and it will get messages from 10 slots ago. Fix this.
 - Be aware if slot time is changed, discovery and join timeouts should be carefully changed too.
+- When receiving control packets, if they change the topology, we could change the slot table acordingly without changing the length of it. It happens that the RX/TX slots needs >+1 superframe to align to other slots when joining a new network. 
+
+**IMPORTANT**
+- When reasingin a a join request do not reassing a CTR Slot. We need to get track of these CTR SLOTS
+- Each node currently computes the number of control slots independently using max(routing_table.size(), my_control_slot_index_ + 1). This leads to inconsistencies when nodes have different routing table views (e.g., 0x1003 computed 5 control slots for a 4-node network because its assigned index was inflated by re-join). The NM is the authoritative source for network topology — adding node_count to the sync beacon ensures all nodes agree on the slot frame structure.
+
+- Loop message prevention for all the messages.
+- Sync beacon should be optimized.
+
+## Ideas
+
+- Delta scripting
+- Rateless Coding
