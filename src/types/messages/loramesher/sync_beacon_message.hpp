@@ -23,7 +23,7 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
    public:
     /**
      * @brief Creates a new sync beacon message (Network Manager originating, optimized)
-     * 
+     *
      * @param dest Destination address (typically broadcast 0xFFFF)
      * @param src Source address (Network Manager)
      * @param network_id Network identifier
@@ -32,13 +32,15 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
      * @param network_manager Address of the network manager
      * @param guard_time_ms Guard time to add to propagation delay
      * @param max_hops Network diameter limit
+     * @param node_count Number of active nodes in network
      * @return std::optional<SyncBeaconMessage> Valid message if creation succeeded,
      *         std::nullopt otherwise
      */
     static std::optional<SyncBeaconMessage> CreateOriginal(
         AddressType dest, AddressType src, uint16_t network_id,
         uint8_t total_slots, uint16_t slot_duration_ms,
-        AddressType network_manager, uint32_t guard_time_ms, uint8_t max_hops);
+        AddressType network_manager, uint32_t guard_time_ms, uint8_t max_hops,
+        uint8_t node_count = 1);
 
     /**
      * @brief Creates a forwarded sync beacon message (optimized)
@@ -83,6 +85,7 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
     uint8_t GetHopCount() const;
     uint32_t GetPropagationDelay() const;
     uint8_t GetMaxHops() const;
+    uint8_t GetNodeCount() const;
 
     /**
      * @brief Updates the propagation delay field

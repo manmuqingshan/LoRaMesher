@@ -25,7 +25,7 @@ SyncBeaconHeader::SyncBeaconHeader(AddressType dest, AddressType src,
 SyncBeaconHeader::SyncBeaconHeader(
     AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
     uint16_t slot_duration_ms, AddressType network_manager, uint8_t hop_count,
-    uint32_t propagation_delay_ms, uint8_t max_hops)
+    uint32_t propagation_delay_ms, uint8_t max_hops, uint8_t node_count)
     : BaseHeader(dest, src, MessageType::SYNC_BEACON,
                  SyncBeaconHeader::SyncBeaconFieldsSize()),
       network_id_(network_id),
@@ -34,7 +34,8 @@ SyncBeaconHeader::SyncBeaconHeader(
       network_manager_(network_manager),
       hop_count_(hop_count),
       propagation_delay_ms_(propagation_delay_ms),
-      max_hops_(max_hops) {}
+      max_hops_(max_hops),
+      node_count_(node_count) {}
 
 Result SyncBeaconHeader::SetSyncInfo(uint16_t network_id, uint8_t total_slots,
                                      uint16_t slot_duration_ms) {
@@ -80,7 +81,7 @@ SyncBeaconHeader SyncBeaconHeader::CreateForwardedBeacon(
     SyncBeaconHeader forwarded(
         GetDestination(), forwarding_node, network_id_, total_slots_,
         slot_duration_ms_, network_manager_, hop_count_ + 1,
-        propagation_delay_ms_ + processing_delay, max_hops_);
+        propagation_delay_ms_ + processing_delay, max_hops_, node_count_);
 
     return forwarded;
 }
@@ -100,6 +101,7 @@ Result SyncBeaconHeader::Serialize(utils::ByteSerializer& serializer) const {
     serializer.WriteUint8(hop_count_);
     serializer.WriteUint32(propagation_delay_ms_);
     serializer.WriteUint8(max_hops_);
+    serializer.WriteUint8(node_count_);
 
     return Result::Success();
 }
@@ -130,10 +132,11 @@ std::optional<SyncBeaconHeader> SyncBeaconHeader::Deserialize(
     auto hop_count = deserializer.ReadUint8();
     auto propagation_delay_ms = deserializer.ReadUint32();
     auto max_hops = deserializer.ReadUint8();
+    auto node_count = deserializer.ReadUint8();
 
     // Check if all fields were successfully read
     if (!network_id || !total_slots || !slot_duration_ms || !network_manager ||
-        !hop_count || !propagation_delay_ms || !max_hops) {
+        !hop_count || !propagation_delay_ms || !max_hops || !node_count) {
         LOG_ERROR("Failed to deserialize sync beacon header fields");
         return std::nullopt;
     }
@@ -142,7 +145,7 @@ std::optional<SyncBeaconHeader> SyncBeaconHeader::Deserialize(
     SyncBeaconHeader header(base_header->GetDestination(),
                             base_header->GetSource(), *network_id, *total_slots,
                             *slot_duration_ms, *network_manager, *hop_count,
-                            *propagation_delay_ms, *max_hops);
+                            *propagation_delay_ms, *max_hops, *node_count);
 
     return header;
 }

@@ -13,7 +13,7 @@ SyncBeaconMessage::SyncBeaconMessage(const SyncBeaconHeader& header)
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
     AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
     uint16_t slot_duration_ms, AddressType network_manager,
-    uint32_t guard_time_ms, uint8_t max_hops) {
+    uint32_t guard_time_ms, uint8_t max_hops, uint8_t node_count) {
 
     // Validate parameters
     if (total_slots == 0) {
@@ -26,18 +26,11 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
         return std::nullopt;
     }
 
-    // Create the header with optimized sync beacon information
-    SyncBeaconHeader header(dest, src, network_id, total_slots,
-                            slot_duration_ms, network_manager);
-
-    // Set timing and forwarding info for original beacon
+    // Create the header with all fields including node_count
     // Use guard_time_ms as the propagation delay for original beacon
-    Result result = header.SetForwardingInfo(0, guard_time_ms, max_hops);
-    if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to set forwarding info: %s",
-                  result.GetErrorMessage().c_str());
-        return std::nullopt;
-    }
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, network_manager, 0, guard_time_ms,
+                            max_hops, node_count);
 
     return SyncBeaconMessage(header);
 }
@@ -124,6 +117,10 @@ void SyncBeaconMessage::UpdatePropagationDelay(uint32_t propagation_delay_ms) {
 
 uint8_t SyncBeaconMessage::GetMaxHops() const {
     return header_.GetMaxHops();
+}
+
+uint8_t SyncBeaconMessage::GetNodeCount() const {
+    return header_.GetNodeCount();
 }
 
 AddressType SyncBeaconMessage::GetSource() const {
@@ -221,6 +218,7 @@ void SyncBeaconMessage::Print() const {
     LOG_INFO("  Hop Count: {%d}", GetHopCount());
     LOG_INFO("  Propagation Delay: {%u}", GetPropagationDelay());
     LOG_INFO("  Max Hops: {%d}", GetMaxHops());
+    LOG_INFO("  Node Count: {%d}", GetNodeCount());
 }
 
 }  // namespace loramesher

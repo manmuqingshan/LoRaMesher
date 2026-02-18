@@ -39,7 +39,7 @@ class SyncBeaconHeader : public BaseHeader {
 
     /**
      * @brief Full constructor with all multi-hop fields (optimized)
-     * 
+     *
      * @param dest Destination address (typically broadcast 0xFFFF)
      * @param src Source address (current transmitter)
      * @param network_id Network identifier
@@ -49,11 +49,13 @@ class SyncBeaconHeader : public BaseHeader {
      * @param hop_count Hops from Network Manager
      * @param propagation_delay_ms Accumulated forwarding delay
      * @param max_hops Network diameter limit
+     * @param node_count Number of active nodes in network
      */
     SyncBeaconHeader(AddressType dest, AddressType src, uint16_t network_id,
                      uint8_t total_slots, uint16_t slot_duration_ms,
                      AddressType network_manager, uint8_t hop_count,
-                     uint32_t propagation_delay_ms, uint8_t max_hops);
+                     uint32_t propagation_delay_ms, uint8_t max_hops,
+                     uint8_t node_count = 1);
 
     // Core synchronization field getters (optimized)
     uint16_t GetNetworkId() const { return network_id_; }
@@ -70,6 +72,8 @@ class SyncBeaconHeader : public BaseHeader {
     uint32_t GetPropagationDelay() const { return propagation_delay_ms_; }
 
     uint8_t GetMaxHops() const { return max_hops_; }
+
+    uint8_t GetNodeCount() const { return node_count_; }
 
     // Calculated/derived field getters
     uint16_t GetSuperframeDuration() const {
@@ -176,7 +180,8 @@ class SyncBeaconHeader : public BaseHeader {
                sizeof(AddressType) +  // network_manager
                sizeof(uint8_t) +      // hop_count
                sizeof(uint32_t) +     // propagation_delay_ms
-               sizeof(uint8_t);       // max_hops
+               sizeof(uint8_t) +      // max_hops
+               sizeof(uint8_t);       // node_count
     }
 
     /**
@@ -200,6 +205,10 @@ class SyncBeaconHeader : public BaseHeader {
     uint8_t hop_count_ = 0;              ///< Hops from Network Manager
     uint32_t propagation_delay_ms_ = 0;  ///< Accumulated forwarding delay
     uint8_t max_hops_ = 5;               ///< Network diameter limit
+
+    // Network topology field
+    uint8_t node_count_ =
+        1;  ///< Active nodes in network (authoritative from NM)
 };
 
 }  // namespace loramesher

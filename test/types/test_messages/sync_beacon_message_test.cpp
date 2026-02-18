@@ -118,6 +118,9 @@ TEST_F(SyncBeaconMessageTest, CreateOriginalBeacon) {
               50);  // Guard time added to propagation delay
     EXPECT_EQ(original_msg->GetMaxHops(), max_hops);
 
+    // Verify node count defaults to 1
+    EXPECT_EQ(original_msg->GetNodeCount(), 1);
+
     // Verify original beacon check
     EXPECT_TRUE(original_msg->IsOriginalBeacon());
 }
@@ -238,6 +241,7 @@ TEST_F(SyncBeaconMessageTest, SerializationRoundTrip) {
     EXPECT_EQ(deserialized_opt->GetPropagationDelay(),
               original_msg->GetPropagationDelay());
     EXPECT_EQ(deserialized_opt->GetMaxHops(), original_msg->GetMaxHops());
+    EXPECT_EQ(deserialized_opt->GetNodeCount(), original_msg->GetNodeCount());
 }
 
 /**
@@ -258,6 +262,31 @@ TEST_F(SyncBeaconMessageTest, BaseMessageConversion) {
     // Verify payload is empty (sync beacons store all data in header)
     EXPECT_EQ(base_msg.GetPayload().size(),
               SyncBeaconHeader::SyncBeaconFieldsSize());
+}
+
+/**
+ * @brief Test node_count field with custom value
+ */
+TEST_F(SyncBeaconMessageTest, NodeCountField) {
+    // Create beacon with custom node_count
+    auto msg = SyncBeaconMessage::CreateOriginal(
+        dest, src, network_id, total_slots, slot_duration_ms, src, 50, max_hops,
+        5);  // node_count = 5
+
+    ASSERT_TRUE(msg.has_value());
+    EXPECT_EQ(msg->GetNodeCount(), 5);
+
+    // Verify round-trip preserves node_count
+    auto serialized = msg->Serialize();
+    ASSERT_TRUE(serialized.has_value());
+    auto deserialized = SyncBeaconMessage::CreateFromSerialized(*serialized);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->GetNodeCount(), 5);
+
+    // Verify forwarded beacon preserves node_count
+    auto forwarded = msg->CreateForwardedBeacon(0x9999, 25, 50);
+    ASSERT_TRUE(forwarded.has_value());
+    EXPECT_EQ(forwarded->GetNodeCount(), 5);
 }
 
 /**
