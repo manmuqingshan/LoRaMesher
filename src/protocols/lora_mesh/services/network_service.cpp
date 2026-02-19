@@ -1302,7 +1302,7 @@ Result NetworkService::SendJoinResponse(AddressType dest,
 // Data message implementations
 
 Result NetworkService::ProcessDataMessage(const BaseMessage& message,
-                                          uint32_t reception_timestamp) {
+                                          uint32_t /* reception_timestamp */) {
     // Deserialize the data message
     auto data_msg_opt = DataMessage::CreateFromSerialized(*message.Serialize());
     if (!data_msg_opt) {

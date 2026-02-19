@@ -369,10 +369,6 @@ TEST_F(RadioLibRadioTest, EmptyPacketHandling) {
     // Empty packet
     const size_t kEmptyPacketSize = 0;
 
-    // Test RSSI and SNR values
-    const int8_t kTestRSSI = -70;
-    const int8_t kTestSNR = 5;
-
     // Set expectations on the mock
     EXPECT_CALL(mock_radio, getPacketLength())
         .WillOnce(Return(kEmptyPacketSize));
@@ -602,8 +598,8 @@ TEST_F(RadioLibRadioTest, RepeatedMaxSizePacketHandling) {
 
     // Create a test callback that will be called for each reception
     auto test_callback = [&callback_count, &all_packets_valid,
-                          callback_semaphore, &max_packet, kTestSNR, kTestRSSI,
-                          kNumRepetitions](std::unique_ptr<RadioEvent> event) {
+                          callback_semaphore,
+                          &max_packet](std::unique_ptr<RadioEvent> event) {
         // Check the received event
         if (event == nullptr || event->getType() != RadioEventType::kReceived ||
             event->getSnr() != kTestSNR || event->getRssi() != kTestRSSI) {
@@ -642,7 +638,7 @@ TEST_F(RadioLibRadioTest, RepeatedMaxSizePacketHandling) {
         }
 
         // Increment the callback counter
-        int current_count = ++callback_count;
+        ++callback_count;
 
         // Give semaphore once per callback
         GetRTOS().GiveSemaphore(callback_semaphore);

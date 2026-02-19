@@ -29,30 +29,31 @@ namespace slot_utils = types::protocols::lora_mesh::slot_utils;
  */
 class MockMessageQueueService : public protocols::IMessageQueueService {
    public:
-    void AddMessageToQueue(SlotAllocation::SlotType type,
-                           std::unique_ptr<BaseMessage> message) override {
+    void AddMessageToQueue(
+        SlotAllocation::SlotType type,
+        std::unique_ptr<BaseMessage> /* message */) override {
         // Just store the message type for verification
         queued_message_types_.push_back(type);
     }
 
     std::unique_ptr<BaseMessage> ExtractMessageOfType(
-        SlotAllocation::SlotType type) override {
+        SlotAllocation::SlotType /* type */) override {
         return nullptr;
     }
 
-    bool IsQueueEmpty(SlotAllocation::SlotType type) const override {
+    bool IsQueueEmpty(SlotAllocation::SlotType /* type */) const override {
         return true;
     }
 
-    size_t GetQueueSize(SlotAllocation::SlotType type) const override {
+    size_t GetQueueSize(SlotAllocation::SlotType /* type */) const override {
         return 0;
     }
 
     void ClearAllQueues() override {}
 
-    bool HasMessage(MessageType type) const override { return false; }
+    bool HasMessage(MessageType /* type */) const override { return false; }
 
-    bool RemoveMessage(MessageType type) override { return false; }
+    bool RemoveMessage(MessageType /* type */) override { return false; }
 
     std::vector<SlotAllocation::SlotType> queued_message_types_;
 };
@@ -70,11 +71,11 @@ class MockSuperframeService : public protocols::lora_mesh::ISuperframeService {
 
     bool IsSynchronized() const override { return true; }
 
-    void SetSynchronized(bool synchronized) override {}
+    void SetSynchronized(bool /* synchronized */) override {}
 
-    Result UpdateSuperframeConfig(uint16_t total_slots,
-                                  uint32_t slot_duration_ms = 0,
-                                  bool update_superframe = true) override {
+    Result UpdateSuperframeConfig(
+        uint16_t /* total_slots */, uint32_t /* slot_duration_ms */ = 0,
+        bool /* update_superframe */ = true) override {
         return Result::Success();
     }
 
@@ -84,8 +85,8 @@ class MockSuperframeService : public protocols::lora_mesh::ISuperframeService {
 
     uint32_t GetSuperframeDuration() const override { return 0; }
 
-    Result SynchronizeWith(uint32_t external_slot_start_time,
-                           uint16_t external_slot) override {
+    Result SynchronizeWith(uint32_t /* external_slot_start_time */,
+                           uint16_t /* external_slot */) override {
         return Result::Success();
     }
 
@@ -126,7 +127,7 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
      * @brief Helper to simulate different network topologies and node roles
      */
     void SetupNetworkTopology(
-        AddressType node_address, ProtocolState state,
+        AddressType /* node_address */, ProtocolState state,
         AddressType network_manager,
         const std::vector<std::pair<AddressType, uint8_t>>& other_nodes,
         uint8_t max_hop_count = 3, uint8_t total_slots = 0) {
@@ -263,9 +264,9 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
     /**
      * @brief Verify slot allocation includes expected control slots
      */
-    void VerifyControlSlots(const std::string& test_name,
-                            const std::vector<AddressType>& expected_nodes) {
-        const auto& slot_table = network_service_->GetSlotTable();
+    void VerifyControlSlots(
+        const std::string& test_name,
+        const std::vector<AddressType>& /* expected_nodes */) {
         size_t control_tx_count =
             CountSlotsOfType(SlotAllocation::SlotType::CONTROL_TX);
         size_t control_rx_count =
@@ -278,9 +279,9 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
     /**
      * @brief Verify data slot allocation based on network topology
      */
-    void VerifyDataSlots(const std::string& test_name, AddressType our_address,
-                         const std::vector<AddressType>& expected_neighbors) {
-        const auto& slot_table = network_service_->GetSlotTable();
+    void VerifyDataSlots(
+        const std::string& test_name, AddressType /* our_address */,
+        const std::vector<AddressType>& /* expected_neighbors */) {
         size_t tx_count = CountSlotsOfType(SlotAllocation::SlotType::TX);
         size_t rx_count = CountSlotsOfType(SlotAllocation::SlotType::RX);
 
@@ -556,8 +557,6 @@ TEST_F(ComprehensiveSlotAllocationTest, ControlSlots_RegularNodeAllocation) {
 
     // Regular nodes should have control RX slots for other nodes
     // NOTE: Current implementation doesn't allocate CONTROL_TX for our own node
-    size_t control_tx_count =
-        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_TX);
     size_t control_rx_count =
         CountSlotsOfType(SlotAllocation::SlotType::CONTROL_RX);
 
@@ -589,10 +588,8 @@ TEST_F(ComprehensiveSlotAllocationTest, DataSlots_NeighborAllocation) {
 
     // Check data slot allocation
     // NOTE: Current implementation has design issue - our own node doesn't get TX slots
-    size_t tx_count = CountSlotsOfType(SlotAllocation::SlotType::TX);
     size_t rx_count = CountSlotsOfType(SlotAllocation::SlotType::RX);
 
-    // EXPECT_GT(tx_count, 0) << "Node should have TX slots for data transmission";
     EXPECT_GT(rx_count, 0) << "Node should have RX slots for direct neighbors";
 
     VerifyDataSlots("Data Slot Allocation", node_address, {nm_address});
@@ -624,10 +621,8 @@ TEST_F(ComprehensiveSlotAllocationTest, DataSlots_MultipleDataSlots) {
 
     // With more data slots, should have more RX slots for other nodes
     // NOTE: Current implementation doesn't allocate TX slots for our own node
-    size_t tx_count = CountSlotsOfType(SlotAllocation::SlotType::TX);
     size_t rx_count = CountSlotsOfType(SlotAllocation::SlotType::RX);
 
-    // EXPECT_GE(tx_count, 2) << "Should have multiple TX slots with increased data slots";
     EXPECT_GE(rx_count, 2)
         << "Should have multiple RX slots with increased data slots";
 }
@@ -666,8 +661,6 @@ TEST_F(ComprehensiveSlotAllocationTest, DiscoverySlots_BasicAllocation) {
  * @brief Test discovery slots during DISCOVERY state
  */
 TEST_F(ComprehensiveSlotAllocationTest, DiscoverySlots_DiscoveryState) {
-    const AddressType node_address = test_node_address_;
-
     // Set to DISCOVERY state (no network manager yet)
     network_service_->SetState(ProtocolState::DISCOVERY);
 
@@ -861,7 +854,6 @@ TEST_F(ComprehensiveSlotAllocationTest, SleepSlots_DutyCycleOptimization) {
  * @brief Test slot allocation during JOINING state
  */
 TEST_F(ComprehensiveSlotAllocationTest, JoiningState_MinimalSlotAllocation) {
-    const AddressType node_address = test_node_address_;
     const AddressType nm_address = 0x1001;
 
     // Set to JOINING state

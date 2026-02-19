@@ -274,7 +274,8 @@ TEST_F(SuperframeTest, UtilityFunctions) {
 
     // Test CreateOptimizedSuperframe for different network sizes
     auto small_network_sf = superframe_utils::CreateOptimizedSuperframe(3);
-    auto medium_network_sf = superframe_utils::CreateOptimizedSuperframe(15);
+    superframe_utils::CreateOptimizedSuperframe(
+        15);  // verify no crash for medium networks
     auto large_network_sf = superframe_utils::CreateOptimizedSuperframe(30);
 
     // Small networks should have more discovery slots proportionally

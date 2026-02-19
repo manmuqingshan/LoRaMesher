@@ -8,7 +8,20 @@
 
 #ifdef LORAMESHER_BUILD_NATIVE
 
+// Provide __lsan_ignore_object only when AddressSanitizer (which includes LSan)
+// is active. Without -fsanitize=address the sanitizer runtime is not linked, so
+// the function would be an undefined reference. Fall back to a no-op otherwise.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
 #include <sanitizer/lsan_interface.h>
+#else
+#define __lsan_ignore_object(p) ((void)(p))
+#endif
+#elif defined(__SANITIZE_ADDRESS__)
+#include <sanitizer/lsan_interface.h>
+#else
+#define __lsan_ignore_object(p) ((void)(p))
+#endif
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -242,7 +255,7 @@ class RTOSMock : public RTOS {
             std::make_shared<void*>(parameters);
         std::string task_name = name ? name : "unnamed";
 
-        auto* thread = new std::thread([this, taskFunction, shared_params,
+        auto* thread = new std::thread([taskFunction, shared_params,
                                         task_name]() {
             try {
                 // Call the user's task function with the captured parameters
@@ -860,13 +873,10 @@ class RTOSMock : public RTOS {
 
                 // Use task-aware waitFor with suspension detection
                 bool initial_suspended_state = task_info->suspended;
-                bool initial_stop_requested =
-                    task_info->stop_requested.load(std::memory_order_relaxed);
 
                 bool success = waitFor(
                     q->notEmpty, lock, timeout,
-                    [this, q, current_thread_id, initial_suspended_state,
-                     initial_stop_requested]() {
+                    [this, q, current_thread_id, initial_suspended_state]() {
                         // Check if queue has data (normal case)
                         if (!q->data.empty()) {
                             return true;
@@ -1342,7 +1352,7 @@ class RTOSMock : public RTOS {
             // CRITICAL FIX: Set up resume acknowledgment BEFORE waiting
             // This ensures that if we get suspended and then resumed while waiting,
             // the ResumeTask call won't timeout waiting for acknowledgment
-            auto wait_predicate = [this, task_info, initial_suspended_state]() {
+            auto wait_predicate = [this, initial_suspended_state]() {
                 // Check conditions under the proper lock
                 std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
                 auto it = tasks_.find(static_cast<std::thread*>(this_task));

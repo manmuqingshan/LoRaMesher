@@ -23,7 +23,6 @@ RadioLibRadio* RadioLibRadio::instance_ = nullptr;
 
 // Constants for internal queue management
 constexpr size_t kMaxQueueSize = 32;
-constexpr uint32_t kReceiveTimeout = 100;  // ms
 
 RadioLibRadio::RadioLibRadio(int cs_pin, int di0_pin, int rst_pin, int busy_pin,
                              SPIClass& spi)

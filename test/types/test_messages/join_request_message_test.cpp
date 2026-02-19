@@ -328,7 +328,6 @@ TEST_F(JoinRequestMessageTest, ConversionToBaseMessageTest) {
     // payload[2-3] is next_hop, payload[4-5] is sponsor_address
 
     // Check additional info (starts after header fields)
-    size_t additional_info_offset = JoinRequestHeader::JoinRequestFieldsSize();
     for (size_t i = 0; i < additional_info.size(); i++) {
         EXPECT_EQ(payload[JoinRequestHeader::JoinRequestFieldsSize() + i],
                   additional_info[i]);

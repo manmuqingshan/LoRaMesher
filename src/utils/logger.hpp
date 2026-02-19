@@ -279,9 +279,11 @@ extern Logger LOG;
 
 // Convenience macros for logging with format strings
 // NOTE: Using ##__VA_ARGS__ (GNU extension) instead of C++20 __VA_OPT__(,)
-// for compatibility with cppcheck < 2.14. The ##__VA_ARGS__ extension removes
+// for compatibility with cppcheck < 2.14. The ##__VA_ARGS__ token-paste removes
 // the trailing comma when no arguments are provided, which is functionally
 // identical to __VA_OPT__(,). This is supported by GCC, Clang, and MSVC.
+// The resulting -Wgnu-zero-variadic-macro-arguments warning is suppressed in
+// CMakeLists.txt when building with Clang.
 // See: https://github.com/danmar/simplecpp/issues/191
 #if LORAMESHER_LOG_LEVEL <= 0
 #define LOG_DEBUG(fmt, ...) loramesher::LOG.Debug(fmt, ##__VA_ARGS__)

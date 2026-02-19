@@ -160,7 +160,7 @@ TEST(SuperframeServiceRaceConditionTest, ConcurrentAccess) {
     std::vector<std::thread> threads;
 
     for (int t = 0; t < num_threads; ++t) {
-        threads.emplace_back([t, iterations_per_thread]() {
+        threads.emplace_back([t]() {
             for (int i = 0; i < iterations_per_thread; ++i) {
                 LOG_DEBUG("=== Thread %d, iteration %d ===", t, i);
 

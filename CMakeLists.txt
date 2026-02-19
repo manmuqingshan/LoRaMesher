@@ -29,7 +29,12 @@ endif()
 
 # Compiler warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+    add_compile_options(-Wall -Wextra -Wpedantic -Werror
+        # ##__VA_ARGS__ is a GNU extension used for cppcheck < 2.14 compatibility
+        # (cppcheck's simplecpp parser does not support C++20 __VA_OPT__).
+        # See src/utils/logger.hpp and https://github.com/danmar/simplecpp/issues/191
+        -Wno-gnu-zero-variadic-macro-arguments
+    )
 elseif(MSVC)
     add_compile_options(/W4 /WX)
 endif()

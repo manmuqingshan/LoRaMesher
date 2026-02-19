@@ -49,7 +49,8 @@ namespace test {
  * @return Time-on-Air in milliseconds
  */
 inline uint32_t CalculateLoRaTimeOnAir(uint8_t payload_length, uint8_t sf = 7,
-                                       uint32_t bw = 125000, uint8_t cr = 5,
+                                       uint32_t bw = 125000,
+                                       uint8_t /* cr */ = 5,
                                        uint8_t preamble_length = 8,
                                        bool header_enabled = true,
                                        bool crc_enabled = true) {
@@ -214,7 +215,6 @@ class VirtualNetwork {
         // Determine which nodes should receive the message
         for (auto& node_pair : nodes_) {
             uint32_t dest_address = node_pair.first;
-            NodeInfo& dest_node = node_pair.second;
 
             // Skip the source node
             if (dest_address == source) {

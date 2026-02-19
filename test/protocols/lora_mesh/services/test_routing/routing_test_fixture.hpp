@@ -264,7 +264,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
                                             : NodeRole::NODE_ONLY;
             }
 
-            TestNode& node_ref = CreateNode(name, address, role);
+            CreateNode(name, address, role);
 
             for (auto& node_ptr : nodes_) {
                 if (node_ptr->address == address) {

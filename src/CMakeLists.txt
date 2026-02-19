@@ -44,6 +44,9 @@ elseif(BUILD_DESKTOP)
     target_include_directories(loramesher_lib PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+    )
+    # Mark third-party headers as system includes to suppress their warnings
+    target_include_directories(loramesher_lib SYSTEM PUBLIC
         "${radiolib_SOURCE_DIR}/src"  # RadioLib headers
         "${gtest_SOURCE_DIR}/include"  # GTest headers
         "${gmock_SOURCE_DIR}/include"  # GMock headers

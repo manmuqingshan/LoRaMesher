@@ -22,9 +22,6 @@ include_directories(
     ${gmock_SOURCE_DIR}/include
 )
 
-# Define a list to track all test targets
-set(ALL_TEST_TARGETS "")
-
 # Set default test timeout (in seconds)
 set(DEFAULT_TEST_TIMEOUT 5)
 message(STATUS "Default test timeout: ${DEFAULT_TEST_TIMEOUT} seconds")
@@ -65,7 +62,7 @@ function(add_test_suite)
         
         # Create test executable
         add_executable(${ARGS_NAME} ${SOURCES})
-        
+
         # Link libraries
         target_link_libraries(${ARGS_NAME}
             PRIVATE
@@ -83,57 +80,59 @@ function(add_test_suite)
         )
         
         # Add to the global list of test targets
-        list(APPEND ALL_TEST_TARGETS ${ARGS_NAME})
-        set(ALL_TEST_TARGETS ${ALL_TEST_TARGETS} PARENT_SCOPE)
+        set_property(GLOBAL APPEND PROPERTY ALL_TEST_TARGETS ${ARGS_NAME})
     else()
         message(WARNING "No sources found for test suite '${ARGS_NAME}' in directories: ${ARGS_DIRS}")
     endif()
 endfunction()
 
-# Auto-discover all test directories
-file(GLOB TEST_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} 
-    "${CMAKE_CURRENT_SOURCE_DIR}/*"
-)
-
-# Process each test directory
-foreach(DIR ${TEST_DIRS})
-    if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${DIR}")
-        # Create a sanitized name for the directory
-        string(REPLACE "/" "_" SUITE_NAME "${DIR}_tests")
-        
-        # Subdirectories to check for test files
-        file(GLOB SUBDIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} 
-            "${CMAKE_CURRENT_SOURCE_DIR}/${DIR}/*"
-        )
-        
-        set(VALID_SUBDIRS "")
-        set(HAS_TEST_FILES FALSE)
-        
-        # Check for direct test files in the directory
-        file(GLOB DIRECT_TEST_FILES
-            "${CMAKE_CURRENT_SOURCE_DIR}/${DIR}/*.cpp"
-        )
-        
-        if(DIRECT_TEST_FILES)
-            set(HAS_TEST_FILES TRUE)
-            add_test_suite(NAME ${SUITE_NAME} DIRS ${DIR})
-        else()
-            # Create a list of valid subdirectories containing test files
-            foreach(SUBDIR ${SUBDIRS})
-                if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}")
-                    file(GLOB SUBDIR_TEST_FILES
-                        "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/*.cpp"
-                    )
-                    
-                    if(SUBDIR_TEST_FILES)
-                        string(REPLACE "/" "_" SUBSUITE_NAME "${SUBDIR}_tests")
-                        add_test_suite(NAME ${SUBSUITE_NAME} DIRS ${SUBDIR})
-                    endif()
-                endif()
-            endforeach()
-        endif()
+# Recursively discover test directories and register each one that directly
+# contains .cpp files as its own test suite. Intermediate directories that
+# only contain subdirectories are traversed but not registered themselves.
+#
+# REL_PATH: path relative to CMAKE_CURRENT_SOURCE_DIR ("" for the root call)
+function(discover_tests REL_PATH)
+    if(REL_PATH STREQUAL "")
+        set(ABS_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
+    else()
+        set(ABS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${REL_PATH}")
     endif()
-endforeach()
+
+    file(GLOB CPP_FILES "${ABS_PATH}/*.cpp")
+
+    if(CPP_FILES AND NOT REL_PATH STREQUAL "")
+        # This directory owns .cpp files — register it as a test suite.
+        string(REPLACE "/" "_" SUITE_NAME "${REL_PATH}_tests")
+
+        # Integration and routing tests simulate full multi-node mesh networks
+        # under virtual time and need a longer per-test timeout than simple unit
+        # tests.  Any suite under protocols/ gets 60 s; everything else uses the
+        # project default (5 s).
+        if(REL_PATH MATCHES "^protocols/")
+            set(SUITE_TIMEOUT 60)
+        else()
+            set(SUITE_TIMEOUT ${DEFAULT_TEST_TIMEOUT})
+        endif()
+
+        add_test_suite(NAME ${SUITE_NAME} DIRS ${REL_PATH} TIMEOUT ${SUITE_TIMEOUT})
+    else()
+        # No sources here (or this is the root) — recurse into children.
+        file(GLOB CHILDREN
+            RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${ABS_PATH}/*"
+        )
+        foreach(CHILD ${CHILDREN})
+            if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${CHILD}")
+                discover_tests("${CHILD}")
+            endif()
+        endforeach()
+    endif()
+endfunction()
+
+discover_tests("")
+
+# Retrieve the global list populated by add_test_suite across all recursion levels
+get_property(ALL_TEST_TARGETS GLOBAL PROPERTY ALL_TEST_TARGETS)
 
 # Create a custom target that depends on all test targets
 add_custom_target(

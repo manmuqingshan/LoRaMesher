@@ -281,8 +281,8 @@ TEST_F(LoraMesherInitializationTest, BasicDataInterface) {
     // Test data callback setting (should not crash)
     bool callback_called = false;
     mesher_->SetDataCallback(
-        [&callback_called](AddressType source,
-                           const std::vector<uint8_t>& data) {
+        [&callback_called](AddressType /* source */,
+                           const std::vector<uint8_t>& /* data */) {
             callback_called = true;
         });
 
@@ -306,9 +306,9 @@ TEST_F(LoraMesherInitializationTest, NetworkStatusAccess) {
 
     // These methods should not crash and return valid data structures
     EXPECT_NO_THROW({
-        auto routing_table = mesher_->GetRoutingTable();
-        auto network_status = mesher_->GetNetworkStatus();
-        auto slot_table = mesher_->GetSlotTable();
+        (void)mesher_->GetRoutingTable();
+        (void)mesher_->GetNetworkStatus();
+        (void)mesher_->GetSlotTable();
     });
 }
 

@@ -104,10 +104,11 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param radio_config Radio configuration (default: mock radio)
      * @return TestNode& Reference to the created node
      */
-    TestNode& CreateNode(const std::string& name, AddressType address,
-                         NodeRole node_role = NodeRole::AUTO,
-                         const PinConfig& pin_config = PinConfig(),
-                         const RadioConfig& radio_config = RadioConfig()) {
+    TestNode& CreateNode(
+        const std::string& name, AddressType address,
+        NodeRole node_role = NodeRole::AUTO,
+        const PinConfig& pin_config = PinConfig(),
+        const RadioConfig& /* radio_config */ = RadioConfig()) {
         // Create a node with unique address and pin configuration
         auto node = std::make_shared<TestNode>();
         node->name = name;
@@ -335,7 +336,6 @@ class LoRaMeshTestFixture : public ::testing::Test {
         //     time_ms, kEffectiveTimeoutMs, check_interval_ms);
 
         uint32_t elapsed_ms = 0;
-        uint32_t total_sim_time_advanced = 0;
 
         LOG_DEBUG(
             "Starting time advancement: total=%u ms, timeout=%u ms, step=%u ms",
@@ -349,7 +349,6 @@ class LoRaMeshTestFixture : public ::testing::Test {
             // Advance simulation time
             time_controller_.AdvanceTime(time_to_advance);
             elapsed_ms += time_to_advance;
-            total_sim_time_advanced += time_to_advance;
 
             // Minimal real sleep to allow tasks to execute
             if (real_sleep_ms > 0) {
@@ -374,7 +373,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param check_interval_ms Desired check interval
      * @return Optimal time step in milliseconds
      */
-    uint32_t CalculateOptimalTimeStep(uint32_t total_time_ms,
+    uint32_t CalculateOptimalTimeStep(uint32_t /* total_time_ms */,
                                       uint32_t timeout_ms,
                                       uint32_t check_interval_ms) {
         // Always use check_interval_ms as the base, but optimize for performance
@@ -551,7 +550,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             }
 
             // Create the node with the determined role
-            TestNode& node_ref = CreateNode(name, address, role);
+            CreateNode(name, address, role);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -600,7 +599,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             }
 
             // Create the node with the determined role
-            TestNode& node_ref = CreateNode(name, address, role);
+            CreateNode(name, address, role);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -658,7 +657,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             }
 
             // Create the node with the determined role
-            TestNode& node_ref = CreateNode(name, address, role);
+            CreateNode(name, address, role);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -710,7 +709,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             AddressType address = group1_base_address + i;
 
             // Create the node with default unique pin configuration
-            TestNode& node_ref = CreateNode(name, address);
+            CreateNode(name, address);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
@@ -727,7 +726,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             AddressType address = group2_base_address + i;
 
             // Create the node with default unique pin configuration
-            TestNode& node_ref = CreateNode(name, address);
+            CreateNode(name, address);
 
             // Find the pointer to the created node
             for (auto& node_ptr : nodes_) {
