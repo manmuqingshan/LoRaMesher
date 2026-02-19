@@ -38,18 +38,20 @@ class LoraMesherSX1262 : public IRadio {
      * @param irq_pin Interrupt Request pin number (DIO1)
      * @param reset_pin Reset pin number
      * @param busy_pin Busy state pin number (required for SX1262)
+     * @param spi SPI bus instance to use for communication
      */
     LoraMesherSX1262(int8_t cs_pin, int8_t irq_pin, int8_t reset_pin,
-                     int8_t busy_pin)
+                     int8_t busy_pin, SPIClass& spi)
         : cs_pin_(cs_pin),
           irq_pin_(irq_pin),
           reset_pin_(reset_pin),
-          busy_pin_(busy_pin) {}
+          busy_pin_(busy_pin),
+          spi_(spi) {}
 
     LoraMesherSX1262(const LoraMesherSX1262&) = delete;
     LoraMesherSX1262& operator=(const LoraMesherSX1262&) = delete;
     LoraMesherSX1262(LoraMesherSX1262&&) = default;
-    LoraMesherSX1262& operator=(LoraMesherSX1262&&) = default;
+    LoraMesherSX1262& operator=(LoraMesherSX1262&&) = delete;
     ~LoraMesherSX1262() override = default;
 
     Result Begin(const RadioConfig& config) override;
@@ -141,6 +143,7 @@ class LoraMesherSX1262 : public IRadio {
     const int8_t irq_pin_;
     const int8_t reset_pin_;
     const int8_t busy_pin_;
+    SPIClass& spi_;  ///< SPI bus instance
 
     std::unique_ptr<Module> hal_module_;
     std::unique_ptr<SX1262> radio_module_;

@@ -15,6 +15,7 @@
 #endif
 
 #include "../hal.hpp"
+#include "types/configurations/pin_configuration.hpp"
 
 namespace loramesher {
 namespace hal {
@@ -25,9 +26,27 @@ namespace hal {
 class LoraMesherArduinoHal : public IHal {
    public:
     /**
-     * @brief Default constructor.
+     * @brief Construct the Arduino HAL and initialize the SPI bus.
+     *
+     * When @p pin_config contains custom SPI pins (SCK/MISO/MOSI != -1),
+     * SPI.begin() is called with those values so that boards with non-standard
+     * SPI wiring work correctly.
+     *
+     * @param pin_config Hardware pin configuration.
      */
-    LoraMesherArduinoHal() = default;
+    explicit LoraMesherArduinoHal(const PinConfig& pin_config) {
+#ifdef ARDUINO_ARCH_ESP32
+        // On ESP32, always call begin; -1 means "use the hardware default"
+        SPI.begin(pin_config.getSck(), pin_config.getMiso(),
+                  pin_config.getMosi(), /*ss=*/-1);
+#else
+        if (pin_config.HasCustomSpiPins()) {
+            // Non-ESP32 platforms may not support individual pin overrides;
+            // fall back to default initialisation.
+            SPI.begin();
+        }
+#endif
+    }
 
     /**
      * @brief Get the current time in milliseconds.

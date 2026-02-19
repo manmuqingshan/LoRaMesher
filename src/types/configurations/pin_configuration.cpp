@@ -5,8 +5,15 @@
 namespace loramesher {
 
 // PinConfig Implementation
-PinConfig::PinConfig(int8_t nss, int8_t reset, int8_t dio0, int8_t dio1)
-    : nss_(nss), reset_(reset), dio0_(dio0), dio1_(dio1) {}
+PinConfig::PinConfig(int8_t nss, int8_t reset, int8_t dio0, int8_t dio1,
+                     int8_t sck, int8_t miso, int8_t mosi)
+    : nss_(nss),
+      reset_(reset),
+      dio0_(dio0),
+      dio1_(dio1),
+      sck_(sck),
+      miso_(miso),
+      mosi_(mosi) {}
 
 void PinConfig::setNss(int8_t nss) {
     if (nss < 0) {

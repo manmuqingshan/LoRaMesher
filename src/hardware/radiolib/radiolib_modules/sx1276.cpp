@@ -11,8 +11,8 @@ namespace radio {
 Result LoraMesherSX1276::InitializeHardware() {
 #ifdef LORAMESHER_BUILD_ARDUINO
     // Create HAL module for SPI communication
-    hal_module_ =
-        std::make_unique<Module>(cs_pin_, irq_pin_, reset_pin_, busy_pin_);
+    hal_module_ = std::make_unique<Module>(cs_pin_, irq_pin_, reset_pin_,
+                                           busy_pin_, spi_);
     if (!hal_module_) {
         return Result(LoraMesherErrorCode::kHardwareError,
                       "Hal module not initialized correctly, check for "

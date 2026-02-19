@@ -46,5 +46,35 @@ TEST_F(PinConfigTest, ValidationWorksCorrectly) {
     EXPECT_TRUE(errors.find("Invalid DIO1 pin") != std::string::npos);
 }
 
+TEST_F(PinConfigTest, DefaultConstructorHasNoCustomSpiPins) {
+    EXPECT_EQ(defaultConfig.getSck(), -1);
+    EXPECT_EQ(defaultConfig.getMiso(), -1);
+    EXPECT_EQ(defaultConfig.getMosi(), -1);
+    EXPECT_FALSE(defaultConfig.HasCustomSpiPins());
+}
+
+TEST_F(PinConfigTest, CustomSpiPinsSetViaConstructor) {
+    PinConfig config(18, 23, 26, 33, 14, 12, 13);
+    EXPECT_EQ(config.getSck(), 14);
+    EXPECT_EQ(config.getMiso(), 12);
+    EXPECT_EQ(config.getMosi(), 13);
+    EXPECT_TRUE(config.HasCustomSpiPins());
+}
+
+TEST_F(PinConfigTest, CustomSpiPinsSetViaSetters) {
+    defaultConfig.setSck(14);
+    defaultConfig.setMiso(12);
+    defaultConfig.setMosi(13);
+    EXPECT_EQ(defaultConfig.getSck(), 14);
+    EXPECT_EQ(defaultConfig.getMiso(), 12);
+    EXPECT_EQ(defaultConfig.getMosi(), 13);
+    EXPECT_TRUE(defaultConfig.HasCustomSpiPins());
+}
+
+TEST_F(PinConfigTest, DefaultConfigRemainsValidWithSpiPins) {
+    PinConfig config(18, 23, 26, 33, 14, 12, 13);
+    EXPECT_TRUE(config.IsValid());
+}
+
 }  // namespace test
 }  // namespace loramesher

@@ -4,6 +4,7 @@
 
 #include "../hal.hpp"
 #include "config/system_config.hpp"
+#include "types/configurations/pin_configuration.hpp"
 
 #ifdef LORAMESHER_BUILD_NATIVE
 #include <chrono>
@@ -23,6 +24,13 @@ class NativeHal : public IHal {
      * @brief Default constructor.
      */
     NativeHal() = default;
+
+    /**
+     * @brief Construct with pin configuration (SPI pins ignored on native platform).
+     *
+     * @param pin_config Hardware pin configuration (unused; SPI is mocked).
+     */
+    explicit NativeHal(const PinConfig& /*pin_config*/) {}
 
     /**
      * @brief Get the current time in milliseconds.

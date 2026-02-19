@@ -389,13 +389,13 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
         case RadioType::kSx1276:
 #ifdef LORAMESHER_BUILD_ARDUINO
             current_module_ = std::make_unique<LoraMesherSX1276>(
-                cs_pin_, di0_pin_, rst_pin_, busy_pin_);
+                cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO
         case RadioType::kSx1262:
 #ifdef LORAMESHER_BUILD_ARDUINO
             current_module_ = std::make_unique<LoraMesherSX1262>(
-                cs_pin_, di0_pin_, rst_pin_, busy_pin_);
+                cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO
 #ifdef DEBUG

@@ -10,7 +10,10 @@ namespace loramesher {
  * @brief Configuration class for hardware pin assignments
  *
  * Manages the pin configuration for LoRa radio modules, including
- * chip select (NSS), reset, and interrupt pins (DIO0, DIO1).
+ * chip select (NSS), reset, interrupt pins (DIO0, DIO1), and optional
+ * SPI bus data pins (SCK, MISO, MOSI). SPI pins default to -1, which
+ * means "use the platform default SPI bus configuration". Set them to
+ * a valid pin number to override the default SPI wiring.
  */
 class PinConfig {
    public:
@@ -19,12 +22,16 @@ class PinConfig {
      * @brief Constructs a PinConfig object with specified pin assignments
      *
      * @param nss Chip select pin number
-     * @param reset Reset pin number 
+     * @param reset Reset pin number
      * @param dio0 Interrupt pin DIO0 number
      * @param dio1 Interrupt pin DIO1 number
+     * @param sck SPI clock pin number (-1 = use platform default)
+     * @param miso SPI MISO pin number (-1 = use platform default)
+     * @param mosi SPI MOSI pin number (-1 = use platform default)
      */
     explicit PinConfig(int8_t nss = 18, int8_t reset = 23, int8_t dio0 = 26,
-                       int8_t dio1 = 33);
+                       int8_t dio1 = 33, int8_t sck = -1, int8_t miso = -1,
+                       int8_t mosi = -1);
 
     /**
      * @brief Gets the chip select pin number
@@ -69,10 +76,54 @@ class PinConfig {
     void setDio0(int8_t dio0);
 
     /**
-     * @brief Sets the DIO1 interrupt pin with validation 
+     * @brief Sets the DIO1 interrupt pin with validation
      * @param dio1 New DIO1 pin number to assign
      */
     void setDio1(int8_t dio1);
+
+    /**
+     * @brief Gets the SPI clock pin number
+     * @return Current SCK pin assignment (-1 = use platform default)
+     */
+    int8_t getSck() const { return sck_; }
+
+    /**
+     * @brief Gets the SPI MISO pin number
+     * @return Current MISO pin assignment (-1 = use platform default)
+     */
+    int8_t getMiso() const { return miso_; }
+
+    /**
+     * @brief Gets the SPI MOSI pin number
+     * @return Current MOSI pin assignment (-1 = use platform default)
+     */
+    int8_t getMosi() const { return mosi_; }
+
+    /**
+     * @brief Sets the SPI clock pin
+     * @param sck SCK pin number (-1 = use platform default)
+     */
+    void setSck(int8_t sck) { sck_ = sck; }
+
+    /**
+     * @brief Sets the SPI MISO pin
+     * @param miso MISO pin number (-1 = use platform default)
+     */
+    void setMiso(int8_t miso) { miso_ = miso; }
+
+    /**
+     * @brief Sets the SPI MOSI pin
+     * @param mosi MOSI pin number (-1 = use platform default)
+     */
+    void setMosi(int8_t mosi) { mosi_ = mosi; }
+
+    /**
+     * @brief Checks whether any custom SPI data pin has been configured
+     * @return True if at least one of SCK, MISO, or MOSI is not -1
+     */
+    bool HasCustomSpiPins() const {
+        return sck_ != -1 || miso_ != -1 || mosi_ != -1;
+    }
 
     /**
      * @brief Creates a pin configuration with default values
@@ -95,8 +146,11 @@ class PinConfig {
    private:
     int8_t nss_;    ///< Chip select pin number
     int8_t reset_;  ///< Reset pin number
-    int8_t dio0_;   ///<  Interrupt pin DIO0 number
+    int8_t dio0_;   ///< Interrupt pin DIO0 number
     int8_t dio1_;   ///< Interrupt pin DIO1 number
+    int8_t sck_;    ///< SPI clock pin (-1 = platform default)
+    int8_t miso_;   ///< SPI MISO pin (-1 = platform default)
+    int8_t mosi_;   ///< SPI MOSI pin (-1 = platform default)
 };
 
 }  // namespace loramesher

@@ -416,8 +416,8 @@ void LoraMesher::OnRadioEvent(std::unique_ptr<radio::RadioEvent> event) {
 }
 
 AddressType LoraMesher::GenerateAddressFromHardware() {
-    // Create temporary HAL via factory
-    auto hal = hal::HalFactory::createHal();
+    // Create temporary HAL via factory (default PinConfig; SPI not needed here)
+    auto hal = hal::HalFactory::createHal(PinConfig{});
     if (!hal) {
         LOG_WARNING("Failed to create HAL for address generation");
         return 0;

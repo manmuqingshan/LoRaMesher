@@ -32,23 +32,25 @@ class LoraMesherSX1276 : public IRadio {
    public:
     /**
      * @brief Construct a new LoraMesher SX1276 radio instance
-     * 
+     *
      * Initializes a new LoraMesher SX1276 radio module with the specified pins.
      * The pins must be configured for proper SPI communication.
-     * 
+     *
      * @param cs_pin SPI Chip Select pin number
      * @param irq_pin Interrupt Request pin number
      * @param reset_pin Reset pin number
      * @param busy_pin Busy state pin number
-     * 
+     * @param spi SPI bus instance to use for communication
+     *
      * @note All pin numbers should be valid for your hardware configuration
      */
     LoraMesherSX1276(int8_t cs_pin, int8_t irq_pin, int8_t reset_pin,
-                     int8_t busy_pin)
+                     int8_t busy_pin, SPIClass& spi)
         : cs_pin_(cs_pin),
           irq_pin_(irq_pin),
           reset_pin_(reset_pin),
-          busy_pin_(busy_pin) {}
+          busy_pin_(busy_pin),
+          spi_(spi) {}
 
     /**
      * @brief Deleted copy constructor to prevent duplicated hardware access
@@ -66,9 +68,9 @@ class LoraMesherSX1276 : public IRadio {
     LoraMesherSX1276(LoraMesherSX1276&&) = default;
 
     /**
-     * @brief Move assignment operator for transfer of ownership
+     * @brief Deleted move assignment (reference member cannot be rebound)
      */
-    LoraMesherSX1276& operator=(LoraMesherSX1276&&) = default;
+    LoraMesherSX1276& operator=(LoraMesherSX1276&&) = delete;
 
     /**
      * @brief Destructor ensuring proper cleanup of hardware resources
@@ -352,6 +354,7 @@ class LoraMesherSX1276 : public IRadio {
     const int8_t irq_pin_;    ///< Interrupt Request pin number
     const int8_t reset_pin_;  ///< Reset pin number
     const int8_t busy_pin_;   ///< Busy state pin number
+    SPIClass& spi_;           ///< SPI bus instance
 
     std::unique_ptr<Module>
         hal_module_;  ///< RadioLib hardware abstraction layer

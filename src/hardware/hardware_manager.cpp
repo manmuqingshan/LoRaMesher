@@ -184,7 +184,7 @@ Result HardwareManager::updateRadioConfig(const RadioConfig& radio_config) {
 
 Result HardwareManager::InitializeHalModules() {
     // Create HAL module
-    hal_ = hal::HalFactory::createHal();
+    hal_ = hal::HalFactory::createHal(pin_config_);
     if (!hal_) {
         return Result(LoraMesherErrorCode::kHardwareError,
                       "Failed to create HAL module");
