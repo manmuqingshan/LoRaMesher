@@ -26,35 +26,23 @@ namespace hal {
 class LoraMesherArduinoHal : public IHal {
    public:
     /**
-     * @brief Construct the Arduino HAL and initialize the SPI bus.
+     * @brief Construct the Arduino HAL and store pin configuration.
      *
-     * Always calls SPI.begin() to initialize the SPI peripheral.
-     *  - ESP32:   SPI.begin(sck, miso, mosi, -1); custom pins forwarded
-     *             directly (-1 uses the hardware default for that pin).
-     *  - ESP8266: SPI.pins(sck, miso, mosi, ss) must be called before
-     *             SPI.begin(); only applied when custom pins are configured.
-     *  - Other:   SPI pins are fixed in hardware; SPI.begin() with no args.
+     * SPI initialization is deferred until the first call to getSPI() so that
+     * temporary HAL instances (e.g. for eFUSE reads) never touch the SPI bus.
      *
      * @param pin_config Hardware pin configuration.
      */
-    explicit LoraMesherArduinoHal(const PinConfig& pin_config) {
+    explicit LoraMesherArduinoHal(const PinConfig& pin_config)
+        :
 #ifdef ARDUINO_ARCH_ESP32
-        // On ESP32, always call begin; -1 means "use the hardware default"
-        SPI.begin(pin_config.getSck(), pin_config.getMiso(),
-                  pin_config.getMosi(), /*ss=*/-1);
-#elif defined(ESP8266)
-        // On ESP8266 custom pins must be set via SPI.pins() before begin()
-        if (pin_config.HasCustomSpiPins()) {
-            SPI.pins(pin_config.getSck(), pin_config.getMiso(),
-                     pin_config.getMosi(), /*ss=*/-1);
-        }
-        SPI.begin();
+          LM_SPI(HSPI),
 #else
-        // On AVR and other fixed-pin platforms, pins are hardwired
-        (void)pin_config;
-        SPI.begin();
+          LM_SPI(),
 #endif
-    }
+          pin_config_(pin_config),
+          spi_initialized_(false)
+    {}
 
     /**
      * @brief Get the current time in milliseconds.
@@ -73,13 +61,35 @@ class LoraMesherArduinoHal : public IHal {
     /**
      * @brief Get the Arduino SPIClass instance for the specified SPI bus.
      *
+     * Initializes the SPI bus on first call (lazy initialization).
+     *
      * @param spiNum SPI bus number (0-2 on ESP32)
      * @return Reference to an SPIClass instance.
      */
     SPIClass& getSPI(uint8_t spiNum = 0) override {
+        if (!spi_initialized_) {
+#ifdef ARDUINO_ARCH_ESP32
+            LOG_INFO("Initializing SPI on ESP32 with SCK=%d, MISO=%d, MOSI=%d",
+                     pin_config_.getSck(), pin_config_.getMiso(), pin_config_.getMosi());
+            // On ESP32, always call begin; -1 means "use the hardware default"
+            LM_SPI.begin(pin_config_.getSck(), pin_config_.getMiso(),
+                         pin_config_.getMosi(), /*ss=*/-1);
+#elif defined(ESP8266)
+            // On ESP8266 custom pins must be set via SPI.pins() before begin()
+            if (pin_config_.HasCustomSpiPins()) {
+                LM_SPI.pins(pin_config_.getSck(), pin_config_.getMiso(),
+                            pin_config_.getMosi(), /*ss=*/-1);
+            }
+            LM_SPI.begin();
+#else
+            // On AVR and other fixed-pin platforms, pins are hardwired
+            LM_SPI.begin();
+#endif
+            spi_initialized_ = true;
+        }
         switch (spiNum) {
             default:
-                return SPI;
+                return LM_SPI;
         }
     }
 
@@ -132,6 +142,12 @@ class LoraMesherArduinoHal : public IHal {
         return true;
 #endif
     }
+
+    SPIClass LM_SPI;
+
+   private:
+    PinConfig pin_config_;
+    bool spi_initialized_;
 };
 
 }  // namespace hal
