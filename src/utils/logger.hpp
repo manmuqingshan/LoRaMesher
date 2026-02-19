@@ -116,6 +116,9 @@ class SerialLogHandler : public LogHandler {
             case LogLevel::kError:
                 level_str = "ERROR";
                 break;
+            default:
+                level_str = "UNKNOWN";
+                break;
         }
 
 #ifndef LOGGER_DISABLE_COLORS
@@ -156,6 +159,9 @@ class ConsoleLogHandler : public LogHandler {
                 break;
             case LogLevel::kError:
                 level_str = "ERROR";
+                break;
+            default:
+                level_str = "UNKNOWN";
                 break;
         }
 
