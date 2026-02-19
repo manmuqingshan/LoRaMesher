@@ -28,9 +28,12 @@ class LoraMesherArduinoHal : public IHal {
     /**
      * @brief Construct the Arduino HAL and initialize the SPI bus.
      *
-     * When @p pin_config contains custom SPI pins (SCK/MISO/MOSI != -1),
-     * SPI.begin() is called with those values so that boards with non-standard
-     * SPI wiring work correctly.
+     * Always calls SPI.begin() to initialize the SPI peripheral.
+     *  - ESP32:   SPI.begin(sck, miso, mosi, -1); custom pins forwarded
+     *             directly (-1 uses the hardware default for that pin).
+     *  - ESP8266: SPI.pins(sck, miso, mosi, ss) must be called before
+     *             SPI.begin(); only applied when custom pins are configured.
+     *  - Other:   SPI pins are fixed in hardware; SPI.begin() with no args.
      *
      * @param pin_config Hardware pin configuration.
      */
@@ -39,12 +42,17 @@ class LoraMesherArduinoHal : public IHal {
         // On ESP32, always call begin; -1 means "use the hardware default"
         SPI.begin(pin_config.getSck(), pin_config.getMiso(),
                   pin_config.getMosi(), /*ss=*/-1);
-#else
+#elif defined(ESP8266)
+        // On ESP8266 custom pins must be set via SPI.pins() before begin()
         if (pin_config.HasCustomSpiPins()) {
-            // Non-ESP32 platforms may not support individual pin overrides;
-            // fall back to default initialisation.
-            SPI.begin();
+            SPI.pins(pin_config.getSck(), pin_config.getMiso(),
+                     pin_config.getMosi(), /*ss=*/-1);
         }
+        SPI.begin();
+#else
+        // On AVR and other fixed-pin platforms, pins are hardwired
+        (void)pin_config;
+        SPI.begin();
 #endif
     }
 
