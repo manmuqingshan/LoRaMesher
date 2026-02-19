@@ -373,7 +373,7 @@ class LoRaMeshProtocol : public Protocol {
         false;  ///< True during subslotted slots (radio stays in RX)
 
     // Constants
-    static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 4096;
+    static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 8192;
     static constexpr uint32_t TASK_PRIORITY = 3;
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
