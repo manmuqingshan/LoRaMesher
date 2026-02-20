@@ -41,8 +41,8 @@ class LoraMesherArduinoHal : public IHal {
           LM_SPI(),
 #endif
           pin_config_(pin_config),
-          spi_initialized_(false)
-    {}
+          spi_initialized_(false) {
+    }
 
     /**
      * @brief Get the current time in milliseconds.
@@ -70,7 +70,8 @@ class LoraMesherArduinoHal : public IHal {
         if (!spi_initialized_) {
 #ifdef ARDUINO_ARCH_ESP32
             LOG_INFO("Initializing SPI on ESP32 with SCK=%d, MISO=%d, MOSI=%d",
-                     pin_config_.getSck(), pin_config_.getMiso(), pin_config_.getMosi());
+                     pin_config_.getSck(), pin_config_.getMiso(),
+                     pin_config_.getMosi());
             // On ESP32, always call begin; -1 means "use the hardware default"
             LM_SPI.begin(pin_config_.getSck(), pin_config_.getMiso(),
                          pin_config_.getMosi(), /*ss=*/-1);
