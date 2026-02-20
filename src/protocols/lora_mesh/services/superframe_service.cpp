@@ -472,7 +472,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         superframe_start_time_ = external_slot_start_time;
         is_synchronized_ = true;
         last_sync_time_ = current_time;
-        last_slot_ = external_slot - 1;
+        last_slot_ = (external_slot > 0) ? (external_slot - 1) : 0;
         suppress_notifications_ = false;
         sync_in_progress_ = false;
         return Result::Success();
@@ -494,7 +494,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         superframe_start_time_ = current_time;
         is_synchronized_ = true;
         last_sync_time_ = current_time;
-        last_slot_ = external_slot - 1;
+        last_slot_ = (external_slot > 0) ? (external_slot - 1) : 0;
         suppress_notifications_ = false;
         sync_in_progress_ = false;
         return Result::Success();
@@ -519,7 +519,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     int32_t drift = static_cast<int32_t>(external_slot_start_time - old_start);
     sync_drift_accumulator_ += std::abs(drift);
 
-    last_slot_ = external_slot - 1;
+    last_slot_ = (external_slot > 0) ? (external_slot - 1) : 0;
 
     is_synchronized_ = true;
     last_sync_time_ = current_time;
