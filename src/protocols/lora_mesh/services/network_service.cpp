@@ -662,7 +662,7 @@ Result NetworkService::CreateNetwork() {
 
 Result NetworkService::PerformTimingSynchronization(
     const SyncBeaconMessage& sync_beacon, uint32_t reception_timestamp,
-    const std::string& context_name) {
+    const std::string& context_name, std::function<void()> pre_start_action) {
 
     if (!superframe_service_) {
         return Result(
@@ -670,9 +670,9 @@ Result NetworkService::PerformTimingSynchronization(
             "Superframe service not available for timing synchronization");
     }
 
-    superframe_service_->StopSuperframe();
-
     sync_beacon.Print();
+
+    superframe_service_->StopSuperframe();
 
     // Compensate for processing delay between radio DIO interrupt and timestamp capture
     // This delay includes: task switch (~5-10ms) + SPI read (~10-20ms) +
@@ -729,6 +729,8 @@ Result NetworkService::PerformTimingSynchronization(
         LOG_WARNING("Failed to synchronize superframe timing in %s: %s",
                     context_name.c_str(),
                     sync_result.GetErrorMessage().c_str());
+        if (pre_start_action)
+            pre_start_action();
         Result sup_start_res = superframe_service_->StartSuperframe();
         if (!sup_start_res.IsSuccess()) {
             LOG_ERROR("Failed to start superframe in %s: %s",
@@ -745,6 +747,10 @@ Result NetworkService::PerformTimingSynchronization(
     }
 
     superframe_service_->DoNotUpdateStartTimeOnNewSuperframe();
+
+    if (pre_start_action) {
+        pre_start_action();
+    }
 
     Result sup_start_res = superframe_service_->StartSuperframe();
     if (!sup_start_res.IsSuccess()) {
@@ -2318,35 +2324,32 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         return result;
     }
 
+    // Capture forwarding decision and slot duration before stopping the
+    // superframe service, so we can queue the beacon inside the pre_start_action
+    // callback (while the service is still stopped) — eliminating the race where
+    // the update task fires the SYNC_BEACON_TX slot handler before
+    // ForwardSyncBeacon() has had a chance to enqueue the beacon.
+    bool should_forward = ShouldForwardSyncBeacon(sync_beacon);
+    uint32_t slot_duration = sync_beacon.GetSlotDuration();
+
     // Perform timing synchronization with Network Manager
     Result sync_result = PerformTimingSynchronization(
-        sync_beacon, reception_timestamp, "Normal");
+        sync_beacon, reception_timestamp, "Normal", [&]() {
+            // Invoked after SynchronizeWith() but before StartSuperframe(),
+            // so the update task cannot run yet — no race condition possible.
+            if (should_forward) {
+                Result forward_result =
+                    ForwardSyncBeacon(sync_beacon, slot_duration);
+                if (!forward_result.IsSuccess()) {
+                    LOG_WARNING("Failed to forward sync beacon: %s",
+                                forward_result.GetErrorMessage().c_str());
+                }
+            }
+        });
     if (!sync_result.IsSuccess()) {
         LOG_WARNING("Normal operation timing synchronization failed: %s",
                     sync_result.GetErrorMessage().c_str());
-        // Continue with beacon forwarding even if synchronization fails
-    }
-
-    // Check if we should forward this beacon
-    if (ShouldForwardSyncBeacon(sync_beacon)) {
-        // Calculate processing delay (time from reception to forwarding)
-        // Include transmission delay but not guard time (it's passed separately)
-        // uint32_t processing_time =
-        //     GetRTOS().getTickCount() - reception_timestamp;
-        // uint32_t processing_delay =
-        //     sync_beacon.GetSlotDuration() + processing_time;
-        uint32_t slot_duration = sync_beacon.GetSlotDuration();
-
-        // LOG_DEBUG(
-        //     "Forwarding sync beacon after processing delay %u ms (proc %u + "
-        //     "slot %u)",
-        //     processing_delay, processing_time, sync_beacon.GetSlotDuration());
-
-        Result forward_result = ForwardSyncBeacon(sync_beacon, slot_duration);
-        if (!forward_result.IsSuccess()) {
-            LOG_WARNING("Failed to forward sync beacon: %s",
-                        forward_result.GetErrorMessage().c_str());
-        }
+        // Continue even if synchronization fails
     }
 
     no_received_sync_beacon_count_ = 0;  // Reset missed beacon counter

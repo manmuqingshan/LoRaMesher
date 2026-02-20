@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -745,11 +746,16 @@ class NetworkService : public INetworkService {
      * @param sync_beacon The received sync beacon message
      * @param reception_timestamp When the sync beacon was received
      * @param context_name Context for logging (e.g., "Discovery", "Normal")
+     * @param pre_start_action Optional callback invoked after SynchronizeWith()
+     *        but before StartSuperframe(), while the superframe service is still
+     *        stopped. Use this to queue work that must be ready before the
+     *        update task resumes.
      * @return Result Success if synchronization succeeded, error otherwise
      */
-    Result PerformTimingSynchronization(const SyncBeaconMessage& sync_beacon,
-                                        uint32_t reception_timestamp,
-                                        const std::string& context_name);
+    Result PerformTimingSynchronization(
+        const SyncBeaconMessage& sync_beacon, uint32_t reception_timestamp,
+        const std::string& context_name,
+        std::function<void()> pre_start_action = nullptr);
 
     /**
      * @brief Update network topology after changes
