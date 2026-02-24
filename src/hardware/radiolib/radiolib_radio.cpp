@@ -418,12 +418,7 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
 
 ISR_ATTR RadioLibRadio::HandleInterruptStatic() {
     if (instance_ && instance_->receive_queue_) {
-        LOG_DEBUG("RadioLibRadio ISR: Notify task for instance %p",
-                  static_cast<void*>(instance_));
         GetRTOS().NotifyTaskFromISR(instance_->processing_task_);
-    } else {
-        LOG_ERROR("RadioLibRadio ISR: Instance or queue is null - instance: %p",
-                  static_cast<void*>(instance_));
     }
 }
 
