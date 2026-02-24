@@ -344,6 +344,26 @@
             margin-bottom: 20px;
             overflow: hidden;
         }
+        .controls-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+        .controls-row > .legend-container {
+            flex: 1;
+            min-width: 0;
+            margin-bottom: 0;
+        }
+        .log-info {
+            background: #e8f4f8;
+            border: 1px solid #bee5eb;
+            border-radius: 6px;
+            padding: 10px 15px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            color: #2c3e50;
+        }
         .legend-header {
             background: #e9ecef;
             padding: 12px 15px;
@@ -550,14 +570,38 @@
             <button class="btn" onclick="selectFiles()">Select Files</button>
         </div>
 
-        <div class="file-management" id="fileManagement" style="display: none;">
-            <h3>Loaded Files</h3>
-            <div class="file-list" id="fileList"></div>
-            <div class="file-controls">
-                <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
-                <button class="btn" onclick="clearAllFiles()">Clear All</button>
-                <button class="btn" onclick="toggleAllFiles()">Toggle All</button>
+        <div class="controls-row" id="controlsRow" style="display: none;">
+
+            <!-- Loaded Files — starts OPEN (.show on content) -->
+            <div class="legend-container" id="fileManagement">
+                <div class="legend-header" onclick="toggleFilesPanel()">
+                    <span>📁 Loaded Files</span>
+                    <span class="toggle-icon" id="filesToggleIcon">▲</span>
+                </div>
+                <div class="legend-content show" id="fileManagementContent">
+                    <div class="file-list" id="fileList"></div>
+                    <div class="file-controls">
+                        <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
+                        <button class="btn" onclick="clearAllFiles()">Clear All</button>
+                        <button class="btn" onclick="toggleAllFiles()">Toggle All</button>
+                    </div>
+                </div>
             </div>
+
+            <!-- Node Visibility — starts CLOSED (no .show) -->
+            <div class="legend-container" id="nodeManagement" style="display: none;">
+                <div class="legend-header" onclick="toggleNodePanel()">
+                    <span>👁 Node Visibility</span>
+                    <span class="toggle-icon" id="nodeToggleIcon">▼</span>
+                </div>
+                <div class="legend-content" id="nodeManagementContent">
+                    <div class="file-list" id="nodeFilterList"></div>
+                    <div class="file-controls">
+                        <button class="btn" onclick="toggleAllNodes()">Toggle All</button>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
         <div class="visualization-container" id="visualizationContainer">
@@ -801,6 +845,7 @@
                 this.originalTimeMap = new Map(); // Maps timestamp to original time format
                 this.fileColors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#34495e', '#e67e22'];
                 this.isRefreshMode = false; // Track if we're in refresh mode
+                this.hiddenNodes = new Set(); // nodeIds (hex strings) that are toggled off
 
                 // Check for File System Access API support
                 this.supportsFileSystemAccess = 'showOpenFilePicker' in window;
@@ -1447,14 +1492,14 @@
 
             updateFileList() {
                 const fileList = document.getElementById('fileList');
-                const fileManagement = document.getElementById('fileManagement');
+                const controlsRow = document.getElementById('controlsRow');
 
                 if (this.files.size === 0) {
-                    fileManagement.style.display = 'none';
+                    controlsRow.style.display = 'none';
                     return;
                 }
 
-                fileManagement.style.display = 'block';
+                controlsRow.style.display = 'flex';
                 fileList.innerHTML = '';
 
                 this.files.forEach((fileData) => {
@@ -1473,6 +1518,37 @@
                     `;
 
                     fileList.appendChild(fileItem);
+                });
+            }
+
+            toggleNode(nodeId) {
+                if (this.hiddenNodes.has(nodeId)) {
+                    this.hiddenNodes.delete(nodeId);
+                } else {
+                    this.hiddenNodes.add(nodeId);
+                }
+                this.updateNodeFilterUI();
+                this.renderTimeline();
+            }
+
+            updateNodeFilterUI() {
+                const panel = document.getElementById('nodeManagement');
+                const list = document.getElementById('nodeFilterList');
+                if (this.nodes.size === 0) { panel.style.display = 'none'; return; }
+                panel.style.display = 'block';
+                list.innerHTML = '';
+                this.nodes.forEach((node, nodeId) => {
+                    const hidden = this.hiddenNodes.has(nodeId);
+                    const item = document.createElement('div');
+                    item.className = `file-item ${hidden ? 'disabled' : ''}`;
+                    item.innerHTML = `
+                        <input type="checkbox" class="file-checkbox" ${hidden ? '' : 'checked'}
+                               onchange="analyzer.toggleNode('${nodeId}')">
+                        <div class="file-info">
+                            <div class="file-name">Node 0x${nodeId}</div>
+                        </div>
+                    `;
+                    list.appendChild(item);
                 });
             }
 
@@ -1535,6 +1611,11 @@
                 // Sort by timestamp
                 this.messages.sort((a, b) => a.timestamp - b.timestamp);
                 this.events.sort((a, b) => a.timestamp - b.timestamp);
+
+                // Remove stale hidden node entries for nodes that no longer exist
+                this.hiddenNodes.forEach(id => {
+                    if (!this.nodes.has(id)) this.hiddenNodes.delete(id);
+                });
             }
 
             toggleFile(fileId) {
@@ -1543,6 +1624,7 @@
                     fileData.enabled = !fileData.enabled;
                     this.updateFileList();
                     this.aggregateData();
+                    this.updateNodeFilterUI();
                     this.renderTimeline();
                     this.renderMessages();
                     this.renderStats();
@@ -1553,6 +1635,7 @@
                 this.files.delete(fileId);
                 this.updateFileList();
                 this.aggregateData();
+                this.updateNodeFilterUI();
                 if (this.files.size === 0) {
                     document.getElementById('visualizationContainer').style.display = 'none';
                 } else {
@@ -1748,6 +1831,7 @@
                 // Re-aggregate and re-render everything (even with partial success)
                 this.aggregateData();
                 this.updateFileList();
+                this.updateNodeFilterUI();
                 this.updateLogInfo();
                 this.renderTimeline();
                 this.renderMessages();
@@ -1846,6 +1930,7 @@
                 document.getElementById('visualizationContainer').style.display = 'block';
                 document.getElementById('timestampControls').style.display = 'block';
                 this.updateLogInfo();
+                this.updateNodeFilterUI();
                 this.renderTimeline();
                 this.renderMessages();
                 this.renderStats();
@@ -1884,6 +1969,7 @@
                 timelineContent.style.width = `${contentWidth}px`;
 
                 this.nodes.forEach((node, nodeId) => {
+                    if (this.hiddenNodes.has(nodeId)) return; // skip hidden nodes
                     const nodeDiv = document.createElement('div');
                     nodeDiv.className = 'node-timeline';
                     
@@ -2231,9 +2317,21 @@ ${directionIcon} Direction: ${direction}
             });
             analyzer.updateFileList();
             analyzer.aggregateData();
+            analyzer.updateNodeFilterUI();
             analyzer.renderTimeline();
             analyzer.renderMessages();
             analyzer.renderStats();
+        }
+
+        function toggleAllNodes() {
+            const allVisible = analyzer.nodes.size > 0 &&
+                Array.from(analyzer.nodes.keys()).every(id => !analyzer.hiddenNodes.has(id));
+            analyzer.nodes.forEach((_, nodeId) => {
+                if (allVisible) analyzer.hiddenNodes.add(nodeId);
+                else analyzer.hiddenNodes.delete(nodeId);
+            });
+            analyzer.updateNodeFilterUI();
+            analyzer.renderTimeline();
         }
 
         function toggleTimestampFormat() {
@@ -2245,6 +2343,30 @@ ${directionIcon} Direction: ${direction}
             analyzer.renderTimeline();
             analyzer.renderMessages();
             analyzer.updateControlLabels();
+        }
+
+        function toggleNodePanel() {
+            const content = document.getElementById('nodeManagementContent');
+            const icon = document.getElementById('nodeToggleIcon');
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                icon.textContent = '▼';
+            } else {
+                content.classList.add('show');
+                icon.textContent = '▲';
+            }
+        }
+
+        function toggleFilesPanel() {
+            const content = document.getElementById('fileManagementContent');
+            const icon = document.getElementById('filesToggleIcon');
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                icon.textContent = '▼';
+            } else {
+                content.classList.add('show');
+                icon.textContent = '▲';
+            }
         }
 
         function toggleLegend() {
