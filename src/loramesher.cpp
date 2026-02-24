@@ -278,6 +278,20 @@ std::optional<RouteEntry> LoraMesher::GetClosestGateway() const {
     return GetClosestNodeByCapability(NodeCapabilities::GATEWAY);
 }
 
+uint32_t LoraMesher::GetTimeUntilNextDataSlot(uint32_t guard_time_ms) const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetTimeUntilNextDataSlot(guard_time_ms);
+}
+
+uint8_t LoraMesher::GetDataSlotsPerSuperframe() const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetDataSlotsPerSuperframe();
+}
+
 std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
     std::vector<RouteEntry> routes;
 

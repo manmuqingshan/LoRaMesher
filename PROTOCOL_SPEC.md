@@ -40,6 +40,7 @@ This document provides the complete technical specification for the LoRaMesher p
    - 5.6 [TX Guard Time Mechanism](#56-tx-guard-time-mechanism)
    - 5.7 [Power-Aware Slot Allocation](#57-power-aware-slot-allocation)
    - 5.8 [Network Manager Election Sequence](#58-network-manager-election-sequence)
+   - 5.9 [Application Data Slot Timing API](#59-application-data-slot-timing-api)
 6. [Network Discovery & Joining](#6-network-discovery--joining)
    - 6.1 [Network Discovery Process](#61-network-discovery-process)
    - 6.2 [Discovery Messages](#62-discovery-messages)
@@ -1861,6 +1862,83 @@ sequenceDiagram
     
     Note over A,E: Network healed - full connectivity restored
 ```
+
+### 5.9 Application Data Slot Timing API
+
+#### 5.9.1 Motivation
+
+Application code that calls `Send()` must have its message queued **before** the TX
+data slot begins. Since LoRaMesher is TDMA-scheduled, there is a fixed window within
+each superframe during which user data can actually be transmitted. Calling `Send()`
+too late (during an already-executing TX slot) means the message will wait a full
+superframe before it can be sent.
+
+To help applications schedule sends reliably, LoRaMesher provides two query functions.
+
+#### 5.9.2 `GetTimeUntilNextDataSlot(guard_time_ms)`
+
+Returns the number of milliseconds an application should sleep before calling
+`Send()`, so that the queued message is guaranteed to be processed in the **next** TX
+data slot.
+
+**Semantics:**
+- Scans the node's slot table for all slots of type `TX`.
+- For each TX slot, computes: `time_until_slot_start - guard_time_ms`.
+- If the slot is already past or within `guard_time_ms` (i.e. too close), that slot is
+  skipped and the same slot in the **next superframe** is considered instead.
+- Returns the minimum non-negative adjusted wait across all TX slots.
+- Returns `0` if the node has no TX slots allocated (not yet in `NORMAL_OPERATION`).
+
+**Guard time**: the `guard_time_ms` parameter (default **200 ms**) accounts for:
+1. FreeRTOS task wake-up and scheduling latency
+2. Application processing time before calling `Send()`
+3. Protocol queue pickup and message preparation before radio TX begins
+
+| Situation | `GetTimeUntilNextDataSlot(200)` result |
+|---|---|
+| Next TX slot in 2000ms | 1800ms |
+| Next TX slot in 150ms (< guard) | Skip → next occurrence + superframe |
+| Currently in TX slot | time_until=0 ≤ guard → skip to next superframe |
+| No TX slots in slot table | 0 |
+| Protocol not started | 0 |
+
+**Typical usage:**
+```cpp
+// Simple: send once per superframe, precisely timed to the next TX slot
+while (true) {
+    uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot();
+    vTaskDelay(pdMS_TO_TICKS(wait_ms));
+    mesh.Send(destination, payload);
+}
+```
+
+#### 5.9.3 `GetDataSlotsPerSuperframe()`
+
+Returns how many TX data slots are allocated to this node per superframe. This allows
+applications to know the maximum number of independent messages they can send per
+cycle.
+
+**Typical usage (multi-slot):**
+```cpp
+// Fill every TX slot in each superframe
+while (true) {
+    uint8_t slots = mesh.GetDataSlotsPerSuperframe();
+    for (uint8_t i = 0; i < slots; i++) {
+        uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot();
+        vTaskDelay(pdMS_TO_TICKS(wait_ms));
+        mesh.Send(destination, generate_reading());
+    }
+}
+```
+
+#### 5.9.4 Interaction with the TX Guard Time (Section 5.6)
+
+The **protocol-level** TX guard time (section 5.6) is a separate delay applied
+*inside* the TX slot to ensure RX nodes are ready. The **application guard time**
+used by `GetTimeUntilNextDataSlot()` is an *additional, earlier* offset applied
+*outside* the TX slot to give the application itself time to wake up and queue
+the message. Both guard times stack and must together be smaller than one slot
+duration.
 
 ---
 

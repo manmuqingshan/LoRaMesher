@@ -242,13 +242,45 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Get current slot table
-     * 
+     *
      * @return const std::vector<SlotAllocation>& Slot table
      */
     const std::vector<types::protocols::lora_mesh::SlotAllocation>&
     GetSlotTable() const {
         return network_service_->GetSlotTable();
     }
+
+    /**
+     * @brief Default guard time for data slot timing queries (ms)
+     *
+     * Accounts for FreeRTOS task wake-up latency, application processing,
+     * and protocol queue pickup before the TX slot begins.
+     */
+    static constexpr uint32_t kDefaultDataSlotGuardTimeMs = 200;
+
+    /**
+     * @brief Get milliseconds to sleep before calling Send() for the next TX data slot
+     *
+     * Returns how long to delay so that Send() + protocol processing completes
+     * before the next TX data slot begins. Subtracts guard_time_ms from the
+     * raw slot start time.
+     *
+     * - If currently in a TX slot or within guard_time_ms of one: skips to the
+     *   same slot in the next superframe.
+     * - Returns 0 if no TX slots are allocated or the protocol is not running.
+     *
+     * @param guard_time_ms Milliseconds subtracted from slot start (default 200ms)
+     * @return uint32_t Milliseconds to sleep before calling Send()
+     */
+    uint32_t GetTimeUntilNextDataSlot(
+        uint32_t guard_time_ms = kDefaultDataSlotGuardTimeMs) const;
+
+    /**
+     * @brief Get number of TX data slots allocated to this node per superframe
+     *
+     * @return uint8_t Number of TX slots, or 0 if not in NORMAL_OPERATION
+     */
+    uint8_t GetDataSlotsPerSuperframe() const;
 
    private:
     /**

@@ -225,6 +225,46 @@ The most important part of this piece of code is the function that we call in th
 1. The first parameter is the destination, in this case the broadcast address.
 2. And finally, the helloPacket (the packet we created) and the number of elements we are sending, in this case only 1 dataPacket.
 
+## Timing-Aware Data Sending
+
+LoRaMesher is TDMA-based — each node has specific TX data slot(s) within each
+superframe where it can transmit user data. Calling `Send()` at the right moment
+ensures the message goes out in the very next available TX slot rather than waiting
+an extra superframe.
+
+### Query the next TX opportunity
+
+```cpp
+// Sleep until just before the next TX data slot, then send
+uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot(); // default 200ms guard time
+vTaskDelay(pdMS_TO_TICKS(wait_ms));
+mesh.Send(destination_address, payload_bytes);
+```
+
+The guard time (default: 200 ms) is subtracted from the raw slot start time so
+your code has enough time to wake up, prepare data, and call `Send()` before the
+slot begins. You can pass a custom guard time if needed:
+
+```cpp
+uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot(/*guard_time_ms=*/100);
+```
+
+### Multiple TX slots per superframe
+
+If the network manager allocates more than one TX slot to your node, you can fill
+all of them each cycle:
+
+```cpp
+uint8_t tx_slots = mesh.GetDataSlotsPerSuperframe(); // e.g. 2
+for (uint8_t i = 0; i < tx_slots; i++) {
+    uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot();
+    vTaskDelay(pdMS_TO_TICKS(wait_ms));
+    mesh.Send(destination, readings[i]);
+}
+```
+
+Both functions return `0` if the node has not yet joined a network.
+
 ### Print packet example
 
 When receiving the packet, we need to understand what the Queue will return us. For this reason, in the next subsection, we will explain how to implement a simple packet processing.

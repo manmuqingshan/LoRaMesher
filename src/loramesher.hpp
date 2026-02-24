@@ -173,6 +173,29 @@ class LoraMesher {
     GetSlotTable() const;
 
     /**
+     * @brief Get milliseconds to sleep before calling Send() for the next TX data slot
+     *
+     * Returns how long to delay so that Send() + protocol processing completes
+     * before the next TX data slot begins. Subtracts guard_time_ms from the
+     * raw slot start time.
+     *
+     * Returns 0 if no TX slots are allocated or the node has not joined a network.
+     *
+     * @param guard_time_ms Milliseconds subtracted from slot start (default 200ms)
+     * @return uint32_t Milliseconds to sleep before calling Send()
+     */
+    uint32_t GetTimeUntilNextDataSlot(
+        uint32_t guard_time_ms =
+            protocols::LoRaMeshProtocol::kDefaultDataSlotGuardTimeMs) const;
+
+    /**
+     * @brief Get number of TX data slots allocated to this node per superframe
+     *
+     * @return uint8_t Number of TX slots, or 0 if not in NORMAL_OPERATION
+     */
+    uint8_t GetDataSlotsPerSuperframe() const;
+
+    /**
      * @brief Set local node capabilities
      *
      * Updates the capabilities for this node. Changes will be propagated

@@ -1230,6 +1230,54 @@ uint32_t LoRaMeshProtocol::GetSlotDuration() {
     return superframe_service_->GetSlotDuration();
 }
 
+uint32_t LoRaMeshProtocol::GetTimeUntilNextDataSlot(
+    uint32_t guard_time_ms) const {
+    if (!superframe_service_ || !network_service_)
+        return 0;
+
+    const uint32_t superframe_duration =
+        superframe_service_->GetSuperframeDuration();
+    if (superframe_duration == 0)
+        return 0;
+
+    const uint32_t now = GetRTOS().getTickCount();
+    uint32_t best_wait = UINT32_MAX;
+
+    for (const auto& slot : network_service_->GetSlotTable()) {
+        if (slot.type !=
+            types::protocols::lora_mesh::SlotAllocation::SlotType::TX)
+            continue;
+
+        uint32_t slot_start =
+            superframe_service_->GetSlotStartTime(slot.slot_number);
+        uint32_t time_until = (slot_start > now) ? (slot_start - now) : 0;
+
+        // If the slot is too close or already past, push to the next superframe
+        if (time_until <= guard_time_ms) {
+            time_until += superframe_duration;
+        }
+
+        uint32_t adjusted = time_until - guard_time_ms;
+        if (adjusted < best_wait) {
+            best_wait = adjusted;
+        }
+    }
+
+    return (best_wait == UINT32_MAX) ? 0 : best_wait;
+}
+
+uint8_t LoRaMeshProtocol::GetDataSlotsPerSuperframe() const {
+    if (!network_service_)
+        return 0;
+    uint8_t count = 0;
+    for (const auto& slot : network_service_->GetSlotTable()) {
+        if (slot.type ==
+            types::protocols::lora_mesh::SlotAllocation::SlotType::TX)
+            count++;
+    }
+    return count;
+}
+
 Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
     if (!message_queue_service_) {
         return Result(LoraMesherErrorCode::kInvalidState,
