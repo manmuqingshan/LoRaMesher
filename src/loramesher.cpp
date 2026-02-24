@@ -179,7 +179,12 @@ Result LoraMesher::Send(AddressType destination,
     LOG_DEBUG("Send called for destination 0x%04X with %zu bytes", destination,
               data.size());
 
-    // Create BaseMessage with DATA type
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        return mesh_protocol->SendData(destination, data);
+    }
+
+    // Fallback for non-mesh protocols (e.g., PingPong)
     auto message_opt = BaseMessage::Create(destination, node_address_,
                                            MessageType::DATA, data);
 
@@ -188,7 +193,6 @@ Result LoraMesher::Send(AddressType destination,
                       "Failed to create data message");
     }
 
-    // Send via existing SendMessage method
     return SendMessage(*message_opt);
 }
 
