@@ -599,8 +599,8 @@ Result SuperframeService::UpdateSuperframeState() {
         // Check if we've wrapped around (new superframe)
         bool new_superframe = false;
 
-        // Detect new superframe
-        if (current_slot == 0) {
+        // Detect new superframe (guard against first invocation after Start() when last_slot_ == 0xFFFF)
+        if (current_slot == 0 && last_slot_ != 0xFFFF) {
             new_superframe = true;
             // Only handle new superframe if auto-advance is enabled
             if (auto_advance_) {

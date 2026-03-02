@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <map>
 #include <mutex>
 #include <queue>
@@ -255,8 +256,13 @@ class RTOSMock : public RTOS {
             std::make_shared<void*>(parameters);
         std::string task_name = name ? name : "unnamed";
 
-        auto* thread = new std::thread([taskFunction, shared_params,
-                                        task_name]() {
+        // Create exit signal BEFORE thread starts so the lambda can capture it
+        auto exit_signal = std::make_shared<std::promise<void>>();
+        auto exit_future = exit_signal->get_future().share();
+
+        auto* thread = new std::thread([taskFunction, shared_params, task_name,
+                                        exit_signal =
+                                            std::move(exit_signal)]() mutable {
             try {
                 // Call the user's task function with the captured parameters
                 taskFunction(*shared_params);
@@ -266,8 +272,7 @@ class RTOSMock : public RTOS {
             } catch (...) {
                 LOG_ERROR("Unknown exception in task '%s'", task_name.c_str());
             }
-
-            // LOG_DEBUG("MOCK: Task '%s' exiting", task_name.c_str());
+            exit_signal->set_value();  // signal DeleteTask() we're done
         });
 
         // Store task information
@@ -284,6 +289,7 @@ class RTOSMock : public RTOS {
             task_info.notification_pending = false;
             task_info.suspended = false;
             task_info.stop_requested.store(false, std::memory_order_relaxed);
+            task_info.exit_future = exit_future;
 
             // LOG_DEBUG("MOCK: Task '%s' registered with thread ID %p",
             //   task_name.c_str(), task_info.thread_id);
@@ -381,39 +387,17 @@ class RTOSMock : public RTOS {
 
             // Wait for thread to finish with a reasonable timeout
             if (thread->joinable()) {
-                // LOG_DEBUG("MOCK: Waiting for task '%s' to finish",
-                //           task_name.c_str());
-
-                // Use a timeout mechanism to avoid waiting indefinitely
-                std::atomic<bool> joined{false};
-                std::thread watchdog([&]() {
-                    if (thread->joinable()) {
-                        thread->join();
-                        joined = true;
-                    }
-                });
-                watchdog.detach();
-
-                // Wait with timeout (500ms should be plenty for a simple task)
-                const int kMaxWaitMs = 500;
-                const int kCheckIntervalMs = 10;
-                for (int i = 0; i < kMaxWaitMs / kCheckIntervalMs && !joined;
-                     i++) {
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(kCheckIntervalMs));
-                }
-
-                if (!joined) {
+                auto status = task_info->exit_future.wait_for(
+                    std::chrono::milliseconds(500));
+                if (status == std::future_status::ready) {
+                    thread->join();
+                } else {
                     LOG_WARNING(
                         "MOCK: Task '%s' did not exit cleanly within timeout",
                         task_name.c_str());
-                    // We can't forcibly terminate std::thread, so we have to detach it
                     if (thread->joinable()) {
                         thread->detach();
                     }
-                } else {
-                    // LOG_DEBUG("MOCK: Task '%s' exited cleanly",
-                    //   task_name.c_str());
                 }
             }
         }
@@ -1944,25 +1928,18 @@ class RTOSMock : public RTOS {
      * @note Caller must hold both tasksMutex_ and timeMutex_
      */
     bool hasRegisteredWait(std::thread* thread_ptr) const {
-        // Check if task is waiting on any queue CVs
         auto it = tasks_.find(thread_ptr);
-        if (it != tasks_.end()) {
-            // Task is blocked if it has registered queue CVs it's waiting on
-            if (!it->second.waiting_on_queue_cvs.empty()) {
-                return true;
-            }
-        }
+        if (it == tasks_.end())
+            return false;
 
-        // Check if task has a registered wake time in waitingTasks_
-        // This is a simplification - we can't directly map CVs to tasks
-        // So we consider the task blocked if ANY CV has a future wake time
-        for (const auto& [cv, wake_time] : waitingTasks_) {
-            if (wake_time > virtualTimeMs_) {
-                return true;
-            }
-        }
+        // Task is blocked if it has registered queue CVs it's waiting on
+        if (!it->second.waiting_on_queue_cvs.empty())
+            return true;
 
-        return false;
+        // Check if THIS task's delay_cv is registered in waitingTasks_
+        // (task is sleeping via Delay())
+        return waitingTasks_.contains(
+            const_cast<std::condition_variable*>(&it->second.delay_cv));
     }
 
     /**
@@ -2046,6 +2023,10 @@ class RTOSMock : public RTOS {
 
         // For tracking queue condition variables the task is waiting on
         std::vector<std::condition_variable*> waiting_on_queue_cvs;
+
+        // For timed-join in DeleteTask()
+        std::shared_ptr<std::promise<void>> exit_signal;
+        std::shared_future<void> exit_future;
     };
 
     TimeMode timeMode_;       ///< Current time mode (real or virtual)

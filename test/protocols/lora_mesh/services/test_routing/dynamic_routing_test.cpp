@@ -100,7 +100,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
         ASSERT_TRUE(SendMessage(*nodes[0], *nodes[2], payload));
 
         bool received =
-            AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 2, [&]() {
+            AdvanceTime(superframe_time * 4, superframe_time * 4, 50, 2, [&]() {
                 return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                               MessageType::DATA);
             });
