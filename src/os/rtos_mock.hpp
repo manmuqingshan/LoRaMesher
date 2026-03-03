@@ -385,10 +385,13 @@ class RTOSMock : public RTOS {
             // Give the task a moment to exit gracefully
             std::this_thread::yield();
 
-            // Wait for thread to finish with a reasonable timeout
+            // Wait for thread to finish with a reasonable timeout.
+            // Must be > waitFor's 1000ms wall-clock wait_until to avoid
+            // detaching a thread that is still blocked inside ReceiveFromQueue
+            // (missed-notification race) and then freeing the queue under it.
             if (thread->joinable()) {
                 auto status = task_info->exit_future.wait_for(
-                    std::chrono::milliseconds(500));
+                    std::chrono::milliseconds(2000));
                 if (status == std::future_status::ready) {
                     thread->join();
                 } else {
@@ -689,11 +692,8 @@ class RTOSMock : public RTOS {
         }
 
         if (!task_info) {
-            LOG_WARNING(
-                "MOCK: Failed to find task with thread ID %p for "
-                "ShouldStopOrPause",
-                thread_id);
-            return false;
+            // Task not in map: erased by DeleteTask (detach path). Stop the task.
+            return true;
         }
 
         // If stop requested, return immediately
@@ -1913,8 +1913,9 @@ class RTOSMock : public RTOS {
 
         TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
         if (!task_info) {
-            LOG_ERROR("Current task not found");
-            return false;  // If we can't find the task, assume it's not deleted or it is not created.
+            // Task not in map: it was already erased by DeleteTask (detach path).
+            // Treat as deleted so the calling task self-terminates.
+            return true;
         }
 
         // Use atomic load with acquire ordering to ensure we see the latest value
@@ -1949,9 +1950,9 @@ class RTOSMock : public RTOS {
      * to process their work and re-enter a wait state before allowing
      * further time advancement.
      *
-     * @param timeout_ms Maximum time to wait in real milliseconds (default 100ms)
+     * @param timeout_ms Maximum time to wait in real milliseconds (default 10ms)
      */
-    void waitForTasksToReblock(uint32_t timeout_ms = 100) {
+    void waitForTasksToReblock(uint32_t timeout_ms = 10) {
         auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(timeout_ms);
 
@@ -1985,8 +1986,10 @@ class RTOSMock : public RTOS {
                 }
             }
 
-            // Yield to let tasks run
-            std::this_thread::yield();
+            // Sleep to give task threads real CPU time to reach blocking state.
+            // yield() is effectively a no-op on WSL2 and causes spin-waiting;
+            // sleep_for(1ms) guarantees an OS context switch.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
         // Timeout is acceptable - tasks may have completed or be in transition

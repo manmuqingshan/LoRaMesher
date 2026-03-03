@@ -995,7 +995,9 @@ class RadioToNetworkAdapter : public IRadioReceiver {
          * @return true if radio is in receive mode, false otherwise
          */
     bool CanReceive() const override {
-        return current_radio_state_ == loramesher::radio::RadioState::kReceive;
+        return current_radio_state_ ==
+                   loramesher::radio::RadioState::kReceive &&
+               message_queue_.empty();
     }
 
     /**

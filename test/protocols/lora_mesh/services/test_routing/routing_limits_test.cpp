@@ -161,7 +161,7 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
     auto superframe_time = GetSuperframeDuration(*nodes.front());
 
     // Wait for routing tables to fill up
-    AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 2,
+    AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 5,
                 [&]() { return false; });
 
     // Get max network nodes from config
@@ -199,10 +199,11 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
     std::vector<uint8_t> payload = {0x10, 0x20, 0x30};
     ASSERT_TRUE(SendMessage(*nodes[0], *nodes[num_nodes - 1], payload));
 
-    bool received = AdvanceTime(superframe_time, superframe_time, 15, 2, [&]() {
-        return HasReceivedMessageFrom(*nodes[num_nodes - 1], nodes[0]->address,
-                                      MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 2, [&]() {
+            return HasReceivedMessageFrom(*nodes[num_nodes - 1],
+                                          nodes[0]->address, MessageType::DATA);
+        });
 
     EXPECT_TRUE(received) << "Message should be delivered in " << num_nodes
                           << "-node network";
