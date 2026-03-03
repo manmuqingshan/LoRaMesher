@@ -39,7 +39,6 @@ static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
 
 static const uint8_t kMinSlots = 16;  ///< Minimum number of slots in superframe
-static const float kTargetDutyCycle = 0.3f;  ///< Target duty cycle (percentage)
 
 /**
  * @brief Unified implementation of network service
@@ -798,6 +797,16 @@ class NetworkService : public INetworkService {
     uint32_t CalculateTimeOnAir(uint8_t message_size) const;
 
     /**
+     * @brief Calculate total NM TX time using Time-on-Air for each packet
+     *
+     * @param rt_node_count Total node count (including NM)
+     * @param nm_data_slots Number of data slots allocated to the NM
+     * @return uint32_t Total TX time in milliseconds
+     */
+    uint32_t CalculateNMTxTimeMs(uint8_t rt_node_count,
+                                 uint8_t nm_data_slots) const;
+
+    /**
      * @brief Calculate link stability metric
      * 
      * @param node Node to evaluate
@@ -985,6 +994,9 @@ class NetworkService : public INetworkService {
 
     // Node role configuration
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+
+    // Duty cycle regulation
+    float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
 
     // Join retry backoff (Slotted ALOHA)
     uint8_t join_retry_count_ = 0;  ///< Number of join retries so far

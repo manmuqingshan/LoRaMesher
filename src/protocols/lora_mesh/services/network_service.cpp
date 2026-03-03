@@ -505,6 +505,7 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     config_ = config;
     node_address_ = config.node_address;
     node_role_ = config.node_role;
+    target_duty_cycle_ = config.target_duty_cycle;
 
     LOG_INFO("Network service configured with node address 0x%04X, role: %d",
              node_address_, static_cast<int>(node_role_));
@@ -848,6 +849,19 @@ uint32_t NetworkService::CalculateTimeOnAir(uint8_t message_size) const {
     return toa;
 }
 
+uint32_t NetworkService::CalculateNMTxTimeMs(uint8_t rt_node_count,
+                                             uint8_t nm_data_slots) const {
+    uint8_t sync_size = static_cast<uint8_t>(
+        BaseHeader::Size() + SyncBeaconHeader::SyncBeaconFieldsSize());
+    uint8_t rt_entries = (rt_node_count > 0) ? rt_node_count - 1 : 0;
+    uint8_t rt_size = static_cast<uint8_t>(std::min(
+        BaseHeader::Size() + RoutingTableHeader::RoutingTableFieldsSize() +
+            rt_entries * RoutingTableEntry::Size(),
+        static_cast<size_t>(255)));
+    return CalculateTimeOnAir(sync_size) + CalculateTimeOnAir(rt_size) +
+           nm_data_slots * CalculateTimeOnAir(config_.max_packet_size);
+}
+
 uint8_t NetworkService::CalculateLinkStability(const NetworkNodeRoute& node) {
     uint32_t current_time = GetRTOS().getTickCount();
 
@@ -998,6 +1012,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             source);
         // return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
         //                         sponsor_address);
+        return Result::Success();
     }
 
     uint8_t routing_hop_count = hop_count + 1;
@@ -1616,213 +1631,169 @@ Result NetworkService::UpdateSlotTable() {
     uint8_t total_superframe_slots =
         std::max(number_of_slots_per_superframe_, kMinSlots);
 
+    // TX time used for both NM duty cycle computation and logging
+    uint32_t tx_time_ms = 0;
+
     if (network_creator_) {
-        // TODO: This is not actualy a duty cycle, duty cycle just need to consider about the TX, not all active
-        // Calculate power-optimized superframe size for (kTargetDutyCycle)% duty cycle
+        // Duty cycle applies only to TX time (not RX or sleep slots).
+        // NM is the worst case: it transmits sync beacon + routing table + data.
+
+        // Find NM's own data slot allocation
+        // TODO: Find the grater node that contains the most allocated data slots. This will be the reference.
+        // Or do the duty cycle by device and calculate it someway?
+        uint8_t nm_data_slots = config_.default_data_slots;
+        for (const auto& node : ordered_nodes) {
+            if (node.routing_entry.destination == node_address_) {
+                nm_data_slots = node.routing_entry.allocated_data_slots;
+                break;
+            }
+        }
+
+        // Calculate total NM TX time using Time-on-Air for each packet
+        tx_time_ms =
+            CalculateNMTxTimeMs(allocated_control_slots_, nm_data_slots);
+
+        // Compute superframe size: total_tx_time / (slot_duration * duty_cycle)
+        uint32_t slot_duration_ms =
+            superframe_service_ ? superframe_service_->GetSlotDuration() : 1000;
+        if (slot_duration_ms == 0)
+            slot_duration_ms = 1000;
+
+        float required_superframe_ms =
+            static_cast<float>(tx_time_ms) / target_duty_cycle_;
+        uint8_t computed_slots = static_cast<uint8_t>(
+            std::min(std::ceil(required_superframe_ms / slot_duration_ms),
+                     static_cast<float>(255)));
+
         total_superframe_slots =
-            std::max((uint8_t)std::ceil(total_active_slots / kTargetDutyCycle),
-                     (uint8_t)(total_active_slots * 2));
+            std::max({computed_slots, kMinSlots, total_active_slots});
     }
 
     uint8_t sleep_slots = total_superframe_slots - total_active_slots;
-    float actual_duty_cycle =
-        (float)total_active_slots / total_superframe_slots;
+    uint32_t slot_duration_ms_log =
+        superframe_service_ ? superframe_service_->GetSlotDuration() : 1000;
+    float actual_tx_duty_cycle =
+        (slot_duration_ms_log > 0 && tx_time_ms > 0)
+            ? static_cast<float>(tx_time_ms) /
+                  (total_superframe_slots * slot_duration_ms_log)
+            : 0.0f;
 
-    LOG_DEBUG("Total slots in the superframes %d", total_superframe_slots);
+    LOG_DEBUG("Total slots in the superframe %d (target TX duty cycle: %.2f%%)",
+              total_superframe_slots, target_duty_cycle_ * 100.0f);
     LOG_DEBUG("Active slots %d: sync %d, control %d, discovery %d, data %d",
               total_active_slots, sync_beacon_slots, allocated_control_slots_,
               allocated_discovery_slots_, total_data_slots);
-    LOG_DEBUG("SLEEP slots %d (%.1f%% duty cycle)", sleep_slots,
-              actual_duty_cycle * 100.0f);
+    LOG_DEBUG("SLEEP slots %d | actual TX duty cycle: %.2f%%", sleep_slots,
+              actual_tx_duty_cycle * 100.0f);
 
     slot_table_.resize(total_superframe_slots);
 
-    // Allocate sync beacon slots first (hop-layered allocation)
+    // Single slot_index advances through all allocation phases
     size_t slot_index = 0;
+    auto AllocateSlot = [&](SlotAllocation::SlotType type,
+                            AddressType addr = 0) {
+        slot_table_[slot_index] = SlotAllocation(slot_index, type, addr);
+        slot_index++;
+    };
 
     // Determine our hop distance from Network Manager
-    uint8_t our_hop_distance = 0;
-    if (network_manager_ == node_address_) {
-        our_hop_distance = 0;  // We are the Network Manager
-    } else {
-        // Find network manager in routing table
-        const auto& nodes = routing_table_->GetNodes();
-        auto nm_it = std::find_if(
-            nodes.begin(), nodes.end(),
-            [this](const types::protocols::lora_mesh::NetworkNodeRoute& node) {
-                return node.routing_entry.destination == network_manager_;
-            });
-        if (nm_it != nodes.end()) {
-            our_hop_distance = nm_it->routing_entry.hop_count;
-        } else {
-            our_hop_distance = 1;  // Default assumption
-        }
-        LOG_DEBUG("Our hop distance from NM (0x%04X) is %d", network_manager_,
-                  our_hop_distance);
-    }
+    uint8_t our_hop_distance = GetHopDistanceToNM();
+    LOG_DEBUG("Our hop distance from NM (0x%04X) is %d", network_manager_,
+              our_hop_distance);
 
-    // Allocate sync beacon slots based on hop-layered forwarding strategy
+    // ── Phase 1: Sync beacon slots (hop-layered forwarding) ──────────────────
     for (size_t hop_layer = 0;
-         hop_layer < sync_beacon_slots && slot_index < total_superframe_slots;
+         hop_layer < sync_beacon_slots && slot_index < slot_table_.size();
          hop_layer++) {
-        SlotAllocation sync_slot;
-        sync_slot.slot_number = slot_index++;
-        sync_slot.target_address = 0xFFFF;  // Broadcast
-
+        SlotAllocation::SlotType sync_type;
         if (hop_layer == 0) {
-            // Slot 0: Network Manager original transmission
-            if (state_ == ProtocolState::NETWORK_MANAGER &&
-                network_manager_ == node_address_) {
-                sync_slot.type = SlotAllocation::SlotType::SYNC_BEACON_TX;
-                LOG_DEBUG(
-                    "Allocated slot %zu as SYNC_BEACON_TX for Network Manager "
-                    "(hop 0)",
-                    hop_layer);
-            } else {
-                sync_slot.type = SlotAllocation::SlotType::SYNC_BEACON_RX;
-                LOG_DEBUG(
-                    "Allocated slot %zu as SYNC_BEACON_RX for node (hop 0)",
-                    hop_layer);
-            }
+            sync_type = (state_ == ProtocolState::NETWORK_MANAGER &&
+                         network_manager_ == node_address_)
+                            ? SlotAllocation::SlotType::SYNC_BEACON_TX
+                            : SlotAllocation::SlotType::SYNC_BEACON_RX;
+        } else if (our_hop_distance == hop_layer) {
+            sync_type = SlotAllocation::SlotType::SYNC_BEACON_TX;
+        } else if (our_hop_distance == hop_layer + 1) {
+            sync_type = SlotAllocation::SlotType::SYNC_BEACON_RX;
         } else {
-            // Slots 1+: Hop-layered forwarding
-            if (our_hop_distance == hop_layer) {
-                // This node forwards beacons from previous hop layer
-                sync_slot.type = SlotAllocation::SlotType::SYNC_BEACON_TX;
-                LOG_DEBUG(
-                    "Allocated slot %zu as SYNC_BEACON_TX for hop %d "
-                    "forwarding",
-                    hop_layer, our_hop_distance);
-            } else if (our_hop_distance == hop_layer + 1) {
-                // This node receives beacons from this hop layer
-                sync_slot.type = SlotAllocation::SlotType::SYNC_BEACON_RX;
-                LOG_DEBUG(
-                    "Allocated slot %zu as SYNC_BEACON_RX for hop %d reception",
-                    hop_layer, our_hop_distance);
-            } else {
-                // This node sleeps during this hop layer
-                sync_slot.type = SlotAllocation::SlotType::SLEEP;
-                LOG_DEBUG(
-                    "Allocated slot %zu as SLEEP for hop %d (not "
-                    "relevant)",
-                    hop_layer, our_hop_distance);
-            }
+            sync_type = SlotAllocation::SlotType::SLEEP;
         }
-
-        slot_table_[slot_index - 1] = sync_slot;
+        LOG_DEBUG("Allocated slot %zu as %d for sync hop_layer %zu", slot_index,
+                  static_cast<int>(sync_type), hop_layer);
+        AllocateSlot(sync_type, 0xFFFF);
     }
 
-    // Allocate control slots using assigned index (join-order-based)
-    // Our CONTROL_TX slot is at sync_beacon_slots + my_control_slot_index_
-    // All other control slots are CONTROL_RX
+    // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
     for (size_t i = 0;
-         i < allocated_control_slots_ && slot_index < total_superframe_slots;
-         i++) {
-        auto& slot_allocation = slot_table_[slot_index];
-        slot_allocation.slot_number = slot_index;
-
+         i < allocated_control_slots_ && slot_index < slot_table_.size(); i++) {
         if (i == my_control_slot_index_) {
-            // This is OUR control TX slot (based on assigned index)
-            slot_allocation.type = SlotAllocation::SlotType::CONTROL_TX;
-            slot_allocation.target_address = node_address_;
             LOG_DEBUG(
                 "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
                 "%d)",
                 slot_index, node_address_, my_control_slot_index_);
+            AllocateSlot(SlotAllocation::SlotType::CONTROL_TX, node_address_);
         } else {
-            // All other control slots are RX (we listen to everyone)
-            slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
-            slot_allocation.target_address = 0xFFFF;  // Listen to any sender
             LOG_DEBUG("Allocated CONTROL_RX slot %zu (index %zu)", slot_index,
                       i);
+            AllocateSlot(SlotAllocation::SlotType::CONTROL_RX, 0xFFFF);
         }
-        slot_index++;
     }
 
-    // Allocate the data slots after control slots
-    size_t slot_data_index = slot_index;
-    // Then allocate data slots for other nodes in routing table
-    for (size_t i = 0; i < ordered_nodes.size(); i++) {
-        const auto& node = ordered_nodes[i];
+    // ── Phase 3: Data slots (per-node TX/RX/SLEEP) ───────────────────────────
+    for (const auto& node : ordered_nodes) {
         AddressType addr = node.GetAddress();
         uint8_t slot_data_number = node.GetAllocatedDataSlots();
         for (size_t j = 0; j < slot_data_number; j++) {
-            size_t data_slot_index = slot_data_index + j;
-            if (data_slot_index >= slot_table_.size()) {
+            if (slot_index >= slot_table_.size()) {
                 LOG_ERROR(
                     "Slot index %zu out of bounds for node 0x%04X, skipping",
-                    data_slot_index, addr);
+                    slot_index, addr);
                 return Result(LoraMesherErrorCode::kInvalidState,
                               "Slot index out of bounds");
             }
-
-            // Use reference to modify actual vector element
-            auto& slot = slot_table_[data_slot_index];
-
-            slot.slot_number = data_slot_index;
-            slot.target_address = addr;
-            if (node.IsDirectNeighbor()) {
-                // For direct neighbors, we use RX
-                slot.type = SlotAllocation::SlotType::RX;
+            if (node_address_ == addr) {
+                LOG_DEBUG("Allocated DATA TX slot %zu for local node 0x%04X",
+                          slot_index, addr);
+                AllocateSlot(SlotAllocation::SlotType::TX, addr);
+            } else if (node.IsDirectNeighbor()) {
                 LOG_DEBUG(
                     "Allocated DATA RX slot %zu for direct neighbor 0x%04X",
-                    data_slot_index, addr);
-            } else if (node_address_ == node.GetAddress()) {
-                // For self node, we use TX
-                slot.type = SlotAllocation::SlotType::TX;
-                LOG_DEBUG("Allocated DATA TX slot %zu for local node 0x%04X",
-                          data_slot_index, addr);
+                    slot_index, addr);
+                AllocateSlot(SlotAllocation::SlotType::RX, addr);
             } else {
-                slot.type = SlotAllocation::SlotType::SLEEP;
+                AllocateSlot(SlotAllocation::SlotType::SLEEP, addr);
             }
         }
-        slot_data_index += slot_data_number;
     }
 
-    // Allocate SLEEP slots for power efficiency
-    size_t sleep_slot_index = slot_data_index;
+    // ── Phase 4: Sleep slots ──────────────────────────────────────────────────
     for (size_t i = 0; i < sleep_slots; i++) {
-        if (sleep_slot_index >= slot_table_.size()) {
+        if (slot_index >= slot_table_.size()) {
             LOG_ERROR("SLEEP slot index %zu out of bounds, skipping",
-                      sleep_slot_index);
+                      slot_index);
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Slot index out of bounds");
         }
-
-        auto& slot = slot_table_[sleep_slot_index];
-        slot.slot_number = sleep_slot_index;
-        slot.target_address = 0;  // Not applicable for sleep
-        slot.type = SlotAllocation::SlotType::SLEEP;
-
-        sleep_slot_index++;
+        AllocateSlot(SlotAllocation::SlotType::SLEEP, 0);
     }
 
-    // Allocate discovery slots
-    size_t discovery_slot_index = sleep_slot_index;
+    // ── Phase 5: Discovery slots ──────────────────────────────────────────────
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
-        if (discovery_slot_index >= slot_table_.size()) {
-            LOG_ERROR("Discovery slot index %d out of bounds, skipping",
-                      discovery_slot_index);
+        if (slot_index >= slot_table_.size()) {
+            LOG_ERROR("Discovery slot index %zu out of bounds, skipping",
+                      slot_index);
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Slot index out of bounds");
         }
-
-        // Use reference to modify actual vector element
-        auto& slot = slot_table_[discovery_slot_index];
-
-        slot.slot_number = discovery_slot_index;
-        slot.target_address = 0;  // Discovery
-        slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
-
-        discovery_slot_index++;
+        AllocateSlot(SlotAllocation::SlotType::DISCOVERY_RX, 0);
     }
 
     LOG_INFO(
         "Updated slot table: %d total (%d active: %d sync + %d ctrl + %d disc "
-        "+ %d data, %d sleep, %.1f%% duty cycle)",
+        "+ %d data, %d sleep, %.1f%% TX duty cycle)",
         total_superframe_slots, total_active_slots, sync_beacon_slots,
         allocated_control_slots_, allocated_discovery_slots_, total_data_slots,
-        sleep_slots, actual_duty_cycle * 100.0f);
+        sleep_slots, actual_tx_duty_cycle * 100.0f);
 
     if (!superframe_service_) {
         LOG_ERROR("Superframe service not available, cannot update slot table");
@@ -2150,9 +2121,7 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
     bool is_self_active = false;
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
-        if (node.is_active) {
-            total_allocated += node.GetAllocatedDataSlots();
-        }
+        total_allocated += node.GetAllocatedDataSlots();
         if (node.GetAddress() == node_address_) {
             is_self_active = true;
         }
@@ -2251,10 +2220,12 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     AddressType beacon_source = sync_beacon.GetSource();
     AddressType beacon_nm = sync_beacon.GetNetworkManager();
     uint8_t our_hop_count_to_nm = sync_beacon.GetHopCount() + 1;
-    bool nm_node_present = routing_table_->IsNodePresent(beacon_nm);
-
-    // Add route to NM if we're not the NM ourselves
-    if (!nm_node_present && beacon_nm != node_address_) {
+    // Always refresh the NM route on beacon receipt.
+    // UpdateRoute() internally handles "don't overwrite a better active route",
+    // so this is safe even when the NM route is already active.
+    // Removing the IsNodePresent() guard fixes the case where a stale node entry
+    // (is_active=false) blocks the route refresh, leaving IsDirectNeighbor() false.
+    if (beacon_nm != node_address_) {
         current_time = GetRTOS().getTickCount();
         bool route_updated = routing_table_->UpdateRoute(
             beacon_source,        // next_hop: go through the beacon forwarder
@@ -2630,6 +2601,32 @@ Result NetworkService::ApplyPendingJoin() {
     // Extract join request information
     auto source = pending_join_data_->GetSource();
     auto allocated_slots = pending_join_data_->GetRequestedSlots();
+
+    // Re-establish the route to the joining node before building the slot table.
+    // RemoveInactiveNodes() (called just before this function) may have expired
+    // the node's route (is_active=false), causing IsDirectNeighbor() → false →
+    // SLEEP instead of RX in UpdateSlotTable().
+    {
+        AddressType sponsor =
+            pending_join_data_->GetHeader().GetSponsorAddress();
+        bool has_external_sponsor = (sponsor != 0 && sponsor != node_address_);
+        AddressType route_next_hop;
+        if (has_external_sponsor) {
+            route_next_hop = routing_table_->FindNextHop(sponsor);
+            if (route_next_hop == 0)
+                route_next_hop = sponsor;
+        } else {
+            route_next_hop = source;
+        }
+        uint8_t routing_hop_count =
+            pending_join_data_->GetHopCount() + (has_external_sponsor ? 2 : 1);
+        routing_table_->UpdateRoute(route_next_hop, source, routing_hop_count,
+                                    255, allocated_slots, 0,
+                                    GetRTOS().getTickCount());
+        LOG_INFO(
+            "Re-established route to joining node 0x%04X via 0x%04X (hops=%d)",
+            source, route_next_hop, routing_hop_count);
+    }
 
     // Update slot allocation (this will be reflected in the sync beacon total_slots field)
     Result result = UpdateSlotTable();

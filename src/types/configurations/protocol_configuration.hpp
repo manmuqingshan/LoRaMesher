@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -342,6 +343,14 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         guard_time_ms_ = guard_time_ms;
     }
 
+    /** @brief Get the target TX duty cycle (0.0–1.0, default 0.01 = 1%) */
+    float getTargetDutyCycle() const { return target_duty_cycle_; }
+
+    /** @brief Set the target TX duty cycle (0.001–1.0) */
+    void setTargetDutyCycle(float duty_cycle) {
+        target_duty_cycle_ = std::clamp(duty_cycle, 0.001f, 1.0f);
+    }
+
     /**
      * @brief Get the node role for network formation
      *
@@ -508,6 +517,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint8_t max_network_nodes_ =
         50;                        ///< Maximum number of nodes in the network
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
+    float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;

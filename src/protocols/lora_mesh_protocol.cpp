@@ -211,6 +211,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
         service_config_.network_config;
     net_config.node_address = config.getNodeAddress();
     net_config.node_role = config.getNodeRole();
+    net_config.target_duty_cycle = config.getTargetDutyCycle();
 
     Result result = network_service_->Configure(net_config);
     if (!result) {
@@ -833,14 +834,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
     }
 
     switch (slot_type) {
-        case SlotAllocation::SlotType::TX:
         case SlotAllocation::SlotType::CONTROL_TX: {
-            // Apply guard time delay for TX slots to allow RX nodes to prepare
-            uint32_t guard_time_ms = config_.getGuardTime();
-            if (guard_time_ms > 0) {
-                LOG_DEBUG("Applying guard time delay: %u ms", guard_time_ms);
-                GetRTOS().delay(guard_time_ms);
-            }
             // State-based message sending for CONTROL_TX
             auto state = network_service_->GetState();
 
@@ -855,6 +849,14 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                               result.GetErrorMessage().c_str());
                 }
             }
+        }
+        case SlotAllocation::SlotType::TX: {
+            // Apply guard time delay for TX slots to allow RX nodes to prepare
+            uint32_t guard_time_ms = config_.getGuardTime();
+            if (guard_time_ms > 0) {
+                LOG_DEBUG("Applying guard time delay: %u ms", guard_time_ms);
+                GetRTOS().delay(guard_time_ms);
+            }
 
             // Extract and send the queued message
             auto message =
@@ -866,9 +868,8 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                     LOG_ERROR("Failed to send control message: %s",
                               result.GetErrorMessage().c_str());
                 } else {
-                    LOG_DEBUG("Sent control message type %d from state %d",
-                              static_cast<int>(message->GetType()),
-                              static_cast<int>(state));
+                    LOG_DEBUG("Sent message type %d",
+                              static_cast<int>(message->GetType()));
                 }
             } else {
                 LOG_DEBUG("No control message to send in slot %d", slot_type);

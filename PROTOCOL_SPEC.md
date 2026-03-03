@@ -1229,7 +1229,7 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ POWER CHARACTERISTICS:                                                      │
 │ • Active Slots: 10 (50% - sync: 3, control: 3, data: 2, discovery: 2)     │
-│ • Sleep Slots: 10 (50% - optimized for 30% target duty cycle)              │
+│ • Sleep Slots: N (configurable TX duty cycle, default 1%)                  │
 │ • Actual Duty Cycle: 50% (configurable based on network size)              │
 │ • Power Savings: 50% sleep time, adaptive based on traffic                 │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1266,9 +1266,10 @@ Superframe defaultSuperframe = {
 // Relevant timing parameters from LoRaMeshProtocolConfig
 uint8_t max_hops_ = 10;           // Maximum number of hops for routing (1-16)
 uint32_t guard_time_ms_ = 50;     // TX guard time for RX readiness (10-500ms)
+float target_duty_cycle_ = 0.01f;  // Target TX duty cycle (0.001–1.0, default 1%)
 ```
 
-*Note: `sync_tolerance_ms` and `target_duty_cycle` are planned features (see Section 10 Future Work).*
+*Note: `sync_tolerance_ms` is a planned feature (see Section 10 Future Work).*
 
 ### 5.3 Synchronization Protocol
 
@@ -1725,11 +1726,22 @@ Required Active Slots:
 - Discovery Slots = min(5, max(2, ceil(N/3)))
 - Total Active = Beacon + Control + Data + Discovery
 
-Power-Optimized Superframe:
-- Target Duty Cycle = 30% (configurable)
-- Superframe Size = ceil(Total Active / Target Duty Cycle)
+Power-Optimized Superframe (TX-time-based, configurable):
+- Target TX Duty Cycle = configurable (default 1%, range 0.1%–100%)
+- NM TX Time = ToA(sync_beacon) + ToA(routing_table) + nm_data_slots × ToA(max_packet)
+- Superframe Size = max(ceil(NM_TX_time_ms / (slot_duration_ms × target_duty_cycle)),
+                        kMinSlots, total_active_slots)
 - SLEEP Slots = Superframe Size - Total Active
-- Actual Duty Cycle = Total Active / Superframe Size
+- Actual TX Duty Cycle = NM_TX_time_ms / (Superframe Size × slot_duration_ms)
+```
+
+The TX-only metric ensures slot count scales with *transmit* time rather than total active slots,
+giving a physically meaningful duty cycle independent of how many nodes are listening. Example:
+
+```cpp
+LoRaMeshProtocolConfig config;
+config.setTargetDutyCycle(0.01f);  // 1% TX duty cycle (default)
+// Valid range: 0.001f (0.1%) to 1.0f (100%)
 ```
 
 #### 5.7.3 Application Power Management Callbacks

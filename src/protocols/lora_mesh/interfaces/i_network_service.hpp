@@ -63,7 +63,8 @@ class INetworkService {
         uint8_t default_data_slots = 1;       ///< Default data slots to request
         uint8_t default_control_slots = 1;    ///< Default control slots
         uint8_t default_discovery_slots = 1;  ///< Default discovery slots
-        uint32_t guard_time_ms = 50;  ///< TX guard time for RX readiness
+        uint32_t guard_time_ms = 50;      ///< TX guard time for RX readiness
+        float target_duty_cycle = 0.01f;  ///< Target TX duty cycle (default 1%)
 
         // Join request retry configuration
         uint8_t retry_delay_superframes =
