@@ -89,7 +89,15 @@ bool DistanceVectorRoutingTable::UpdateRoute(
         types::protocols::lora_mesh::NetworkNodeRoute potential_route(
             destination, source, hop_count, actual_link_quality, current_time);
 
-        if (!node_it->is_active || IsBetterRoute(*node_it, potential_route)) {
+        bool should_update = IsBetterRoute(*node_it, potential_route);
+        if (!node_it->is_active && !should_update) {
+            // Re-activate using the existing (better) route — preserve hop_count/next_hop
+            node_it->is_active = true;
+            node_it->last_seen = current_time;
+            route_changed = true;
+            NotifyRouteUpdate(true, destination, node_it->next_hop,
+                              node_it->routing_entry.hop_count);
+        } else if (should_update) {
             route_changed = node_it->UpdateRouteInfo(
                 source, hop_count, actual_link_quality, current_time);
 
