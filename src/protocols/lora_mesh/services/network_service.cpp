@@ -506,6 +506,7 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     node_address_ = config.node_address;
     node_role_ = config.node_role;
     target_duty_cycle_ = config.target_duty_cycle;
+    min_sleep_fraction_ = config.min_sleep_fraction;
 
     LOG_INFO("Network service configured with node address 0x%04X, role: %d",
              node_address_, static_cast<int>(node_role_));
@@ -1665,8 +1666,15 @@ Result NetworkService::UpdateSlotTable() {
             std::min(std::ceil(required_superframe_ms / slot_duration_ms),
                      static_cast<float>(255)));
 
+        uint8_t min_for_sleep = total_active_slots;
+        if (min_sleep_fraction_ > 0.0f && min_sleep_fraction_ < 1.0f) {
+            min_for_sleep = static_cast<uint8_t>(
+                std::min(std::ceil(static_cast<float>(total_active_slots) /
+                                   (1.0f - min_sleep_fraction_)),
+                         255.0f));
+        }
         total_superframe_slots =
-            std::max({computed_slots, kMinSlots, total_active_slots});
+            std::max({computed_slots, kMinSlots, min_for_sleep});
     }
 
     uint8_t sleep_slots = total_superframe_slots - total_active_slots;
@@ -2923,6 +2931,8 @@ uint8_t NetworkService::GetMaxHopsFromRoutingTable() const {
     uint8_t max_hop_count = 0;
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
+        if (!node.is_active)
+            continue;  // skip stale entries
         auto hop_count = node.routing_entry.hop_count;
         if (hop_count > max_hop_count) {
             max_hop_count = hop_count;

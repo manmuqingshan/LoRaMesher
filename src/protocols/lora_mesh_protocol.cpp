@@ -212,6 +212,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     net_config.node_address = config.getNodeAddress();
     net_config.node_role = config.getNodeRole();
     net_config.target_duty_cycle = config.getTargetDutyCycle();
+    net_config.min_sleep_fraction = config.getMinSleepFraction();
 
     Result result = network_service_->Configure(net_config);
     if (!result) {

@@ -351,6 +351,14 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         target_duty_cycle_ = std::clamp(duty_cycle, 0.001f, 1.0f);
     }
 
+    /** @brief Get the minimum sleep fraction (0.0–1.0, default 0.30 = 30%) */
+    float getMinSleepFraction() const { return min_sleep_fraction_; }
+
+    /** @brief Set the minimum sleep fraction (0.0–0.9) */
+    void setMinSleepFraction(float fraction) {
+        min_sleep_fraction_ = std::clamp(fraction, 0.0f, 0.9f);
+    }
+
     /**
      * @brief Get the node role for network formation
      *
@@ -518,6 +526,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         50;                        ///< Maximum number of nodes in the network
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
+    float min_sleep_fraction_ =
+        0.30f;  ///< Minimum fraction of superframe as sleep
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;

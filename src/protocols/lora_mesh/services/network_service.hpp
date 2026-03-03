@@ -997,6 +997,8 @@ class NetworkService : public INetworkService {
 
     // Duty cycle regulation
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
+    float min_sleep_fraction_ =
+        0.30f;  ///< Minimum fraction of superframe as sleep
 
     // Join retry backoff (Slotted ALOHA)
     uint8_t join_retry_count_ = 0;  ///< Number of join retries so far
