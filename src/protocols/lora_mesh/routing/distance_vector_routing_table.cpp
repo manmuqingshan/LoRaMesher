@@ -498,10 +498,15 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             source_node_it->next_hop != source_address) {
             source_node_it->next_hop = source_address;
             source_node_it->routing_entry.hop_count = 1;
-            source_node_it->is_active = true;
             routing_changed = true;
 
             NotifyRouteUpdate(true, source_address, source_address, 1);
+        }
+
+        // Ensure that the node is active
+        if (!source_node_it->is_active) {
+            source_node_it->is_active = true;
+            routing_changed = true;
         }
     } else {
         // Add source as new direct neighbor
