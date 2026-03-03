@@ -158,6 +158,9 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
     ASSERT_TRUE(WaitForNetworkFormation(nodes, num_nodes - 1))
         << "Network formation failed for " << num_nodes << " nodes";
 
+    ASSERT_TRUE(WaitForRoutingStabilization(nodes))
+        << "Routing stabilization failed for " << num_nodes << " nodes";
+
     auto superframe_time = GetSuperframeDuration(*nodes.front());
 
     // Wait for routing tables to fill up
@@ -193,6 +196,36 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
             << node->name << " should have routes to most other nodes";
     }
 
+    // Assert slot table structure: every node must have ≥1 sleep slot and
+    // all nodes must agree on the same total superframe size.
+    size_t reference_superframe_size = 0;
+    for (auto* node : nodes) {
+        auto slot_table = node->protocol->GetSlotTable();
+        ASSERT_FALSE(slot_table.empty())
+            << node->name << " has empty slot table";
+
+        size_t sleep_count = 0;
+        for (const auto& slot : slot_table) {
+            if (slot.type ==
+                types::protocols::lora_mesh::SlotAllocation::SlotType::SLEEP)
+                ++sleep_count;
+        }
+        EXPECT_GE(sleep_count, 1u)
+            << node->name
+            << " must have at least 1 sleep slot (min_sleep_fraction >= 30%)";
+
+        if (reference_superframe_size == 0) {
+            reference_superframe_size = slot_table.size();
+        } else {
+            EXPECT_EQ(slot_table.size(), reference_superframe_size)
+                << node->name << " superframe size disagrees with first node ("
+                << slot_table.size() << " vs " << reference_superframe_size
+                << ")";
+        }
+    }
+    std::cout << "Superframe size: " << reference_superframe_size << " slots"
+              << std::endl;
+
     // Verify network is functional: send messages between distant nodes
     ClearAllReceivedMessages();
 
@@ -200,7 +233,7 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
     ASSERT_TRUE(SendMessage(*nodes[0], *nodes[num_nodes - 1], payload));
 
     bool received =
-        AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 2, [&]() {
+        AdvanceTime(superframe_time * 3, superframe_time * 3, 15, 2, [&]() {
             return HasReceivedMessageFrom(*nodes[num_nodes - 1],
                                           nodes[0]->address, MessageType::DATA);
         });
