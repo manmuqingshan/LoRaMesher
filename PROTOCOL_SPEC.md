@@ -1,6 +1,6 @@
 # LoRaMesher Protocol Specification
 
-**Version**: 1.2.2
+**Version**: 1.5
 **Last Updated**: 2026-01-28
 **Protocol Type**: Distance-Vector Mesh Routing with Power-Aware TDMA and Sponsor-Based Joining
 
@@ -869,6 +869,14 @@ This provides fast detection of link failures (typically 3 superframes, ~6-15s) 
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
+**Route Re-activation on Stale Entry (v1.5)**
+
+When `UpdateRoute()` is called for an inactive (`is_active=false`) node:
+- If the new advertisement is **genuinely better** (lower weighted cost), the route is updated normally.
+- If the new advertisement is **not better** (equal or worse hop count / quality), the node is **re-activated using the existing (better) route** — hop_count and next_hop are preserved. Only `is_active` and `last_seen` are refreshed.
+
+**Rationale**: without this guard, an expired direct-neighbor route (hop_count=1) could be overwritten with a stale 2-hop advertisement received from another node's routing table, causing false `max_hops` inflation that shifts the entire superframe structure.
+
 ### 4.5 Network Topology Examples and Routing Behavior
 
 This section demonstrates how the routing algorithm performs in different network topologies.
@@ -1207,7 +1215,7 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    POWER-OPTIMIZED SUPERFRAME STRUCTURE (Updated v1.2)       │
+│                    POWER-OPTIMIZED SUPERFRAME STRUCTURE (Updated v1.5)       │
 │                              (Example: 20 slots)                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
@@ -1229,7 +1237,7 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ POWER CHARACTERISTICS:                                                      │
 │ • Active Slots: 10 (50% - sync: 3, control: 3, data: 2, discovery: 2)     │
-│ • Sleep Slots: N (configurable TX duty cycle, default 1%)                  │
+│ • Sleep Slots: N (configurable TX duty cycle ≥1% and/or sleep fraction ≥30%)│
 │ • Actual Duty Cycle: 50% (configurable based on network size)              │
 │ • Power Savings: 50% sleep time, adaptive based on traffic                 │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1727,21 +1735,28 @@ Required Active Slots:
 - Total Active = Beacon + Control + Data + Discovery
 
 Power-Optimized Superframe (TX-time-based, configurable):
-- Target TX Duty Cycle = configurable (default 1%, range 0.1%–100%)
+- Target TX Duty Cycle   = configurable (default 1%, range 0.1%–100%)
+- Min Sleep Fraction     = configurable (default 30%, range 0%–90%)
 - NM TX Time = ToA(sync_beacon) + ToA(routing_table) + nm_data_slots × ToA(max_packet)
-- Superframe Size = max(ceil(NM_TX_time_ms / (slot_duration_ms × target_duty_cycle)),
-                        kMinSlots, total_active_slots)
-- SLEEP Slots = Superframe Size - Total Active
+- Minimum Total Slots (TX)    = ceil(NM_TX_time_ms / (slot_duration_ms × target_duty_cycle))
+- Minimum Total Slots (Sleep) = ceil(total_active_slots / (1 − min_sleep_fraction))
+- Superframe Size = max(Minimum Total Slots (TX), kMinSlots,
+                        Minimum Total Slots (Sleep))
+- SLEEP Slots = Superframe Size − Total Active
 - Actual TX Duty Cycle = NM_TX_time_ms / (Superframe Size × slot_duration_ms)
 ```
 
 The TX-only metric ensures slot count scales with *transmit* time rather than total active slots,
-giving a physically meaningful duty cycle independent of how many nodes are listening. Example:
+giving a physically meaningful duty cycle independent of how many nodes are listening. The
+`min_sleep_fraction` parameter guarantees a minimum sleep budget even in large dense networks
+where the TX-based formula alone might produce zero sleep slots. Example:
 
 ```cpp
 LoRaMeshProtocolConfig config;
-config.setTargetDutyCycle(0.01f);  // 1% TX duty cycle (default)
+config.setTargetDutyCycle(0.01f);   // 1% TX duty cycle (default)
 // Valid range: 0.001f (0.1%) to 1.0f (100%)
+config.setMinSleepFraction(0.30f);  // ≥30% of superframe as sleep (default)
+// Valid range: 0.0f (no minimum) to 0.9f (90% sleep)
 ```
 
 #### 5.7.3 Application Power Management Callbacks
@@ -2862,7 +2877,12 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 - **Memory Footprint**: ~4.4KB RAM usage suitable for ESP32 deployment
 
 ### Implementation Notes
-This specification has been synchronized with the actual codebase as of version 1.2.1. Several features documented in earlier versions are marked as planned in Section 10:
+This specification has been synchronized with the actual codebase as of version 1.5. Several features documented in earlier versions are marked as planned in Section 10:
+
+**v1.5 Changelog**:
+- **Route re-activation fix** (Section 4.3): `UpdateRoute()` no longer overwrites an inactive route with a worse advertisement; the existing (better) route is preserved and the node is simply re-activated. Prevents false `max_hops` inflation that shifted the superframe structure.
+- **`GetMaxHopsFromRoutingTable()` fix**: Inactive nodes are now skipped so stale hop counts cannot inflate the NM's `current_network_depth_`.
+- **`min_sleep_fraction` configuration** (Section 5.7.2): New parameter (default 30%) guarantees a minimum sleep budget in large dense networks where the TX-duty-cycle formula alone would produce zero sleep slots.
 - Frame header fields (Flags, TTL, Sequence Number, Checksum)
 - Explicit route poisoning and network healing beacons
 - Hop count as primary routing metric
