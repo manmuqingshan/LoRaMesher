@@ -50,7 +50,7 @@ TEST_F(RoutingLimitsTests, MaxHopCountEnforcement) {
     auto superframe_time = GetSuperframeDuration(*nodes.front());
 
     // Wait for routing tables to fill up
-    AdvanceTime(superframe_time * 2, superframe_time * 2, 50, 2,
+    AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 4,
                 [&]() { return false; });
 
     // Print routing tables for debugging

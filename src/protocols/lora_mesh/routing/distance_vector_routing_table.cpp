@@ -89,7 +89,15 @@ bool DistanceVectorRoutingTable::UpdateRoute(
         types::protocols::lora_mesh::NetworkNodeRoute potential_route(
             destination, source, hop_count, actual_link_quality, current_time);
 
-        bool should_update = IsBetterRoute(*node_it, potential_route);
+        bool should_update;
+        if (!node_it->is_active) {
+            // For inactive routes: only accept if not degrading hop count.
+            // IsBetterRoute has active-beats-inactive semantics so it always
+            // returns true here — use hop count directly instead.
+            should_update = (hop_count <= node_it->routing_entry.hop_count);
+        } else {
+            should_update = IsBetterRoute(*node_it, potential_route);
+        }
         if (!node_it->is_active && !should_update) {
             // Re-activate using the existing (better) route — preserve hop_count/next_hop
             node_it->is_active = true;
@@ -583,8 +591,25 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 dest, source_address, hop_count_via_source, actual_link_quality,
                 reception_timestamp);
 
-            if (!node_it->is_active ||
-                IsBetterRoute(*node_it, potential_route)) {
+            bool should_update;
+            if (!node_it->is_active) {
+                // For inactive routes: only accept if not degrading hop count.
+                // IsBetterRoute has active-beats-inactive semantics so it
+                // always returns true here — use hop count directly instead.
+                should_update =
+                    (hop_count_via_source <= node_it->routing_entry.hop_count);
+            } else {
+                should_update = IsBetterRoute(*node_it, potential_route);
+            }
+
+            if (!node_it->is_active && !should_update) {
+                // Re-activate preserving the existing (better) route
+                node_it->is_active = true;
+                node_it->last_seen = reception_timestamp;
+                routing_changed = true;
+                NotifyRouteUpdate(true, dest, node_it->next_hop,
+                                  node_it->routing_entry.hop_count);
+            } else if (should_update) {
                 // Update the existing route
                 bool changed = node_it->UpdateRouteInfo(
                     source_address, hop_count_via_source, actual_link_quality,

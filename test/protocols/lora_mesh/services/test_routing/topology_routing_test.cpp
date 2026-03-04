@@ -293,6 +293,12 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
     ASSERT_TRUE(WaitForRoutingStabilization(nodes))
         << "Routing stabilization failed";
 
+    // Distance-vector needs additional rounds to converge to shorter paths.
+    // With min_sleep_fraction each superframe is longer, so allow 2 extra.
+    auto superframe_ms = GetSuperframeDuration(*nodes.front());
+    AdvanceTime(superframe_ms * 2, superframe_ms * 2, 15, 2,
+                [&]() { return false; });
+
     // Print routing tables for debugging
     for (auto* node : nodes) {
         PrintRoutingTable(*node);
