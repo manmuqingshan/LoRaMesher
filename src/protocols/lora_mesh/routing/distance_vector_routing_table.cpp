@@ -458,6 +458,7 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     kMinMessagesBeforeInvalidation) {
                 node.routing_entry.link_quality =
                     node.link_stats.CalculateQuality();
+                LogRouteEntry(node);
             }
 
             // Step 2: Check fast invalidation BEFORE incrementing
@@ -467,6 +468,7 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     kMinMessagesBeforeInvalidation) {
                 node.is_active = false;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
+                LogRouteEntry(node);
             }
 
             // Step 3: THEN expect a new message for this superframe
