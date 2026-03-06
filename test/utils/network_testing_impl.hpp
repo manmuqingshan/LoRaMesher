@@ -48,37 +48,33 @@ namespace test {
  * @param crc_enabled Whether CRC is enabled (default: true)
  * @return Time-on-Air in milliseconds
  */
-inline uint32_t CalculateLoRaTimeOnAir(uint8_t payload_length, uint8_t sf = 7,
-                                       uint32_t bw = 125000,
-                                       uint8_t /* cr */ = 5,
-                                       uint8_t preamble_length = 8,
-                                       bool header_enabled = true,
-                                       bool crc_enabled = true) {
+inline uint32_t CalculateLoRaTimeOnAir(
+    uint8_t payload_length, uint8_t sf = 7, uint32_t bw = 125000,
+    uint8_t cr = 5,  // 5=4/5, 6=4/6, 7=4/7, 8=4/8
+    uint8_t preamble_length = 8, bool header_enabled = true,
+    bool crc_enabled = true) {
     // Symbol duration in seconds
     double symbol_duration = (1 << sf) / static_cast<double>(bw);
 
     // Preamble duration in seconds
     double preamble_duration = (preamble_length + 4.25) * symbol_duration;
 
-    // Payload calculation
     double payload_symbols = 0;
     if (payload_length > 0) {
-        // Calculate payload symbols using LoRa formula
-        int payload_bits = payload_length * 8;
-        int header_bits = header_enabled ? 20 : 0;
-        int crc_bits = crc_enabled ? 16 : 0;
+        // Standard Semtech formula (SX1276 datasheet §4.1.1.6)
+        // LDRO (DE=1) required when symbol time > 16 ms (SF11/12 at 125kHz)
+        int de = (symbol_duration > 0.016) ? 1 : 0;
+        int ih = header_enabled ? 0 : 1;  // IH=1 for implicit header
+        int crc = crc_enabled ? 1 : 0;
+        // Library cr=5..8 equals (CR_raw+4) directly
+        int cr_mult = cr;
 
-        // Total bits including header and CRC
-        int total_bits = payload_bits + header_bits + crc_bits;
+        int numerator = 8 * payload_length - 4 * sf + 28 + 16 * crc - 20 * ih;
+        int denominator = 4 * (sf - 2 * de);
+        int ceil_val = std::max(0, (numerator + denominator - 1) / denominator);
 
-        // Calculate number of symbols needed
-        double symbols_per_payload =
-            8 + std::max(0.0, std::ceil((total_bits - 4 * sf + 28 +
-                                         16 * (crc_enabled ? 1 : 0) -
-                                         20 * (header_enabled ? 0 : 1)) /
-                                        (4.0 * (sf - 2))));
-
-        payload_symbols = symbols_per_payload * symbol_duration;
+        double sym = 8.0 + static_cast<double>(ceil_val) * cr_mult;
+        payload_symbols = sym * symbol_duration;
     }
 
     // Total time in seconds

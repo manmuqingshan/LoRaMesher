@@ -4,7 +4,7 @@
  */
 #pragma once
 
-// #define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
+#define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
 
 #include <gtest/gtest.h>
 #include <filesystem>
@@ -189,6 +189,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Configure the protocol with default configuration and node role
         LoRaMeshProtocolConfig config(address);
         config.setNodeRole(node_role);
+        config.setTargetDutyCycle(
+            1.0f);  // Tests: no duty-cycle-driven slot inflation
         result = node->protocol->Configure(config);
         if (!result) {
             std::cerr << "Failed to configure protocol for " << name << ": "
