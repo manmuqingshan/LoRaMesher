@@ -296,7 +296,6 @@ uint8_t RadioLibRadio::getPower() {
 }
 
 uint32_t RadioLibRadio::getTimeOnAir(uint8_t length) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
         return 0;
     }

@@ -732,10 +732,8 @@ void SuperframeService::UpdateTaskFunction(void* param) {
                     break;
 
                 case SuperframeNotificationType::STOP_REQUESTED:
-                    // Stop requested - exit the loop immediately
-                    // The is_running_ flag is already false at this point
                     LOG_DEBUG(
-                        "Stop notification received, exiting update task");
+                        "Stop notification received, waiting for external suspension");
                     break;
             }
         } else if (queue_result == os::QueueResult::kTimeout) {

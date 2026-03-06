@@ -674,8 +674,6 @@ Result NetworkService::PerformTimingSynchronization(
 
     sync_beacon.Print();
 
-    superframe_service_->StopSuperframe();
-
     // Compensate for processing delay between radio DIO interrupt and timestamp capture
     // This delay includes: task switch (~5-10ms) + SPI read (~10-20ms) +
     // deserialization (~5-10ms) + logging (~10-15ms) = ~40-50ms total
@@ -707,6 +705,9 @@ Result NetworkService::PerformTimingSynchronization(
     LOG_DEBUG(
         "%s sync beacon timing: duration %d ms, slots %d, slot_duration %d ms",
         context_name.c_str(), superframe_duration, total_slots, slot_duration);
+
+    // Stop the superframe now that all radio-dependent computations are done.
+    superframe_service_->StopSuperframe();
 
     // Update superframe configuration
     Result config_result = superframe_service_->UpdateSuperframeConfig(
