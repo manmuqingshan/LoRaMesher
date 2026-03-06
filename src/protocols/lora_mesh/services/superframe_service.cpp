@@ -733,7 +733,8 @@ void SuperframeService::UpdateTaskFunction(void* param) {
 
                 case SuperframeNotificationType::STOP_REQUESTED:
                     LOG_DEBUG(
-                        "Stop notification received, waiting for external suspension");
+                        "Stop notification received, waiting for external "
+                        "suspension");
                     break;
             }
         } else if (queue_result == os::QueueResult::kTimeout) {
