@@ -557,6 +557,12 @@
         .slot-bar:active, .message-indicator:active {
             transform: scale(0.95);
         }
+        /* ── Topology tab ── */
+        .network-node-circle { cursor: grab; }
+        .network-node-circle:hover { filter: brightness(1.15) drop-shadow(0 2px 6px rgba(0,0,0,0.25)); }
+        .network-node-circle:active { cursor: grabbing; }
+        .network-edge-path { pointer-events: none; }
+        .network-edge-label { pointer-events: none; user-select: none; font-family: monospace; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -687,10 +693,11 @@
             </div>
             
             <div class="tabs">
-                <button class="tab active" onclick="showTab('timeline')">Timeline</button>
-                <button class="tab" onclick="showTab('network')">Network</button>
-                <button class="tab" onclick="showTab('messages')">Messages</button>
-                <button class="tab" onclick="showTab('stats')">Statistics</button>
+                <button class="tab active" onclick="showTab('timeline', event)">Timeline</button>
+                <button class="tab" onclick="showTab('network', event)">Network</button>
+                <button class="tab" onclick="showTab('messages', event)">Messages</button>
+                <button class="tab" onclick="showTab('stats', event)">Statistics</button>
+                <button class="tab" onclick="showTab('topology', event)">Topology</button>
             </div>
 
             <div id="timeline" class="tab-content active">
@@ -729,6 +736,47 @@
             <div id="stats" class="tab-content">
                 <h3>Network Statistics</h3>
                 <div class="stats-grid" id="statsGrid"></div>
+            </div>
+
+            <div id="topology" class="tab-content">
+                <!-- Toolbar -->
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+                    <h3 style="margin:0; flex:1;">Network Topology</h3>
+                    <button class="btn" onclick="analyzer.downloadTopologyJSON()">Download JSON</button>
+                    <button class="btn" onclick="analyzer.downloadTopologySVG()">Download SVG</button>
+                    <button class="btn" onclick="analyzer.resetNetworkLayout()">Reset Layout</button>
+                </div>
+                <!-- Time scrubber -->
+                <div id="topologyScrubber" style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:12px; display:none;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <button class="btn" onclick="analyzer.networkStepPrev()" style="padding:5px 10px;">&#9664; Prev</button>
+                        <input type="range" id="networkTimeSlider" min="0" max="0" value="0"
+                               oninput="analyzer.networkOnSliderInput(this.value)" style="flex:1;">
+                        <button class="btn" onclick="analyzer.networkStepNext()" style="padding:5px 10px;">Next &#9654;</button>
+                        <span id="networkTimestamp" style="font-family:monospace; min-width:180px; text-align:right; color:#2c3e50;">Latest</span>
+                    </div>
+                </div>
+                <!-- SVG canvas -->
+                <div style="border:1px solid #ddd; border-radius:6px; overflow:hidden;">
+                    <svg id="networkSvg" width="100%" height="600" style="display:block; background:#fafafa;">
+                        <defs id="networkDefs"></defs>
+                        <g id="networkEdges"></g>
+                        <g id="networkNodes"></g>
+                        <g id="networkLabels"></g>
+                    </svg>
+                </div>
+                <!-- Legend -->
+                <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:10px; font-size:13px; color:#495057;">
+                    <span><span style="display:inline-block;width:14px;height:4px;background:#27ae60;vertical-align:middle;border-radius:2px;margin-right:4px;"></span>Good (171-255)</span>
+                    <span><span style="display:inline-block;width:14px;height:4px;background:#f39c12;vertical-align:middle;border-radius:2px;margin-right:4px;"></span>Medium (86-170)</span>
+                    <span><span style="display:inline-block;width:14px;height:4px;background:#e74c3c;vertical-align:middle;border-radius:2px;margin-right:4px;"></span>Poor (0-85)</span>
+                    <span><span style="display:inline-block;width:14px;height:4px;border-top:3px dashed #aaa;vertical-align:middle;margin-right:4px;"></span>Inactive</span>
+                    <span><span style="display:inline-block;width:14px;height:14px;background:#f1c40f;border-radius:50%;vertical-align:middle;border:2px solid #f39c12;margin-right:4px;"></span>Network Manager</span>
+                </div>
+                <!-- Empty state -->
+                <div id="networkEmpty" style="text-align:center; color:#7f8c8d; padding:40px; display:none;">
+                    No RTENTRY routing data found in loaded logs.
+                </div>
             </div>
         </div>
     </div>
@@ -846,6 +894,11 @@
                 this.fileColors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#34495e', '#e67e22'];
                 this.isRefreshMode = false; // Track if we're in refresh mode
                 this.hiddenNodes = new Set(); // nodeIds (hex strings) that are toggled off
+                this.routingEntries  = [];        // [{timestamp, nodeId, dest, via, hops, quality, active, nm}]
+                this.nodePositions   = new Map(); // nodeId -> {x, y} — persists across time scrubs
+                this.networkCurrentTime = null;   // null = snap to latest on render
+                this._dragging = null;
+                this._networkDragSetup = false;
 
                 // Check for File System Access API support
                 this.supportsFileSystemAccess = 'showOpenFilePicker' in window;
@@ -1174,6 +1227,10 @@
                 this.renderTimeline();
                 this.renderMessages();
                 this.renderStats();
+                this.networkCurrentTime = null;
+                if (document.getElementById('topology').classList.contains('active')) {
+                    this.renderNetwork();
+                }
 
                 // Show success message
                 logInfo.style.background = '#d4edda';
@@ -1235,6 +1292,7 @@
                 const logContent = fileData.content;
                 fileData.events = [];
                 fileData.messages = [];
+                fileData.routingEntries = [];
                 fileData.nodes.clear();
                 fileData.originalTimeMap = new Map();
                 fileData.usesLineNumbers = false;
@@ -1487,6 +1545,24 @@
                     fileData.nodes.get(nodeId).lastSeen = timestamp;
                 }
 
+                // ── RTENTRY: structured routing table entry
+                const rtentryMatch = line.match(
+                    /RTENTRY\s+dest=0x([0-9A-Fa-f]+)\s+via=0x([0-9A-Fa-f]+)\s+hops=(\d+)\s+quality=(\d+)\s+active=(\d+)(?:\s+nm=(\d+))?/
+                );
+                if (rtentryMatch && nodeId !== 'unknown') {
+                    fileData.routingEntries.push({
+                        timestamp,
+                        nodeId,
+                        dest:    rtentryMatch[1],
+                        via:     rtentryMatch[2],
+                        hops:    parseInt(rtentryMatch[3]),
+                        quality: parseInt(rtentryMatch[4]),
+                        active:  parseInt(rtentryMatch[5]) !== 0,
+                        nm:      rtentryMatch[6] !== undefined ? parseInt(rtentryMatch[6]) !== 0 : false,
+                        fileId:  fileData.id
+                    });
+                }
+
                 return pendingTransmission;
             }
 
@@ -1529,6 +1605,9 @@
                 }
                 this.updateNodeFilterUI();
                 this.renderTimeline();
+                if (document.getElementById('topology').classList.contains('active')) {
+                    this.renderNetwork();
+                }
             }
 
             updateNodeFilterUI() {
@@ -1556,6 +1635,7 @@
                 this.nodes.clear();
                 this.messages = [];
                 this.events = [];
+                this.routingEntries = [];
                 this.originalTimeMap.clear();
 
                 let allTimestamps = [];
@@ -1580,9 +1660,10 @@
                         }
                     });
 
-                    // Merge messages and events
+                    // Merge messages, events, and routing entries
                     this.messages = this.messages.concat(fileData.messages);
                     this.events = this.events.concat(fileData.events);
+                    this.routingEntries = this.routingEntries.concat(fileData.routingEntries || []);
 
                     // Merge originalTimeMap if it exists
                     if (fileData.originalTimeMap) {
@@ -1611,6 +1692,7 @@
                 // Sort by timestamp
                 this.messages.sort((a, b) => a.timestamp - b.timestamp);
                 this.events.sort((a, b) => a.timestamp - b.timestamp);
+                this.routingEntries.sort((a, b) => a.timestamp - b.timestamp);
 
                 // Remove stale hidden node entries for nodes that no longer exist
                 this.hiddenNodes.forEach(id => {
@@ -1836,6 +1918,10 @@
                 this.renderTimeline();
                 this.renderMessages();
                 this.renderStats();
+                this.networkCurrentTime = null;
+                if (document.getElementById('topology').classList.contains('active')) {
+                    this.renderNetwork();
+                }
 
                 // Check if any failures are due to NotReadableError (locked files)
                 const hasLockedFiles = results.failed.some(f => f.error.includes('NotReadableError'));
@@ -2219,24 +2305,384 @@ ${directionIcon} Direction: ${direction}
                 error.textContent = message;
                 document.querySelector('.container').insertBefore(error, document.querySelector('.upload-section'));
             }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // TOPOLOGY TAB — topology computation, SVG rendering, drag-drop, download
+            // ═══════════════════════════════════════════════════════════════════════
+
+            getTopologyAtTime(timestamp) {
+                // Returns Map<nodeId, Map<dest, {via, hops, quality, active, nm}>>
+                // Last-write-wins per nodeId+dest pair
+                const topology = new Map();
+                for (const entry of this.routingEntries) {
+                    if (entry.timestamp > timestamp) break;
+                    if (this.hiddenNodes.has(entry.nodeId)) continue;
+                    if (!topology.has(entry.nodeId)) topology.set(entry.nodeId, new Map());
+                    topology.get(entry.nodeId).set(entry.dest, {
+                        via: entry.via, hops: entry.hops, quality: entry.quality,
+                        active: entry.active, nm: entry.nm
+                    });
+                }
+                return topology;
+            }
+
+            getDirectLinks(topologyMap) {
+                // Returns [{from, to, quality, active}] for all hops===1 entries
+                const links = [];
+                topologyMap.forEach((routes, nodeId) => {
+                    routes.forEach((route, dest) => {
+                        if (route.hops === 1) {
+                            links.push({ from: nodeId, to: dest, quality: route.quality, active: route.active });
+                        }
+                    });
+                });
+                return links;
+            }
+
+            getTopologyChangeTimestamps() {
+                // Sorted deduplicated array of all routing entry timestamps
+                const seen = new Set();
+                const timestamps = [];
+                for (const entry of this.routingEntries) {
+                    if (!seen.has(entry.timestamp)) {
+                        seen.add(entry.timestamp);
+                        timestamps.push(entry.timestamp);
+                    }
+                }
+                return timestamps; // Already sorted since routingEntries is sorted
+            }
+
+            getInitialNodePositions(nodeIds, W, H) {
+                // Circular layout; preserves already-dragged positions
+                const cx = W / 2, cy = H / 2, r = Math.min(W, H) * 0.35;
+                nodeIds.forEach((nodeId, i) => {
+                    if (!this.nodePositions.has(nodeId)) {
+                        const angle = (2 * Math.PI * i) / nodeIds.length - Math.PI / 2;
+                        this.nodePositions.set(nodeId, {
+                            x: cx + r * Math.cos(angle),
+                            y: cy + r * Math.sin(angle)
+                        });
+                    }
+                });
+            }
+
+            renderNetwork() {
+                const svg = document.getElementById('networkSvg');
+                const emptyDiv = document.getElementById('networkEmpty');
+                const scrubber = document.getElementById('topologyScrubber');
+                const changeTimes = this.getTopologyChangeTimestamps();
+
+                if (changeTimes.length === 0) {
+                    emptyDiv.style.display = 'block';
+                    scrubber.style.display = 'none';
+                    document.getElementById('networkEdges').innerHTML = '';
+                    document.getElementById('networkNodes').innerHTML = '';
+                    document.getElementById('networkLabels').innerHTML = '';
+                    return;
+                }
+                emptyDiv.style.display = 'none';
+
+                // Configure scrubber
+                const slider = document.getElementById('networkTimeSlider');
+                slider.max = changeTimes.length - 1;
+                if (this.networkCurrentTime === null) {
+                    this.networkCurrentTime = changeTimes[changeTimes.length - 1];
+                    slider.value = changeTimes.length - 1;
+                } else {
+                    const idx = changeTimes.lastIndexOf(this.networkCurrentTime);
+                    slider.value = idx >= 0 ? idx : changeTimes.length - 1;
+                }
+                scrubber.style.display = 'block';
+                document.getElementById('networkTimestamp').textContent =
+                    this.formatTimestamp(this.networkCurrentTime);
+
+                const topology = this.getTopologyAtTime(this.networkCurrentTime);
+                const links = this.getDirectLinks(topology);
+
+                // Collect all nodeIds (from topology + link endpoints), excluding hidden
+                const nodeIdSet = new Set();
+                topology.forEach((_, nodeId) => nodeIdSet.add(nodeId));
+                links.forEach(l => { nodeIdSet.add(l.from); nodeIdSet.add(l.to); });
+                this.hiddenNodes.forEach(id => nodeIdSet.delete(id));
+                const nodeIds = [...nodeIdSet];
+
+                const W = svg.clientWidth || svg.getBoundingClientRect().width || 800;
+                const H = parseInt(svg.getAttribute('height')) || 600;
+                this.getInitialNodePositions(nodeIds, W, H);
+
+                if (!this._networkDragSetup) {
+                    this._networkDragSetup = true;
+                    this._setupNetworkDrag();
+                }
+
+                this._renderNetworkDefs();
+                this._renderNetworkEdges(links);
+                this._renderNetworkNodes(nodeIds, topology);
+            }
+
+            _setupNetworkDrag() {
+                const svg = document.getElementById('networkSvg');
+                svg.addEventListener('mousemove', (e) => {
+                    if (!this._dragging) return;
+                    const { nodeId, startX, startY, startPosX, startPosY } = this._dragging;
+                    const svgRect = svg.getBoundingClientRect();
+                    const scaleX = (svg.clientWidth || svgRect.width) / svgRect.width;
+                    const scaleY = (svg.clientHeight || svgRect.height) / svgRect.height;
+                    const newX = startPosX + (e.clientX - startX) * scaleX;
+                    const newY = startPosY + (e.clientY - startY) * scaleY;
+                    this.nodePositions.set(nodeId, { x: newX, y: newY });
+
+                    const circle = svg.querySelector(`.network-node-circle[data-nodeid="${nodeId}"]`);
+                    if (circle) {
+                        circle.setAttribute('cx', newX);
+                        circle.setAttribute('cy', newY);
+                        const text = circle.nextSibling;
+                        if (text && text.tagName === 'text') {
+                            text.setAttribute('x', newX);
+                            text.setAttribute('y', newY);
+                        }
+                    }
+
+                    const topology = this.getTopologyAtTime(this.networkCurrentTime);
+                    this._renderNetworkEdges(this.getDirectLinks(topology));
+                });
+                svg.addEventListener('mouseup', () => { this._dragging = null; });
+                svg.addEventListener('mouseleave', () => { this._dragging = null; });
+            }
+
+            _renderNetworkDefs() {
+                const defs = document.getElementById('networkDefs');
+                defs.innerHTML = '';
+                [['arrow-green','#27ae60'],['arrow-yellow','#f39c12'],['arrow-red','#e74c3c'],['arrow-gray','#aaaaaa']]
+                    .forEach(([id, color]) => {
+                        const m = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                        m.setAttribute('id', id);
+                        m.setAttribute('markerWidth', '8');
+                        m.setAttribute('markerHeight', '8');
+                        m.setAttribute('refX', '6');
+                        m.setAttribute('refY', '3');
+                        m.setAttribute('orient', 'auto');
+                        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                        p.setAttribute('d', 'M0,0 L0,6 L8,3 z');
+                        p.setAttribute('fill', color);
+                        m.appendChild(p);
+                        defs.appendChild(m);
+                    });
+            }
+
+            _renderNetworkEdges(links) {
+                const edgesG = document.getElementById('networkEdges');
+                const labelsG = document.getElementById('networkLabels');
+                edgesG.innerHTML = '';
+                labelsG.innerHTML = '';
+
+                const NODE_R = 30;
+                const CURVE_OFFSET = 22;
+
+                links.forEach(link => {
+                    const posFrom = this.nodePositions.get(link.from);
+                    const posTo = this.nodePositions.get(link.to);
+                    if (!posFrom || !posTo) return;
+
+                    const dx = posTo.x - posFrom.x;
+                    const dy = posTo.y - posFrom.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 1) return;
+
+                    // Perpendicular unit vector (separates A→B from B→A)
+                    const nx = -dy / dist;
+                    const ny = dx / dist;
+
+                    // Offset start/end points perpendicularly
+                    const sx = posFrom.x + nx * CURVE_OFFSET;
+                    const sy = posFrom.y + ny * CURVE_OFFSET;
+                    const ex = posTo.x + nx * CURVE_OFFSET;
+                    const ey = posTo.y + ny * CURVE_OFFSET;
+
+                    // Direction along the offset line
+                    const dox = ex - sx, doy = ey - sy;
+                    const doDist = Math.sqrt(dox * dox + doy * doy);
+                    if (doDist < 1) return;
+                    const udx = dox / doDist, udy = doy / doDist;
+
+                    // Shorten at circle boundaries
+                    const startX = sx + udx * NODE_R, startY = sy + udy * NODE_R;
+                    const endX = ex - udx * NODE_R,   endY = ey - udy * NODE_R;
+
+                    // Quadratic bezier control point
+                    const midX = (startX + endX) / 2 + nx * CURVE_OFFSET;
+                    const midY = (startY + endY) / 2 + ny * CURVE_OFFSET;
+
+                    const d = `M${startX.toFixed(1)},${startY.toFixed(1)} Q${midX.toFixed(1)},${midY.toFixed(1)} ${endX.toFixed(1)},${endY.toFixed(1)}`;
+                    const color  = this._qualityColor(link.quality, link.active);
+                    const width  = this._qualityWidth(link.quality, link.active);
+                    const marker = this._qualityMarker(link.quality, link.active);
+
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    path.setAttribute('d', d);
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('stroke', color);
+                    path.setAttribute('stroke-width', width);
+                    if (!link.active) path.setAttribute('stroke-dasharray', '6,4');
+                    path.setAttribute('marker-end', marker);
+                    path.setAttribute('class', 'network-edge-path');
+                    edgesG.appendChild(path);
+
+                    // Quality label at bezier control point
+                    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    label.setAttribute('x', midX.toFixed(1));
+                    label.setAttribute('y', midY.toFixed(1));
+                    label.setAttribute('text-anchor', 'middle');
+                    label.setAttribute('dominant-baseline', 'central');
+                    label.setAttribute('fill', color);
+                    label.setAttribute('class', 'network-edge-label');
+                    label.textContent = link.quality;
+                    labelsG.appendChild(label);
+                });
+            }
+
+            _renderNetworkNodes(nodeIds, topology) {
+                const nodesG = document.getElementById('networkNodes');
+                nodesG.innerHTML = '';
+
+                nodeIds.forEach(nodeId => {
+                    const pos = this.nodePositions.get(nodeId);
+                    if (!pos) return;
+
+                    const routes = topology.get(nodeId);
+                    const isNM = routes ? [...routes.values()].some(r => r.nm) : false;
+
+                    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    circle.setAttribute('cx', pos.x);
+                    circle.setAttribute('cy', pos.y);
+                    circle.setAttribute('r', 30);
+                    circle.setAttribute('fill', isNM ? '#f1c40f' : '#3498db');
+                    circle.setAttribute('stroke', isNM ? '#f39c12' : '#2980b9');
+                    circle.setAttribute('stroke-width', 2);
+                    circle.setAttribute('class', 'network-node-circle');
+                    circle.setAttribute('data-nodeid', nodeId);
+                    nodesG.appendChild(circle);
+
+                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    text.setAttribute('x', pos.x);
+                    text.setAttribute('y', pos.y);
+                    text.setAttribute('text-anchor', 'middle');
+                    text.setAttribute('dominant-baseline', 'central');
+                    text.setAttribute('fill', 'white');
+                    text.setAttribute('font-family', 'monospace');
+                    text.setAttribute('font-size', '12');
+                    text.setAttribute('font-weight', 'bold');
+                    text.setAttribute('pointer-events', 'none');
+                    text.textContent = `0x${nodeId}`;
+                    nodesG.appendChild(text);
+
+                    this._makeDraggable(circle, nodeId);
+                });
+            }
+
+            _makeDraggable(circle, nodeId) {
+                circle.addEventListener('mousedown', (e) => {
+                    const pos = this.nodePositions.get(nodeId);
+                    this._dragging = {
+                        nodeId, startX: e.clientX, startY: e.clientY,
+                        startPosX: pos.x, startPosY: pos.y
+                    };
+                    e.preventDefault();
+                });
+            }
+
+            _qualityColor(q, active) {
+                if (!active) return '#aaaaaa';
+                if (q > 170) return '#27ae60';
+                if (q > 85)  return '#f39c12';
+                return '#e74c3c';
+            }
+
+            _qualityWidth(q, active) {
+                if (!active) return 1;
+                if (q > 170) return 3.5;
+                if (q > 85)  return 2.5;
+                return 1.5;
+            }
+
+            _qualityMarker(q, active) {
+                if (!active) return 'url(#arrow-gray)';
+                if (q > 170) return 'url(#arrow-green)';
+                if (q > 85)  return 'url(#arrow-yellow)';
+                return 'url(#arrow-red)';
+            }
+
+            networkOnSliderInput(idx) {
+                const changeTimes = this.getTopologyChangeTimestamps();
+                idx = Math.max(0, Math.min(parseInt(idx), changeTimes.length - 1));
+                this.networkCurrentTime = changeTimes[idx];
+                document.getElementById('networkTimeSlider').value = idx;
+                this.renderNetwork();
+            }
+
+            networkStepPrev() {
+                const slider = document.getElementById('networkTimeSlider');
+                this.networkOnSliderInput(Math.max(0, parseInt(slider.value) - 1));
+            }
+
+            networkStepNext() {
+                const slider = document.getElementById('networkTimeSlider');
+                const changeTimes = this.getTopologyChangeTimestamps();
+                this.networkOnSliderInput(Math.min(changeTimes.length - 1, parseInt(slider.value) + 1));
+            }
+
+            resetNetworkLayout() {
+                this.nodePositions.clear();
+                this.renderNetwork();
+            }
+
+            downloadTopologyJSON() {
+                if (this.networkCurrentTime === null) return;
+                const topology = this.getTopologyAtTime(this.networkCurrentTime);
+                const links = this.getDirectLinks(topology);
+                const nodes = [];
+                topology.forEach((routes, nodeId) => {
+                    const pos = this.nodePositions.get(nodeId) || { x: 0, y: 0 };
+                    const routesList = [];
+                    routes.forEach((route, dest) => routesList.push({ dest, ...route }));
+                    nodes.push({ id: nodeId, position: pos, routes: routesList });
+                });
+                const data = {
+                    timestamp: this.networkCurrentTime,
+                    formattedTime: this.formatTimestamp(this.networkCurrentTime),
+                    nodes, directLinks: links
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `topology_${this.networkCurrentTime}ms.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            downloadTopologySVG() {
+                const svg = document.getElementById('networkSvg');
+                const svgStr = new XMLSerializer().serializeToString(svg);
+                const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `topology_${this.networkCurrentTime || 0}ms.svg`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
         }
 
-        function showTab(tabName) {
-            // Hide all tab contents
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            
-            // Remove active class from all tabs
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // Show selected tab content
+        function showTab(tabName, event) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.getElementById(tabName).classList.add('active');
-            
-            // Add active class to clicked tab
-            event.target.classList.add('active');
+            (event || window.event).target.classList.add('active');
+
+            if (tabName === 'topology') {
+                analyzer.renderNetwork(); // lazy: SVG has 0 clientWidth while hidden
+            }
         }
 
         // Initialize the analyzer

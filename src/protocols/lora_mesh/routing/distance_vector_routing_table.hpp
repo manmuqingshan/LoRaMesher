@@ -168,6 +168,9 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     void NotifyRouteUpdate(bool route_added, AddressType destination,
                            AddressType next_hop, uint8_t hop_count);
 
+    void LogRouteEntry(
+        const types::protocols::lora_mesh::NetworkNodeRoute& node);
+
     // Constants
 
     /// Maximum consecutive missed routing messages before marking route inactive

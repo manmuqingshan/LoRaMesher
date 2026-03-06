@@ -105,6 +105,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
             route_changed = true;
             NotifyRouteUpdate(true, destination, node_it->next_hop,
                               node_it->routing_entry.hop_count);
+            LogRouteEntry(*node_it);
         } else if (should_update) {
             route_changed = node_it->UpdateRouteInfo(
                 source, hop_count, actual_link_quality, current_time);
@@ -141,6 +142,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
 
             if (route_changed) {
                 NotifyRouteUpdate(true, destination, source, hop_count);
+                LogRouteEntry(*node_it);
             }
         }
     } else {
@@ -176,6 +178,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                  destination, source, hop_count);
 
         NotifyRouteUpdate(true, destination, source, hop_count);
+        LogRouteEntry(nodes_.back());
     }
 
     return route_changed;
@@ -296,6 +299,7 @@ size_t DistanceVectorRoutingTable::RemoveInactiveNodes(
 
             // Notify of route removal
             NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
+            LogRouteEntry(node);
             topology_changed = true;
         }
     }
@@ -517,6 +521,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             routing_changed = true;
 
             NotifyRouteUpdate(true, source_address, source_address, 1);
+            LogRouteEntry(*source_node_it);
         }
 
         // Ensure that the node is active
@@ -555,6 +560,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             routing_changed = true;
 
             NotifyRouteUpdate(true, source_address, source_address, 1);
+            LogRouteEntry(nodes_.back());
             LOG_INFO("Added new direct neighbor node 0x%04X (data_slots: %d)",
                      source_address, source_allocated_data_slots);
         }
@@ -609,6 +615,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 routing_changed = true;
                 NotifyRouteUpdate(true, dest, node_it->next_hop,
                                   node_it->routing_entry.hop_count);
+                LogRouteEntry(*node_it);
             } else if (should_update) {
                 // Update the existing route
                 bool changed = node_it->UpdateRouteInfo(
@@ -654,6 +661,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                     routing_changed = true;
                     NotifyRouteUpdate(true, dest, source_address,
                                       hop_count_via_source);
+                    LogRouteEntry(*node_it);
                 }
             }
 
@@ -694,6 +702,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             routing_changed = true;
 
             NotifyRouteUpdate(true, dest, source_address, hop_count_via_source);
+            LogRouteEntry(nodes_.back());
             LOG_DEBUG("Added route to 0x%04X via 0x%04X (hops: %d)", dest,
                       source_address, hop_count_via_source);
         }
@@ -782,6 +791,15 @@ void DistanceVectorRoutingTable::NotifyRouteUpdate(bool route_added,
     if (route_callback_) {
         route_callback_(route_added, destination, next_hop, hop_count);
     }
+}
+
+void DistanceVectorRoutingTable::LogRouteEntry(
+    const types::protocols::lora_mesh::NetworkNodeRoute& node) {
+    LOG_DEBUG(
+        "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d",
+        node.routing_entry.destination, node.next_hop,
+        node.routing_entry.hop_count, node.routing_entry.link_quality,
+        node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0);
 }
 
 }  // namespace lora_mesh
