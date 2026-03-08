@@ -422,7 +422,6 @@ ISR_ATTR RadioLibRadio::HandleInterruptStatic() {
 }
 
 void RadioLibRadio::HandleInterrupt() {
-    LOG_DEBUG("Handling interrupt");
     std::unique_lock<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
         LOG_ERROR("No radio module initialized");
@@ -476,7 +475,14 @@ void RadioLibRadio::HandleInterrupt() {
         return;
     }
 
-    LOG_DEBUG("Received message");
+    LOG_INFO(
+        "PKT_RX src=0x%04X dst=0x%04X type=0x%02X size=%u rssi=%d snr=%d",
+        static_cast<unsigned>(message_optional->GetHeader().GetSource()),
+        static_cast<unsigned>(message_optional->GetHeader().GetDestination()),
+        static_cast<int>(message_optional->GetHeader().GetType()),
+        static_cast<unsigned>(length), static_cast<int>(last_packet_rssi_),
+        static_cast<int>(last_packet_snr_));
+        
     // Add to queue if there's space
     if (GetRTOS().getQueueMessagesWaiting(receive_queue_) >= kMaxQueueSize) {
         LOG_ERROR("Receive queue full");
@@ -484,8 +490,6 @@ void RadioLibRadio::HandleInterrupt() {
         current_module_->StartReceive();
         return;
     }
-
-    LOG_DEBUG("Adding message to queue");
 
     auto event = CreateReceivedEvent(
         std::make_unique<BaseMessage>(message_optional.value()),
@@ -509,8 +513,6 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     // LOG_DEBUG("Processing events for radio %p", static_cast<void*>(radio));
     while (!GetRTOS().ShouldStopOrPause() && radio->processing_task_) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
-        LOG_DEBUG("ProcessEvents: WaitForNotify result: %d, Current State %d",
-                  static_cast<int>(result), radio->current_state_);
         if (result == os::QueueResult::kOk) {
             std::string taskName = radio->current_config_.getRadioTypeString();
             // Periodic monitoring
@@ -518,14 +520,11 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
             //     radio->processing_task_, taskName.c_str(),
             //     config::TaskConfig::kMinStackWatermark);
 
-            LOG_DEBUG("Notification received - calling HandleInterrupt");
             radio->HandleInterrupt();
             // Periodic monitoring
             // utils::TaskMonitor::MonitorTask(
             //     radio->processing_task_, taskName.c_str(),
             //     config::TaskConfig::kMinStackWatermark);
-        } else {
-            LOG_DEBUG("Notification timeout - no HandleInterrupt call");
         }
 
         GetRTOS().YieldTask();

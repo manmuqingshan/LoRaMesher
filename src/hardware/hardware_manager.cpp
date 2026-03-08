@@ -116,9 +116,11 @@ Result HardwareManager::SendMessage(const BaseMessage& message) {
                       "Hardware not running");
     }
 
-    LOG_DEBUG("Sending message to 0x%04X, type: 0x%02X",
-              message.GetHeader().GetDestination(),
-              static_cast<int>(message.GetHeader().GetType()));
+    LOG_INFO("PKT_TX dst=0x%04X src=0x%04X type=0x%02X size=%u",
+             message.GetHeader().GetDestination(),
+             message.GetHeader().GetSource(),
+             static_cast<int>(message.GetHeader().GetType()),
+             static_cast<unsigned>(message.GetTotalSize()));
 
     auto serialized_data = message.Serialize();
     if (!serialized_data) {

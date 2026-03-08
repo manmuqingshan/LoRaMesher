@@ -1377,7 +1377,24 @@
                     });
                 }
 
-                // Parse message transmissions - handle "Sending message" pattern first
+                // Parse message transmissions — PKT_TX (new format)
+                const pktTxMatch = line.match(
+                    /PKT_TX dst=0x([0-9A-Fa-f]+) src=0x([0-9A-Fa-f]+) type=0x([0-9A-Fa-f]+) size=(\d+)/);
+                if (pktTxMatch) {
+                    const dst  = pktTxMatch[1].toUpperCase();
+                    const src  = pktTxMatch[2].toUpperCase();
+                    const size = parseInt(pktTxMatch[4]);
+                    const messageTypeInfo = getMessageTypeInfo('0x' + pktTxMatch[3], 'transmitted');
+                    fileData.messages.push({
+                        timestamp, from: src, to: dst,
+                        type: messageTypeInfo.cssClass, typeName: messageTypeInfo.name,
+                        category: messageTypeInfo.category,
+                        nodeId, direction: 'transmitted', size, fileId: fileData.id
+                    });
+                    return { timestamp, nodeId, to: dst, messageTypeInfo };
+                }
+
+                // Fallback: old "Sending message to" pattern (pre-PKT_TX logs)
                 const sendingMatch = line.match(/Sending message to 0x([0-9A-Fa-f]+), type: 0x([0-9A-Fa-f]+)/);
                 if (sendingMatch) {
                     const messageTypeInfo = getMessageTypeInfo('0x' + sendingMatch[2], 'transmitted');
@@ -1433,6 +1450,24 @@
                         nodeId: transmitMatch[1],
                         direction: 'transmitted',
                         fileId: fileData.id
+                    });
+                }
+
+                // Parse message reception — PKT_RX (new format)
+                const pktRxMatch = line.match(
+                    /PKT_RX src=0x([0-9A-Fa-f]+) dst=0x([0-9A-Fa-f]+) type=0x([0-9A-Fa-f]+) size=(\d+) rssi=(-?\d+) snr=(-?\d+)/);
+                if (pktRxMatch) {
+                    const src  = pktRxMatch[1].toUpperCase();
+                    const dst  = pktRxMatch[2].toUpperCase();
+                    const size = parseInt(pktRxMatch[4]);
+                    const rssi = parseInt(pktRxMatch[5]);
+                    const snr  = parseInt(pktRxMatch[6]);
+                    const messageTypeInfo = getMessageTypeInfo('0x' + pktRxMatch[3], 'received');
+                    fileData.messages.push({
+                        timestamp, from: src, to: dst,
+                        type: messageTypeInfo.cssClass, typeName: messageTypeInfo.name,
+                        category: messageTypeInfo.category,
+                        nodeId, direction: 'received', size, rssi, snr, fileId: fileData.id
                     });
                 }
 
@@ -2188,16 +2223,20 @@
                 const typeName = message.typeName || message.type.toUpperCase();
                 const category = message.category || 'unknown';
                 
-                const messageInfo = `🔸 Message: ${typeName} (${category})
+                const extraLines = [];
+                if (message.size !== undefined) extraLines.push(`📦 Size: ${message.size} B`);
+                if (message.rssi !== undefined) extraLines.push(`📶 RSSI: ${message.rssi} dBm`);
+                if (message.snr  !== undefined) extraLines.push(`📡 SNR: ${message.snr} dB`);
+                const extraStr = extraLines.length ? '\n' + extraLines.join('\n') : '';
+
+                indicator.title = `🔸 Message: ${typeName} (${category})
 📅 Time: ${this.formatTimestamp(message.timestamp)}
 📤 From: 0x${message.from}
 📥 To: 0x${message.to}
 ${directionIcon} Direction: ${direction}
-📂 Category: ${category}
+📂 Category: ${category}${extraStr}
 📊 Relative: ${(message.timestamp - this.timeRange.start).toFixed(1)}ms from start
 📋 Click to copy timestamp`;
-
-                indicator.title = messageInfo;
 
                 // Click to copy timestamp
                 indicator.addEventListener('click', () => {
@@ -2262,6 +2301,8 @@ ${directionIcon} Direction: ${direction}
                             <span style="margin-left: 10px; color: #2c3e50; font-weight: bold;">${typeName}</span>
                             <span style="margin-left: 5px; color: #7f8c8d;">${categoryIcon} ${category}</span>
                             <span style="margin-left: 5px; color: #7f8c8d;">${directionIcon} ${direction}</span>
+                            ${msg.size !== undefined ? `<span style="margin-left:8px;color:#7f8c8d;font-size:11px;">${msg.size}B</span>` : ''}
+                            ${msg.rssi !== undefined ? `<span style="margin-left:5px;color:#7f8c8d;font-size:11px;">RSSI:${msg.rssi}dBm SNR:${msg.snr}dB</span>` : ''}
                         </div>
                     `;
                     
@@ -2283,6 +2324,18 @@ ${directionIcon} Direction: ${direction}
                     { label: 'Collisions', value: collisionCount, highlight: collisionCount > 0 },
                     { label: 'Duration (ms)', value: this.timeRange.end - this.timeRange.start }
                 ];
+
+                // RSSI / SNR stats (only when PKT_RX data is present)
+                const rxWithRF = this.messages.filter(m => m.direction === 'received' && m.rssi !== undefined);
+                if (rxWithRF.length > 0) {
+                    const avgRssi = Math.round(rxWithRF.reduce((s, m) => s + m.rssi, 0) / rxWithRF.length);
+                    const minRssi = Math.min(...rxWithRF.map(m => m.rssi));
+                    const avgSnr  = (rxWithRF.reduce((s, m) => s + m.snr, 0) / rxWithRF.length).toFixed(1);
+                    stats.push({ label: 'DATA RX count', value: rxWithRF.length });
+                    stats.push({ label: 'Avg RSSI (dBm)', value: avgRssi });
+                    stats.push({ label: 'Min RSSI (dBm)', value: minRssi });
+                    stats.push({ label: 'Avg SNR (dB)', value: avgSnr });
+                }
 
                 stats.forEach(stat => {
                     const card = document.createElement('div');
