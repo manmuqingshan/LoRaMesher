@@ -482,7 +482,7 @@ void RadioLibRadio::HandleInterrupt() {
         static_cast<int>(message_optional->GetHeader().GetType()),
         static_cast<unsigned>(length), static_cast<int>(last_packet_rssi_),
         static_cast<int>(last_packet_snr_));
-        
+
     // Add to queue if there's space
     if (GetRTOS().getQueueMessagesWaiting(receive_queue_) >= kMaxQueueSize) {
         LOG_ERROR("Receive queue full");
