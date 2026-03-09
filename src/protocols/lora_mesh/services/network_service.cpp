@@ -67,6 +67,8 @@ NetworkService::NetworkService(
     // Initialize configuration with defaults
     config_.node_address = node_address;
     node_address_ = node_address;
+
+    slot_table_.reserve(255);
 }
 
 bool NetworkService::UpdateNetworkNode(AddressType node_address,
@@ -1608,7 +1610,7 @@ Result NetworkService::UpdateSlotTable() {
     if (network_manager_ == node_address_) {
         // NM: compute from actual assignments
         uint8_t max_index = my_control_slot_index_;
-        for (const auto& node : routing_table_->GetNodes()) {
+        for (const auto& node : ordered_nodes) {
             if (node.control_slot_index != 0xFF &&
                 node.control_slot_index > max_index) {
                 max_index = node.control_slot_index;
