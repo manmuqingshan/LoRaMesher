@@ -8,6 +8,7 @@
 #include "radio_state.hpp"
 #include "types/configurations/radio_configuration.hpp"
 #include "types/error_codes/result.hpp"
+#include "types/messages/base_header.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -128,11 +129,18 @@ class IRadio {
 
     /**
      * @brief Set the preamble length
-     * 
+     *
      * @param length Preamble length in symbols
      * @return Result Success if preamble length was set successfully
      */
     virtual Result setPreambleLength(uint16_t length) = 0;
+
+    /**
+     * @brief Set the local node address for task identification in logs
+     *
+     * @param address Local node address
+     */
+    virtual void SetLocalAddress(AddressType address) { (void)address; }
 
     /**
    * @brief Sets the callback function for packet reception

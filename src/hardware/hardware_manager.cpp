@@ -213,6 +213,11 @@ Result HardwareManager::InitializeRadioModule() {
     return Result::Success();
 }
 
+void HardwareManager::SetLocalAddress(AddressType address) {
+    if (radio_)
+        radio_->SetLocalAddress(address);
+}
+
 Result HardwareManager::ValidateConfiguration() const {
     if (!pin_config_.IsValid()) {
         return Result::Error(LoraMesherErrorCode::kInvalidParameter);

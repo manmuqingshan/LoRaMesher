@@ -279,6 +279,10 @@ class RadioLibRadio : public IRadio {
             "ClearActionReceive not supported in RadioLibRadio");
     }
 
+    void SetLocalAddress(AddressType address) override {
+        local_address_ = address;
+    }
+
 #ifdef DEBUG
     /**
      * @brief Get the mock radio from RadioLibRadio for testing purposes
@@ -370,6 +374,9 @@ class RadioLibRadio : public IRadio {
 
     // Mutex for thread safety
     std::mutex radio_mutex_;
+
+    AddressType local_address_{
+        0};  ///< Local node address for task identification
 };
 
 /**

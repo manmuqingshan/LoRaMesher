@@ -510,6 +510,10 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         return;
     }
 
+    char address_str[8];
+    snprintf(address_str, sizeof(address_str), "0x%04X", radio->local_address_);
+    GetRTOS().SetCurrentTaskNodeAddress(address_str);
+
     // LOG_DEBUG("Processing events for radio %p", static_cast<void*>(radio));
     while (!GetRTOS().ShouldStopOrPause() && radio->processing_task_) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);

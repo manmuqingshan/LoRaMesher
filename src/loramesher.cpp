@@ -53,6 +53,8 @@ Result LoraMesher::Initialize() {
         return protocol_result;
     }
 
+    concrete_hw_manager->SetLocalAddress(node_address_);
+
     is_initialized_ = true;
     LOG_INFO("LoraMesher initialized successfully");
     return Result::Success();

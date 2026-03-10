@@ -143,6 +143,12 @@ class HardwareManager : public IHardwareManager {
     Result setState(radio::RadioState state) override;
 
     /**
+     * @brief Propagate local node address to the radio for log identification
+     * @param address Local node address
+     */
+    void SetLocalAddress(AddressType address);
+
+    /**
      * @brief Update the radio configuration
      * 
      * @param radio_config New radio configuration
