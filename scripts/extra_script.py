@@ -6,6 +6,7 @@
 """
 
 Import("env")
+import os
 from os.path import join, realpath
 
 # Get current platform
@@ -14,6 +15,15 @@ current_platform = env.get("PIOPLATFORM", "")
 # Only use clang for native builds
 if current_platform in ["native", "test_native"]:
     env.Replace(CC="clang", CXX="clang++")
+
+# Set LSAN/ASAN runtime options for native test builds so lsan.supp is loaded
+if current_platform == "native":
+    project_dir = env.subst("$PROJECT_DIR")
+    lsan_supp = os.path.join(project_dir, "lsan.supp")
+    env.Append(ENV={
+        "LSAN_OPTIONS": f"suppressions={lsan_supp}",
+        "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=0:exitcode=1",
+    })
 
 # Get global environment
 global_env = DefaultEnvironment()

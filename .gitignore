@@ -5,6 +5,9 @@
 .vscode/ipch
 *.code-workspace
 build
+cmake_build
+test_logs
+video/renders
 
 .claude
 

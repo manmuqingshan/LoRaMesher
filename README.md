@@ -362,6 +362,80 @@ cmake --build . --target loramesher_lib
 
 Or insted use `cTest`
 
+## Analysis Tools
+
+### AddressSanitizer + UndefinedBehaviorSanitizer (default test env)
+
+The `test_native` environment runs with ASAN and UBSAN enabled. LSAN suppressions for
+intentional leaks (Logger semaphore) are loaded automatically.
+
+```bash
+# Run all tests
+pio test -e test_native -v
+
+# Run a specific test suite
+pio test -e test_native -v -f "protocols/lora_mesh/services/test_routing"
+```
+
+What to look for:
+- `ERROR: AddressSanitizer:` — heap/stack corruption, use-after-free
+- `runtime error:` — undefined behavior (signed overflow, null deref, etc.)
+- `ERROR: LeakSanitizer:` — unexpected memory leaks (intentional ones are suppressed)
+
+### ThreadSanitizer
+
+TSAN is mutually exclusive with ASAN; use the dedicated environment:
+
+```bash
+pio test -e test_native_tsan -v
+```
+
+What to look for: `WARNING: ThreadSanitizer: data race`
+
+### Static Analysis (clang-tidy)
+
+Requires a CMake build with `compile_commands.json`:
+
+```bash
+mkdir -p build && cd build
+cmake .. -DBUILD_DESKTOP=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cd ..
+
+# Analyse all sources
+run-clang-tidy -p build/ src/
+
+# Analyse a single file
+clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp
+```
+
+Checks enabled: `clang-analyzer-*`, `bugprone-*` (UAF, dangling handles, infinite loops),
+`cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others. See `.clang-tidy`
+at the repo root for the full list.
+
+### Profiling (LLVM instrumentation)
+
+```bash
+# Build and run tests with instrumentation
+LLVM_PROFILE_FILE="loramesher.profraw" pio test -e test_native_profile -f "test_routing"
+
+# Merge raw profile data
+llvm-profdata merge -sparse loramesher.profraw -o loramesher.profdata
+
+# Console report (hotspot functions)
+llvm-cov report \
+  .pio/build/test_native_profile/program \
+  -instr-profile=loramesher.profdata \
+  -sources src/
+
+# HTML coverage/hotspot report
+llvm-cov show \
+  .pio/build/test_native_profile/program \
+  -instr-profile=loramesher.profdata \
+  -format=html -output-dir=coverage_report/ \
+  -sources src/
+# Open coverage_report/index.html in a browser
+```
+
 
 # Building the new Protocol using BMX6 and node syncrhonization
 

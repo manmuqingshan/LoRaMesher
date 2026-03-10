@@ -1,0 +1,10 @@
+# LeakSanitizer Suppressions for LoRaMesher
+#
+# This file suppresses intentional memory leaks that are part of the design.
+
+# Logger system semaphore leak-by-design pattern
+# The global Logger intentionally does not delete its system semaphore during
+# static destruction to avoid SIGABRT from deleting a potentially locked mutex.
+# This is a standard pattern for global infrastructure objects.
+leak:loramesher::os::RTOSMock::CreateSystemSemaphore
+leak:loramesher::Logger::EnsureSemaphoreInitialized
