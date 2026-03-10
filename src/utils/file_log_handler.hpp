@@ -61,6 +61,13 @@ class FileLogHandler : public LogHandler {
      * @param message The message to be logged
      */
     void Write(LogLevel level, const std::string& message) override {
+        // Compute timestamp BEFORE acquiring file_mutex_ to avoid M0→M1 lock-order inversion
+        // (file_mutex_ → timeMutex_ would conflict with M1→M2 edge in setTimeMode).
+        std::string timestamp;
+        if (add_timestamps_) {
+            timestamp = GetTimestamp();
+        }
+
         std::lock_guard<std::mutex> lock(file_mutex_);
 
         if (!file_stream_.is_open()) {
@@ -73,7 +80,7 @@ class FileLogHandler : public LogHandler {
         // Add timestamp if enabled
         if (add_timestamps_) {
             buffer_ += "[";
-            buffer_ += GetTimestamp();
+            buffer_ += timestamp;
             buffer_ += "] ";
         }
 

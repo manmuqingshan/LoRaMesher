@@ -698,12 +698,6 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         // Calculate timeout until next meaningful event (slot transition or superframe end)
         uint32_t timeout_ms = service->CalculateNextEventTimeout();
 
-        // Log timeout periodically to reduce log spam (every 10th call)
-        static uint32_t timeout_log_counter = 0;
-        if (++timeout_log_counter % 10 == 0) {
-            LOG_DEBUG("Next event timeout: %u ms", timeout_ms);
-        }
-
         // Wait for notification or timeout
         auto queue_result = rtos.ReceiveFromQueue(service->notification_queue_,
                                                   &notification, timeout_ms);
@@ -739,12 +733,6 @@ void SuperframeService::UpdateTaskFunction(void* param) {
             }
         } else if (queue_result == os::QueueResult::kTimeout) {
             // Natural timeout - time for next slot/superframe transition
-            // Log periodically to reduce spam (every 5th timeout)
-            static uint32_t timeout_check_counter = 0;
-            if (++timeout_check_counter % 5 == 0) {
-                LOG_DEBUG(
-                    "UpdateTask timeout - checking for slot/frame transitions");
-            }
             // Always update state on natural timeout (slot/frame boundary reached)
             service->UpdateSuperframeState();
         }
@@ -823,13 +811,11 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
     // If we're past the event time, handle differently based on synchronization state
     if (current_time >= next_event_time) {
         // If we're past the superframe end and not updating start time in new superframe
-        // (non-manager nodes), return a longer delay to avoid busy waiting
+        // (non-manager nodes), fall through to UpdateSuperframeState() immediately.
+        // HandleNewSuperframe() will advance superframe_start_time_ correctly.
         if (current_time >= superframe_end_time &&
             !update_start_time_in_new_superframe) {
-            // Wait for the next expected synchronization signal or use a reasonable timeout
-            const uint32_t SYNC_WAIT_TIMEOUT_MS =
-                1000;  // 1 second wait for sync
-            return SYNC_WAIT_TIMEOUT_MS;
+            return 1;
         }
         return 1;  // 1ms minimum to avoid busy waiting for other cases
     }
