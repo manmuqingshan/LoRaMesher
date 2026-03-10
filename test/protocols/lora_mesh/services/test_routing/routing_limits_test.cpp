@@ -233,7 +233,7 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
     ASSERT_TRUE(SendMessage(*nodes[0], *nodes[num_nodes - 1], payload));
 
     bool received =
-        AdvanceTime(superframe_time * 3, superframe_time * 3, 15, 2, [&]() {
+        AdvanceTime(superframe_time * 3, superframe_time * 3, 15, 5, [&]() {
             return HasReceivedMessageFrom(*nodes[num_nodes - 1],
                                           nodes[0]->address, MessageType::DATA);
         });
@@ -307,7 +307,7 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
     std::cout << "Waiting " << wait_time << " ms for route to expire..."
               << std::endl;
 
-    bool route_expired = AdvanceTime(wait_time, wait_time, 100, 2, [&]() {
+    bool route_expired = AdvanceTime(wait_time, wait_time, 100, 5, [&]() {
         const auto& routes = nodes[0]->protocol->GetNetworkNodes();
         for (const auto& route : routes) {
             if (route.routing_entry.destination == nodes[2]->address) {
