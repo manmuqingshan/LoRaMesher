@@ -348,14 +348,12 @@ NetworkStatus LoraMesher::GetNetworkStatus() const {
     return status;
 }
 
-const std::vector<types::protocols::lora_mesh::SlotAllocation>&
+std::span<const types::protocols::lora_mesh::SlotAllocation>
 LoraMesher::GetSlotTable() const {
     auto mesh_protocol = GetLoRaMeshProtocol();
     if (!mesh_protocol) {
-        static const std::vector<types::protocols::lora_mesh::SlotAllocation>
-            empty_table;
         LOG_WARNING("LoRaMesh protocol not available for slot table");
-        return empty_table;
+        return {};
     }
 
     return mesh_protocol->GetSlotTable();

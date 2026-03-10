@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <array>
+#include <span>
 #include <vector>
 #include "routing_table_entry.hpp"
 #include "routing_table_header.hpp"
@@ -72,11 +74,16 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
     uint8_t GetTableVersion() const;
 
     /**
-     * @brief Gets the list of network node routes
-     * 
-     * @return const std::vector<NetworkNodeRoute>& The network node routes
+     * @brief Maximum number of routing table entries that fit in one message
      */
-    const std::vector<RoutingTableEntry>& GetEntries() const;
+    static constexpr uint8_t kMaxRoutingEntries = 40;
+
+    /**
+     * @brief Gets the list of routing table entries as a span
+     *
+     * @return Span over the routing table entries (valid for message lifetime)
+     */
+    std::span<const RoutingTableEntry> GetEntries() const;
 
     /**
      * @brief Gets the source address
@@ -157,16 +164,17 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
    private:
     /**
      * @brief Private constructor
-     * 
+     *
      * @param header The routing table header
-     * @param network_manager_addr Network manager address
-     * @param entries The network node routes
+     * @param entries The network node routes as a span
      */
     RoutingTableMessage(const RoutingTableHeader& header,
-                        const std::vector<RoutingTableEntry>& entries);
+                        std::span<const RoutingTableEntry> entries);
 
-    RoutingTableHeader header_;               ///< Routing table message header
-    std::vector<RoutingTableEntry> entries_;  ///< Network node routes
+    RoutingTableHeader header_;  ///< Routing table message header
+    std::array<RoutingTableEntry, kMaxRoutingEntries>
+        entries_{};            ///< Network node routes
+    uint8_t entry_count_ = 0;  ///< Number of valid entries
 };
 
 }  // namespace loramesher

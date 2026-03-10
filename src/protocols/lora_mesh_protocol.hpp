@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 
 #include "hardware/hardware_manager.hpp"
 #include "lora_mesh/services/message_queue_service.hpp"
@@ -243,10 +244,10 @@ class LoRaMeshProtocol : public Protocol {
     /**
      * @brief Get current slot table
      *
-     * @return const std::vector<SlotAllocation>& Slot table
+     * @return Span over active slot allocations (valid for object lifetime)
      */
-    const std::vector<types::protocols::lora_mesh::SlotAllocation>&
-    GetSlotTable() const {
+    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+        const {
         return network_service_->GetSlotTable();
     }
 

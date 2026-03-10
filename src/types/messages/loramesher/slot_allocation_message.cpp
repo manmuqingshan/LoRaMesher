@@ -5,6 +5,9 @@
 
 #include "slot_allocation_message.hpp"
 
+#include <array>
+#include <span>
+
 namespace loramesher {
 
 SlotAllocationMessage::SlotAllocationMessage(AddressType dest, AddressType src,
@@ -60,9 +63,9 @@ size_t SlotAllocationMessage::GetTotalSize() const {
 }
 
 BaseMessage SlotAllocationMessage::ToBaseMessage() const {
-    // Create payload
-    std::vector<uint8_t> payload(4);
-    utils::ByteSerializer serializer(payload);
+    // Create payload (4 bytes: network_id(2) + allocated_slots(1) + total_nodes(1))
+    std::array<uint8_t, 4> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), payload_buf.size());
 
     // Serialize fields
     serializer.WriteUint16(network_id_);
@@ -70,12 +73,12 @@ BaseMessage SlotAllocationMessage::ToBaseMessage() const {
     serializer.WriteUint8(total_nodes_);
 
     // Create the base message
-    auto base_message = BaseMessage::Create(
-        destination_, source_, MessageType::SLOT_ALLOCATION, payload);
+    auto base_message =
+        BaseMessage::Create(destination_, source_, MessageType::SLOT_ALLOCATION,
+                            std::span<const uint8_t>(payload_buf));
 
     if (!base_message.has_value()) {
         LOG_ERROR("Failed to create base message from slot allocation message");
-        // Return an empty message as fallback
         return BaseMessage(destination_, source_, MessageType::SLOT_ALLOCATION,
                            {});
     }

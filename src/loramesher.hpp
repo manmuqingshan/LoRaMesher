@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -167,10 +168,10 @@ class LoraMesher {
     /**
      * @brief Get current slot allocation table
      *
-     * @return const std::vector<types::protocols::lora_mesh::SlotAllocation>& Reference to slot table
+     * @return Span over active slot allocations (valid for object lifetime)
      */
-    const std::vector<types::protocols::lora_mesh::SlotAllocation>&
-    GetSlotTable() const;
+    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+        const;
 
     /**
      * @brief Get milliseconds to sleep before calling Send() for the next TX data slot

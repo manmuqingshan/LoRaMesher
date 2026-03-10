@@ -5,6 +5,9 @@
 
 #include "join_request_message.hpp"
 
+#include <array>
+#include <span>
+
 namespace loramesher {
 
 JoinRequestMessage::JoinRequestMessage(
@@ -107,8 +110,9 @@ BaseMessage JoinRequestMessage::ToBaseMessage() const {
     // Calculate payload size (only JOIN_REQUEST specific fields + additional info)
     size_t payload_size =
         JoinRequestHeader::JoinRequestFieldsSize() + additional_info_.size();
-    std::vector<uint8_t> payload(payload_size);
-    utils::ByteSerializer serializer(payload);
+
+    std::array<uint8_t, BaseMessage::kMaxPayloadSize> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), payload_size);
 
     // Serialize only the JOIN_REQUEST specific fields (not the BaseHeader part)
     serializer.WriteUint8(header_.GetBatteryLevel());
@@ -123,8 +127,10 @@ BaseMessage JoinRequestMessage::ToBaseMessage() const {
     }
 
     // Create the base message with the correct type and our payload
-    return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                       MessageType::JOIN_REQUEST, payload);
+    return BaseMessage(
+        header_.GetDestination(), header_.GetSource(),
+        MessageType::JOIN_REQUEST,
+        std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
 }
 
 std::optional<std::vector<uint8_t>> JoinRequestMessage::Serialize() const {

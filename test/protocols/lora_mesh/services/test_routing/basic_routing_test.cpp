@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "routing_test_fixture.hpp"
 
 namespace loramesher {
@@ -67,7 +69,7 @@ TEST_F(BasicRoutingTests, DirectNeighborRouting) {
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
 
     // Wait for message to be received
-    bool received = AdvanceTime(5000, superframe_duration * 3, 100, 2, [&]() {
+    bool received = AdvanceTime(5000, superframe_duration * 3, 100, 5, [&]() {
         return HasReceivedMessageFrom(node2, node1.address, MessageType::DATA);
     });
 
@@ -79,7 +81,8 @@ TEST_F(BasicRoutingTests, DirectNeighborRouting) {
     ASSERT_EQ(messages.size(), 1) << "Expected exactly 1 message";
 
     auto msg_payload = messages[0].GetPayload();
-    EXPECT_EQ(msg_payload, payload) << "Message payload mismatch";
+    EXPECT_TRUE(std::ranges::equal(msg_payload, payload))
+        << "Message payload mismatch";
 }
 
 /**
@@ -151,7 +154,7 @@ TEST_F(BasicRoutingTests, ThreeNodeChain) {
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
 
     // Wait for message to be received
-    bool received = AdvanceTime(5000, superframe_duration * 3, 100, 2, [&]() {
+    bool received = AdvanceTime(5000, superframe_duration * 3, 100, 5, [&]() {
         return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                       MessageType::DATA);
     });
@@ -164,7 +167,7 @@ TEST_F(BasicRoutingTests, ThreeNodeChain) {
         auto messages = GetReceivedMessages(*nodes[2], nodes[0]->address,
                                             MessageType::DATA);
         ASSERT_EQ(messages.size(), 1) << "Expected exactly 1 message";
-        EXPECT_EQ(messages[0].GetPayload(), payload)
+        EXPECT_TRUE(std::ranges::equal(messages[0].GetPayload(), payload))
             << "Message payload mismatch";
     }
 }

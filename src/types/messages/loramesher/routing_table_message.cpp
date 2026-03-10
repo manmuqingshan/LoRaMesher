@@ -4,14 +4,21 @@
  */
 
 #include "routing_table_message.hpp"
+
+#include <algorithm>
 #include "routing_table_entry.hpp"
 
 namespace loramesher {
 
 RoutingTableMessage::RoutingTableMessage(
     const RoutingTableHeader& header,
-    const std::vector<RoutingTableEntry>& entries)
-    : header_(header), entries_(entries) {}
+    std::span<const RoutingTableEntry> entries)
+    : header_(header),
+      entry_count_(static_cast<uint8_t>(
+          std::min(entries.size(), static_cast<size_t>(kMaxRoutingEntries)))) {
+    std::copy(entries.begin(), entries.begin() + entry_count_,
+              entries_.begin());
+}
 
 RoutingTableMessage::RoutingTableMessage(const BaseMessage& message) {
     // Ensure the message type is correct
@@ -37,7 +44,9 @@ RoutingTableMessage::RoutingTableMessage(const BaseMessage& message) {
 
     // Set the header and entries from the deserialized message
     header_ = routing_msg->GetHeader();
-    entries_ = routing_msg->GetEntries();
+    auto entries_span = routing_msg->GetEntries();
+    entry_count_ = static_cast<uint8_t>(entries_span.size());
+    std::copy(entries_span.begin(), entries_span.end(), entries_.begin());
 }
 
 std::optional<RoutingTableMessage> RoutingTableMessage::Create(
@@ -45,9 +54,10 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     uint8_t table_version, const std::vector<RoutingTableEntry>& entries,
     uint8_t source_capabilities, uint8_t source_allocated_data_slots) {
 
-    // Check if the number of entries fits in a uint8_t
-    if (entries.size() > UINT8_MAX) {
-        LOG_ERROR("Too many routing table entries: %zu", entries.size());
+    // Check if the number of entries fits
+    if (entries.size() > kMaxRoutingEntries) {
+        LOG_ERROR("Too many routing table entries: %zu (max %d)",
+                  entries.size(), kMaxRoutingEntries);
         return std::nullopt;
     }
 
@@ -91,8 +101,14 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromSerialized(
     }
 
     // Read the entries based on the count in the header
-    std::vector<RoutingTableEntry> entries;
     uint8_t entry_count = header->GetEntryCount();
+    if (entry_count > kMaxRoutingEntries) {
+        LOG_ERROR("Entry count %d exceeds maximum %d", entry_count,
+                  kMaxRoutingEntries);
+        return std::nullopt;
+    }
+
+    std::array<RoutingTableEntry, kMaxRoutingEntries> entries{};
 
     // Deserialize each network node route entry
     for (uint8_t i = 0; i < entry_count; i++) {
@@ -101,10 +117,11 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromSerialized(
             LOG_ERROR("Failed to deserialize network node route %d", i);
             return std::nullopt;
         }
-        entries.push_back(*entry);
+        entries[i] = *entry;
     }
 
-    return RoutingTableMessage(*header, entries);
+    return RoutingTableMessage(*header, std::span<const RoutingTableEntry>(
+                                            entries.data(), entry_count));
 }
 
 AddressType RoutingTableMessage::GetNetworkManager() const {
@@ -115,8 +132,8 @@ uint8_t RoutingTableMessage::GetTableVersion() const {
     return header_.GetTableVersion();
 }
 
-const std::vector<RoutingTableEntry>& RoutingTableMessage::GetEntries() const {
-    return entries_;
+std::span<const RoutingTableEntry> RoutingTableMessage::GetEntries() const {
+    return {entries_.data(), entry_count_};
 }
 
 AddressType RoutingTableMessage::GetSource() const {
@@ -141,9 +158,9 @@ uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
 
 uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
     // Find the node entry with the specified address
-    for (const auto& entry : entries_) {
-        if (entry.destination == node_address) {
-            return entry.link_quality;
+    for (uint8_t i = 0; i < entry_count_; ++i) {
+        if (entries_[i].destination == node_address) {
+            return entries_[i].link_quality;
         }
     }
 
@@ -152,9 +169,9 @@ uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
 }
 
 size_t RoutingTableMessage::GetTotalPayloadSize() const {
-    // Base size: header + network manager + entry count
+    // Base size: routing table fields + entries
     size_t size = header_.RoutingTableFieldsSize();
-    size += RoutingTableEntry::Size() * entries_.size();
+    size += RoutingTableEntry::Size() * entry_count_;
 
     return size;
 }
@@ -162,9 +179,9 @@ size_t RoutingTableMessage::GetTotalPayloadSize() const {
 Result RoutingTableMessage::SetLinkQualityFor(AddressType node_address,
                                               uint8_t link_quality) {
     // Find the entry and set the link quality
-    for (auto& entry : entries_) {
-        if (entry.destination == node_address) {
-            entry.link_quality = link_quality;
+    for (uint8_t i = 0; i < entry_count_; ++i) {
+        if (entries_[i].destination == node_address) {
+            entries_[i].link_quality = link_quality;
             return Result::Success();
         }
     }
@@ -176,7 +193,7 @@ Result RoutingTableMessage::SetLinkQualityFor(AddressType node_address,
 BaseMessage RoutingTableMessage::ToBaseMessage() const {
     // Calculate payload size (only routing table fields + entries, no BaseHeader)
     size_t payload_size = RoutingTableHeader::RoutingTableFieldsSize();
-    payload_size += entries_.size() * RoutingTableEntry::Size();
+    payload_size += entry_count_ * RoutingTableEntry::Size();
 
     if (payload_size > BaseMessage::kMaxPayloadSize) {
         LOG_ERROR("Routing table message payload too large: %zu > %zu",
@@ -185,8 +202,8 @@ BaseMessage RoutingTableMessage::ToBaseMessage() const {
                            MessageType::ROUTE_TABLE, {});
     }
 
-    std::vector<uint8_t> payload(payload_size);
-    utils::ByteSerializer serializer(payload);
+    std::array<uint8_t, BaseMessage::kMaxPayloadSize> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), payload_size);
 
     // Serialize only the routing table specific fields (not the BaseHeader part)
     serializer.WriteUint16(header_.GetNetworkManager());
@@ -196,13 +213,14 @@ BaseMessage RoutingTableMessage::ToBaseMessage() const {
     serializer.WriteUint8(header_.GetSourceAllocatedDataSlots());
 
     // Serialize all network node routes
-    for (const auto& entry : entries_) {
-        entry.Serialize(serializer);
+    for (uint8_t i = 0; i < entry_count_; ++i) {
+        entries_[i].Serialize(serializer);
     }
 
     // Create the base message with the correct type and our payload
-    return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                       MessageType::ROUTE_TABLE, payload);
+    return BaseMessage(
+        header_.GetDestination(), header_.GetSource(), MessageType::ROUTE_TABLE,
+        std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
 }
 
 std::optional<std::vector<uint8_t>> RoutingTableMessage::Serialize() const {
@@ -226,8 +244,8 @@ std::optional<std::vector<uint8_t>> RoutingTableMessage::Serialize() const {
     }
 
     // Serialize all entries
-    for (const auto& entry : entries_) {
-        result = entry.Serialize(serializer);
+    for (uint8_t i = 0; i < entry_count_; ++i) {
+        result = entries_[i].Serialize(serializer);
         if (!result.IsSuccess()) {
             LOG_ERROR("Failed to serialize network node route");
             return std::nullopt;

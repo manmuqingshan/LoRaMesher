@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
@@ -85,10 +86,10 @@ class ISlotManagementService {
 
     /**
      * @brief Get the current slot table
-     * 
-     * @return const std::vector<SlotAllocation>& Reference to slot table
+     *
+     * @return Span over active slot allocations (valid for object lifetime)
      */
-    virtual const std::vector<types::protocols::lora_mesh::SlotAllocation>&
+    virtual std::span<const types::protocols::lora_mesh::SlotAllocation>
     GetSlotTable() const = 0;
 };
 

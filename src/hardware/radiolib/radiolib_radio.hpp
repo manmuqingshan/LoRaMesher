@@ -364,6 +364,10 @@ class RadioLibRadio : public IRadio {
     os::TaskHandle_t processing_task_{
         nullptr};  // Handle to the event processing task
 
+    /// Reusable receive buffer — eliminates per-packet heap allocation
+    static constexpr size_t kRxBufferSize = 256;
+    uint8_t rx_buffer_[kRxBufferSize]{};
+
     // Mutex for thread safety
     std::mutex radio_mutex_;
 };

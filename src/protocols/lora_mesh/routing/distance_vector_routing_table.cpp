@@ -480,7 +480,7 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
 }
 
 bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
-    AddressType source_address, const std::vector<RoutingTableEntry>& entries,
+    AddressType source_address, std::span<const RoutingTableEntry> entries,
     uint32_t reception_timestamp, uint8_t local_link_quality, uint8_t max_hops,
     uint8_t source_capabilities, uint8_t source_allocated_data_slots) {
     std::lock_guard<std::mutex> lock(table_mutex_);

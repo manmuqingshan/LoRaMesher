@@ -5,8 +5,8 @@
 
 #pragma once
 
+#include <array>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
@@ -19,17 +19,21 @@ namespace lora_mesh {
 
 /**
  * @brief Implementation of message queue service
- * 
- * Manages queues for different message types
+ *
+ * Manages queues for different message types using a fixed-size array
+ * indexed by SlotType enum value to avoid unordered_map heap overhead.
  */
 class MessageQueueService : public IMessageQueueService {
    public:
+    /// SlotType enum values: TX=1 ... SYNC_BEACON_RX=9; index 0 unused
+    static constexpr size_t kNumSlotTypes = 10;
+
     /**
      * @brief Constructor
-     * 
+     *
      * @param max_queue_size Maximum size for each queue (0 = unlimited)
      */
-    explicit MessageQueueService(size_t max_queue_size = 0);
+    explicit MessageQueueService(size_t max_queue_size = 20);
 
     /**
      * @brief Virtual destructor
@@ -54,35 +58,35 @@ class MessageQueueService : public IMessageQueueService {
 
     /**
      * @brief Set maximum queue size
-     * 
+     *
      * @param max_size Maximum size (0 = unlimited)
      */
     void SetMaxQueueSize(size_t max_size);
 
     /**
      * @brief Get maximum queue size
-     * 
+     *
      * @return size_t Maximum queue size
      */
     size_t GetMaxQueueSize() const;
 
     /**
      * @brief Clear a specific message queue
-     * 
+     *
      * @param type Type of queue to clear
      */
     void ClearQueue(types::protocols::lora_mesh::SlotAllocation::SlotType type);
 
     /**
      * @brief Check if any queues have messages
-     * 
+     *
      * @return bool True if any queue has messages
      */
     bool HasAnyMessages() const;
 
     /**
      * @brief Get total messages across all queues
-     * 
+     *
      * @return size_t Total message count
      */
     size_t GetTotalMessageCount() const;
@@ -102,8 +106,8 @@ class MessageQueueService : public IMessageQueueService {
     bool RemoveMessage(MessageType type) override;
 
    private:
-    std::unordered_map<types::protocols::lora_mesh::SlotAllocation::SlotType,
-                       std::vector<std::unique_ptr<BaseMessage>>>
+    /// Queues indexed by SlotType numeric value (index 0 unused)
+    std::array<std::vector<std::unique_ptr<BaseMessage>>, kNumSlotTypes>
         message_queues_;
     size_t max_queue_size_;
     mutable std::mutex queue_mutex_;

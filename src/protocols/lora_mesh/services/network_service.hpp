@@ -5,9 +5,11 @@
 
 #pragma once
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -667,12 +669,12 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Get current slot table
-     * 
-     * @return const std::vector<SlotAllocation>& Slot table
+     *
+     * @return Span over active slot allocations (valid for object lifetime)
      */
-    const std::vector<types::protocols::lora_mesh::SlotAllocation>&
-    GetSlotTable() const {
-        return slot_table_;
+    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+        const {
+        return {slot_table_.data(), slot_count_};
     }
 
     // Discovery methods
@@ -944,7 +946,12 @@ class NetworkService : public INetworkService {
 
     // Network state
     std::unique_ptr<IRoutingTable> routing_table_;
-    std::vector<types::protocols::lora_mesh::SlotAllocation> slot_table_;
+
+    /// Fixed-size slot table — max 256 slots, no heap allocation
+    static constexpr size_t kMaxSlots = 256;
+    std::array<types::protocols::lora_mesh::SlotAllocation, kMaxSlots>
+        slot_table_{};
+    uint16_t slot_count_ = 0;  ///< Number of valid slots in slot_table_
     NetworkConfig config_;
     RouteUpdateCallback route_update_callback_;
     DataReceivedCallback data_received_callback_;

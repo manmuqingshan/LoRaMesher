@@ -1,12 +1,13 @@
 // test/types/test_messages/message_test.cpp
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/base_message.hpp"
@@ -50,9 +51,8 @@ class BaseMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -128,7 +128,7 @@ TEST_F(BaseMessageTest, DeserializationTest) {
         << "Incorrect deserialized payload size";
 
     // And: Verify payload
-    EXPECT_EQ(deserialized_msg.GetPayload(), payload)
+    EXPECT_TRUE(std::ranges::equal(deserialized_msg.GetPayload(), payload))
         << "Incorrect deserialized payload";
 }
 
@@ -170,7 +170,8 @@ TEST_F(BaseMessageTest, CopyConstructorTest) {
         BaseMessage copy(msg);
 
         // Verify independent copies
-        EXPECT_EQ(copy.GetPayload(), msg_ptr->GetPayload());
+        EXPECT_TRUE(
+            std::ranges::equal(copy.GetPayload(), msg_ptr->GetPayload()));
         EXPECT_NE(copy.GetPayload().data(), msg_ptr->GetPayload().data());
     }
     // Both objects should be properly destroyed here
@@ -190,23 +191,21 @@ TEST_F(BaseMessageTest, CopyAssignmentTest) {
         copy = msg;
 
         // Verify independent copies
-        EXPECT_EQ(copy.GetPayload(), msg_ptr->GetPayload());
+        EXPECT_TRUE(
+            std::ranges::equal(copy.GetPayload(), msg_ptr->GetPayload()));
         EXPECT_NE(copy.GetPayload().data(), msg_ptr->GetPayload().data());
     }
     // Copy should be destroyed, original should still be valid
-    EXPECT_EQ(msg_ptr->GetPayload(), payload);
+    EXPECT_TRUE(std::ranges::equal(msg_ptr->GetPayload(), payload));
 }
 
 // Test move constructor
 TEST_F(BaseMessageTest, MoveConstructorTest) {
-    const uint8_t* originalDataPtr = nullptr;
     {
-        originalDataPtr = msg_ptr->GetPayload().data();
         BaseMessage moved(std::move(*msg_ptr));
 
         // Verify moved data
-        EXPECT_EQ(moved.GetPayload().data(), originalDataPtr);
-        EXPECT_EQ(moved.GetPayload(), payload);
+        EXPECT_TRUE(std::ranges::equal(moved.GetPayload(), payload));
 
         // Original should be in valid but unspecified state
         EXPECT_TRUE(msg_ptr->GetPayload().empty());
@@ -225,13 +224,14 @@ TEST_F(BaseMessageTest, MoveAssignmentTest) {
     BaseMessage target_msg = std::move(*opt_target);
 
     // Store the original payload for comparison
-    const std::vector<uint8_t> original_payload = source_msg.GetPayload();
+    std::vector<uint8_t> original_payload(source_msg.GetPayload().begin(),
+                                          source_msg.GetPayload().end());
 
     // When: Moving source to target
     target_msg = std::move(source_msg);
 
     // Then: Target should have the original payload
-    EXPECT_EQ(target_msg.GetPayload(), original_payload)
+    EXPECT_TRUE(std::ranges::equal(target_msg.GetPayload(), original_payload))
         << "Target payload doesn't match original";
 
     // And: Source should be empty but valid
@@ -258,7 +258,7 @@ TEST_F(BaseMessageTest, CreateErrorTest) {
     }
 
     // Original should remain unchanged
-    EXPECT_EQ(msg_ptr->GetPayload(), originalPayload);
+    EXPECT_TRUE(std::ranges::equal(msg_ptr->GetPayload(), originalPayload));
 }
 
 // Test chained operations
@@ -281,7 +281,7 @@ TEST_F(BaseMessageTest, ChainedOperationsTest) {
 
     // Verify all messages are valid
     for (const auto& msg : messages) {
-        EXPECT_EQ(msg->GetPayload(), payload);
+        EXPECT_TRUE(std::ranges::equal(msg->GetPayload(), payload));
     }
 }
 

@@ -5,6 +5,9 @@
 
 #include "join_response_message.hpp"
 
+#include <array>
+#include <span>
+
 namespace loramesher {
 
 JoinResponseMessage::JoinResponseMessage(
@@ -99,11 +102,11 @@ size_t JoinResponseMessage::GetTotalSize() const {
 }
 
 BaseMessage JoinResponseMessage::ToBaseMessage() const {
-    // Calculate payload size
-    size_t payload_size = GetTotalSize();
+    // Calculate total size (header + superframe_info = full serialized form)
+    size_t total_size = GetTotalSize();
 
-    std::vector<uint8_t> payload(payload_size);
-    utils::ByteSerializer serializer(payload);
+    std::array<uint8_t, BaseMessage::kMaxPayloadSize + 16> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), total_size);
 
     Result result = header_.Serialize(serializer);
     if (!result.IsSuccess()) {
@@ -117,13 +120,13 @@ BaseMessage JoinResponseMessage::ToBaseMessage() const {
         serializer.WriteBytes(superframe_info_.data(), superframe_info_.size());
     }
 
-    // Create the base message with our serialized content as payload
-    auto base_message = BaseMessage::CreateFromSerialized(payload);
+    // Create the base message from the fully serialized bytes
+    auto base_message = BaseMessage::CreateFromSerialized(
+        std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
     if (!base_message.has_value()) {
         LOG_ERROR("Failed to create base message from join response");
-        // Return an empty message as fallback
         return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::SYNC_BEACON, {});
+                           MessageType::JOIN_RESPONSE, {});
     }
 
     return base_message.value();

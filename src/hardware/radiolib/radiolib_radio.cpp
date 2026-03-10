@@ -1,6 +1,7 @@
 #include "radiolib_radio.hpp"
 
 #include <queue>
+#include <span>
 
 #include "config/system_config.hpp"
 #include "config/task_config.hpp"
@@ -430,7 +431,7 @@ void RadioLibRadio::HandleInterrupt() {
     }
 
     // Check if we received data
-    size_t length = current_module_->getPacketLength();
+    uint8_t length = current_module_->getPacketLength();
     if (length == 0) {
         LOG_DEBUG("No data received");
         lock.unlock();
@@ -438,9 +439,7 @@ void RadioLibRadio::HandleInterrupt() {
         return;
     }
 
-    // Read the received data
-    std::vector<uint8_t> buffer(length);
-    Result result = current_module_->readData(buffer.data(), length);
+    Result result = current_module_->readData(rx_buffer_, length);
     if (!result) {
         LOG_WARNING(result.GetErrorMessage().c_str());
         lock.unlock();
@@ -465,9 +464,10 @@ void RadioLibRadio::HandleInterrupt() {
     last_packet_rssi_ = current_module_->getRSSI();
     last_packet_snr_ = current_module_->getSNR();
 
-    // Try to deserialize the received data into a message
+    // Try to deserialize the received data into a message (zero-copy span)
     std::optional<BaseMessage> message_optional =
-        BaseMessage::CreateFromSerialized(buffer);
+        BaseMessage::CreateFromSerialized(
+            std::span<const uint8_t>(rx_buffer_, length));
     if (!message_optional) {
         LOG_ERROR("Failed to deserialize message");
         lock.unlock();
@@ -492,7 +492,7 @@ void RadioLibRadio::HandleInterrupt() {
     }
 
     auto event = CreateReceivedEvent(
-        std::make_unique<BaseMessage>(message_optional.value()),
+        std::make_unique<BaseMessage>(std::move(*message_optional)),
         last_packet_rssi_, last_packet_snr_);
     if (event && receive_callback_) {
         receive_callback_(std::move(event));
@@ -514,17 +514,7 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     while (!GetRTOS().ShouldStopOrPause() && radio->processing_task_) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
         if (result == os::QueueResult::kOk) {
-            std::string taskName = radio->current_config_.getRadioTypeString();
-            // Periodic monitoring
-            // utils::TaskMonitor::MonitorTask(
-            //     radio->processing_task_, taskName.c_str(),
-            //     config::TaskConfig::kMinStackWatermark);
-
             radio->HandleInterrupt();
-            // Periodic monitoring
-            // utils::TaskMonitor::MonitorTask(
-            //     radio->processing_task_, taskName.c_str(),
-            //     config::TaskConfig::kMinStackWatermark);
         }
 
         GetRTOS().YieldTask();

@@ -5,6 +5,9 @@
 
 #include "ping_pong_message.hpp"
 
+#include <array>
+#include <span>
+
 namespace loramesher {
 
 PingPongMessage::PingPongMessage(const PingPongHeader& header)
@@ -90,11 +93,9 @@ size_t PingPongMessage::GetTotalSize() const {
 }
 
 BaseMessage PingPongMessage::ToBaseMessage() const {
-    // Create a serialized representation of PingPong-specific fields
-    std::vector<uint8_t> payload;
-    payload.resize(PingPongHeader::PingPongFieldsSize());
-
-    utils::ByteSerializer serializer(payload);
+    // Serialize PingPong-specific fields into a stack array
+    std::array<uint8_t, PingPongHeader::PingPongFieldsSize()> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), payload_buf.size());
     serializer.WriteUint16(header_.GetSequenceNumber());
     serializer.WriteUint32(header_.GetTimestamp());
 
@@ -105,11 +106,11 @@ BaseMessage PingPongMessage::ToBaseMessage() const {
 
     // Create the base message with our serialized content as payload
     auto base_message = BaseMessage::Create(
-        header_.GetDestination(), header_.GetSource(), ping_pong_type, payload);
+        header_.GetDestination(), header_.GetSource(), ping_pong_type,
+        std::span<const uint8_t>(payload_buf));
 
     if (!base_message.has_value()) {
         LOG_ERROR("Failed to create base message from PingPong message");
-        // TODO: In production code, we might want a better error handling strategy here
         return BaseMessage(header_.GetDestination(), header_.GetSource(),
                            ping_pong_type, {});
     }

@@ -5,6 +5,8 @@
 
 #include "slot_request_message.hpp"
 
+#include <span>
+
 namespace loramesher {
 
 SlotRequestMessage::SlotRequestMessage(AddressType dest, AddressType src,
@@ -43,16 +45,15 @@ size_t SlotRequestMessage::GetTotalSize() const {
 }
 
 BaseMessage SlotRequestMessage::ToBaseMessage() const {
-    // Create payload with just the requested slots field
-    std::vector<uint8_t> payload = {requested_slots_};
+    // Create payload with just the requested slots field (1 byte)
+    const uint8_t payload_data = requested_slots_;
 
-    // Create the base message
-    auto base_message = BaseMessage::Create(destination_, source_,
-                                            MessageType::SLOT_REQUEST, payload);
+    auto base_message =
+        BaseMessage::Create(destination_, source_, MessageType::SLOT_REQUEST,
+                            std::span<const uint8_t>(&payload_data, 1));
 
     if (!base_message.has_value()) {
         LOG_ERROR("Failed to create base message from slot request message");
-        // Return an empty message as fallback
         return BaseMessage(destination_, source_, MessageType::SLOT_REQUEST,
                            {});
     }

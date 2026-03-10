@@ -68,7 +68,7 @@ NetworkService::NetworkService(
     config_.node_address = node_address;
     node_address_ = node_address;
 
-    slot_table_.reserve(255);
+    // slot_table_ is a fixed-size array; no reserve needed
 }
 
 bool NetworkService::UpdateNetworkNode(AddressType node_address,
@@ -1570,7 +1570,7 @@ Result NetworkService::SendSlotRequest(uint8_t num_slots) {
 
 Result NetworkService::UpdateSlotTable() {
     // Clear existing table
-    slot_table_.clear();
+    slot_count_ = 0;
 
     // Get all nodes including self ordered.
     std::vector<NetworkNodeRoute> ordered_nodes = routing_table_->GetNodes();
@@ -1697,7 +1697,17 @@ Result NetworkService::UpdateSlotTable() {
     LOG_DEBUG("SLEEP slots %d | actual TX duty cycle: %.2f%%", sleep_slots,
               actual_tx_duty_cycle * 100.0f);
 
-    slot_table_.resize(total_superframe_slots);
+    slot_count_ = total_superframe_slots;
+
+    // Ensure we never shrink below the NM-announced superframe size.
+    // A stale/incomplete local routing table (e.g. after ApplyPendingJoin) can
+    // compute fewer total slots than the NM expects, causing premature superframe
+    // end and a 1000ms slot-skip on CalculateNextEventTimeout().
+    if (slot_count_ < number_of_slots_per_superframe_) {
+        LOG_DEBUG("Clamping slot_count_ from %d to NM-announced %d",
+                  slot_count_, number_of_slots_per_superframe_);
+        slot_count_ = number_of_slots_per_superframe_;
+    }
 
     // Single slot_index advances through all allocation phases
     size_t slot_index = 0;
@@ -1714,7 +1724,7 @@ Result NetworkService::UpdateSlotTable() {
 
     // ── Phase 1: Sync beacon slots (hop-layered forwarding) ──────────────────
     for (size_t hop_layer = 0;
-         hop_layer < sync_beacon_slots && slot_index < slot_table_.size();
+         hop_layer < sync_beacon_slots && slot_index < slot_count_;
          hop_layer++) {
         SlotAllocation::SlotType sync_type;
         if (hop_layer == 0) {
@@ -1735,8 +1745,8 @@ Result NetworkService::UpdateSlotTable() {
     }
 
     // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
-    for (size_t i = 0;
-         i < allocated_control_slots_ && slot_index < slot_table_.size(); i++) {
+    for (size_t i = 0; i < allocated_control_slots_ && slot_index < slot_count_;
+         i++) {
         if (i == my_control_slot_index_) {
             LOG_DEBUG(
                 "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
@@ -1755,7 +1765,7 @@ Result NetworkService::UpdateSlotTable() {
         AddressType addr = node.GetAddress();
         uint8_t slot_data_number = node.GetAllocatedDataSlots();
         for (size_t j = 0; j < slot_data_number; j++) {
-            if (slot_index >= slot_table_.size()) {
+            if (slot_index >= slot_count_) {
                 LOG_ERROR(
                     "Slot index %zu out of bounds for node 0x%04X, skipping",
                     slot_index, addr);
@@ -1779,7 +1789,7 @@ Result NetworkService::UpdateSlotTable() {
 
     // ── Phase 4: Sleep slots ──────────────────────────────────────────────────
     for (size_t i = 0; i < sleep_slots; i++) {
-        if (slot_index >= slot_table_.size()) {
+        if (slot_index >= slot_count_) {
             LOG_ERROR("SLEEP slot index %zu out of bounds, skipping",
                       slot_index);
             return Result(LoraMesherErrorCode::kInvalidState,
@@ -1790,7 +1800,7 @@ Result NetworkService::UpdateSlotTable() {
 
     // ── Phase 5: Discovery slots ──────────────────────────────────────────────
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
-        if (slot_index >= slot_table_.size()) {
+        if (slot_index >= slot_count_) {
             LOG_ERROR("Discovery slot index %zu out of bounds, skipping",
                       slot_index);
             return Result(LoraMesherErrorCode::kInvalidState,
@@ -1813,8 +1823,8 @@ Result NetworkService::UpdateSlotTable() {
     }
 
     // Notify superframe service of new slot table
-    Result result = superframe_service_->UpdateSuperframeConfig(
-        slot_table_.size(), 0, false);
+    Result result =
+        superframe_service_->UpdateSuperframeConfig(slot_count_, 0, false);
     if (!result) {
         LOG_ERROR("Failed to update superframe service with new slot table");
         return result;
@@ -1828,8 +1838,8 @@ Result NetworkService::SetDiscoverySlots() {
     allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
-    slot_table_.clear();
-    slot_table_.resize(allocated_discovery_slots_);
+    slot_count_ = 0;
+    slot_count_ = static_cast<uint16_t>(allocated_discovery_slots_);
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
         SlotAllocation slot;
         slot.slot_number = i;
@@ -1925,13 +1935,12 @@ Result NetworkService::SetJoiningSlots() {
         }
     }
 
-    float duty_cycle = (float)active_slots / slot_table_.size() * 100.0f;
+    float duty_cycle = (float)active_slots / slot_count_ * 100.0f;
 
     LOG_INFO(
         "Set joining slots: %zu active + %zu sleep = %zu total (%.1f%% duty "
         "cycle) - synchronized with network",
-        active_slots, slot_table_.size() - active_slots, slot_table_.size(),
-        duty_cycle);
+        active_slots, slot_count_ - active_slots, slot_count_, duty_cycle);
 
     return Result::Success();
 }
@@ -2111,7 +2120,7 @@ void NetworkService::AllocateDataSlotsBasedOnRouting(
 }
 
 uint16_t NetworkService::FindNextAvailableSlot(uint16_t start_slot) {
-    for (uint16_t i = start_slot; i < slot_table_.size(); i++) {
+    for (uint16_t i = start_slot; i < slot_count_; i++) {
         if (slot_table_[i].type == SlotAllocation::SlotType::SLEEP) {
             return i;
         }
@@ -2396,7 +2405,7 @@ Result NetworkService::SendSyncBeacon() {
     }
 
     // Get actual total slots from the slot table
-    uint16_t total_slots = static_cast<uint16_t>(slot_table_.size());
+    uint16_t total_slots = static_cast<uint16_t>(slot_count_);
     if (total_slots == 0) {
         total_slots = 20;  // Fallback default
         LOG_WARNING("Slot table empty, using default total slots: %d",
@@ -2901,11 +2910,11 @@ void NetworkService::ResetNetworkState() {
 
     // Store count before clearing for logging
     size_t node_count = routing_table_->GetSize();
-    size_t slot_count = slot_table_.size();
+    size_t slot_count = slot_count_;
 
     // Clear network topology data
     routing_table_->Clear();
-    slot_table_.clear();
+    slot_count_ = 0;
 
     // Reset state variables
     network_found_ = false;

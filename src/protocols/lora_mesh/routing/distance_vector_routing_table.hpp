@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <mutex>
+#include <span>
 #include <vector>
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
@@ -97,8 +98,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     void UpdateLinkStatistics() override;
 
     bool ProcessRoutingTableMessage(
-        AddressType source_address,
-        const std::vector<RoutingTableEntry>& entries,
+        AddressType source_address, std::span<const RoutingTableEntry> entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
         uint8_t max_hops, uint8_t source_capabilities = 0,
         uint8_t source_allocated_data_slots = 0) override;

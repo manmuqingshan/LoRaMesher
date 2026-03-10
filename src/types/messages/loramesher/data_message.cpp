@@ -5,6 +5,9 @@
 
 #include "data_message.hpp"
 
+#include <array>
+#include <span>
+
 namespace loramesher {
 
 DataMessage::DataMessage(const DataHeader& header,
@@ -99,8 +102,9 @@ Result DataMessage::SetNextHop(AddressType next_hop) {
 BaseMessage DataMessage::ToBaseMessage() const {
     // Calculate payload size (only DATA specific fields + user payload)
     size_t total_payload_size = DataHeader::DataFieldsSize() + payload_.size();
-    std::vector<uint8_t> msg_payload(total_payload_size);
-    utils::ByteSerializer serializer(msg_payload);
+
+    std::array<uint8_t, BaseMessage::kMaxPayloadSize> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), total_payload_size);
 
     // Serialize only the DATA specific fields (not the BaseHeader part)
     serializer.WriteUint16(header_.GetNextHop());
@@ -111,8 +115,9 @@ BaseMessage DataMessage::ToBaseMessage() const {
     }
 
     // Create the base message with the correct type and our payload
-    return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                       MessageType::DATA, msg_payload);
+    return BaseMessage(
+        header_.GetDestination(), header_.GetSource(), MessageType::DATA,
+        std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
 }
 
 std::optional<std::vector<uint8_t>> DataMessage::Serialize() const {

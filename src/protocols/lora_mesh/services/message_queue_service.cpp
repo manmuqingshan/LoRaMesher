@@ -19,74 +19,86 @@ void MessageQueueService::AddMessageToQueue(
     types::protocols::lora_mesh::SlotAllocation::SlotType type,
     std::unique_ptr<BaseMessage> message) {
 
+    size_t idx = static_cast<size_t>(type);
+    if (idx == 0 || idx >= kNumSlotTypes) {
+        LOG_ERROR("Invalid slot type: %d", static_cast<int>(type));
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(queue_mutex_);
+    auto& queue = message_queues_[idx];
 
     // Check if queue has reached maximum size
-    if (max_queue_size_ > 0 &&
-        message_queues_[type].size() >= max_queue_size_) {
+    if (max_queue_size_ > 0 && queue.size() >= max_queue_size_) {
         LOG_WARNING("Queue for type %d is full, dropping oldest message",
                     static_cast<int>(type));
 
         // Remove oldest message (front of queue)
-        if (!message_queues_[type].empty()) {
-            message_queues_[type].erase(message_queues_[type].begin());
+        if (!queue.empty()) {
+            queue.erase(queue.begin());
         }
     }
 
     // Add the new message to the queue
-    message_queues_[type].push_back(std::move(message));
+    queue.push_back(std::move(message));
 
     LOG_DEBUG("Added message to queue type %d, new size: %zu",
-              static_cast<int>(type), message_queues_[type].size());
+              static_cast<int>(type), queue.size());
 }
 
 std::unique_ptr<BaseMessage> MessageQueueService::ExtractMessageOfType(
     types::protocols::lora_mesh::SlotAllocation::SlotType type) {
 
+    size_t idx = static_cast<size_t>(type);
+    if (idx == 0 || idx >= kNumSlotTypes) {
+        return nullptr;
+    }
+
     std::lock_guard<std::mutex> lock(queue_mutex_);
+    auto& queue = message_queues_[idx];
 
-    auto it = message_queues_.find(type);
-    if (it != message_queues_.end() && !it->second.empty()) {
-        // Get the first message
-        std::unique_ptr<BaseMessage> message = std::move(it->second.front());
-
-        // Remove it from the queue
-        it->second.erase(it->second.begin());
+    if (!queue.empty()) {
+        std::unique_ptr<BaseMessage> message = std::move(queue.front());
+        queue.erase(queue.begin());
 
         LOG_DEBUG("Extracted message from queue type %d, new size: %zu",
-                  static_cast<int>(type), it->second.size());
+                  static_cast<int>(type), queue.size());
 
-        // Return the message (will be moved)
         return message;
     }
 
-    // No message found
     return nullptr;
 }
 
 bool MessageQueueService::IsQueueEmpty(
     types::protocols::lora_mesh::SlotAllocation::SlotType type) const {
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    size_t idx = static_cast<size_t>(type);
+    if (idx == 0 || idx >= kNumSlotTypes) {
+        return true;
+    }
 
-    auto it = message_queues_.find(type);
-    return (it == message_queues_.end() || it->second.empty());
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    return message_queues_[idx].empty();
 }
 
 size_t MessageQueueService::GetQueueSize(
     types::protocols::lora_mesh::SlotAllocation::SlotType type) const {
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    size_t idx = static_cast<size_t>(type);
+    if (idx == 0 || idx >= kNumSlotTypes) {
+        return 0;
+    }
 
-    auto it = message_queues_.find(type);
-    return (it != message_queues_.end()) ? it->second.size() : 0;
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    return message_queues_[idx].size();
 }
 
 void MessageQueueService::ClearAllQueues() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
 
-    for (auto& queue_pair : message_queues_) {
-        queue_pair.second.clear();
+    for (auto& queue : message_queues_) {
+        queue.clear();
     }
 
     LOG_INFO("All message queues cleared");
@@ -99,16 +111,13 @@ void MessageQueueService::SetMaxQueueSize(size_t max_size) {
 
     // If the new size is smaller than current queues, truncate them
     if (max_size > 0) {
-        for (auto& queue_pair : message_queues_) {
-            if (queue_pair.second.size() > max_size) {
+        for (auto& queue : message_queues_) {
+            if (queue.size() > max_size) {
                 // Keep only the newest messages (at the end of the vector)
-                queue_pair.second.erase(
-                    queue_pair.second.begin(),
-                    queue_pair.second.begin() +
-                        (queue_pair.second.size() - max_size));
+                queue.erase(queue.begin(),
+                            queue.begin() + (queue.size() - max_size));
 
-                LOG_INFO("Queue for type %d truncated to %zu messages",
-                         static_cast<int>(queue_pair.first), max_size);
+                LOG_INFO("Queue truncated to %zu messages", max_size);
             }
         }
     }
@@ -121,20 +130,21 @@ size_t MessageQueueService::GetMaxQueueSize() const {
 void MessageQueueService::ClearQueue(
     types::protocols::lora_mesh::SlotAllocation::SlotType type) {
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-
-    auto it = message_queues_.find(type);
-    if (it != message_queues_.end()) {
-        it->second.clear();
-        LOG_INFO("Queue for type %d cleared", static_cast<int>(type));
+    size_t idx = static_cast<size_t>(type);
+    if (idx == 0 || idx >= kNumSlotTypes) {
+        return;
     }
+
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    message_queues_[idx].clear();
+    LOG_INFO("Queue for type %d cleared", static_cast<int>(type));
 }
 
 bool MessageQueueService::HasAnyMessages() const {
     std::lock_guard<std::mutex> lock(queue_mutex_);
 
-    for (const auto& queue_pair : message_queues_) {
-        if (!queue_pair.second.empty()) {
+    for (const auto& queue : message_queues_) {
+        if (!queue.empty()) {
             return true;
         }
     }
@@ -146,8 +156,8 @@ size_t MessageQueueService::GetTotalMessageCount() const {
     std::lock_guard<std::mutex> lock(queue_mutex_);
 
     size_t total = 0;
-    for (const auto& queue_pair : message_queues_) {
-        total += queue_pair.second.size();
+    for (const auto& queue : message_queues_) {
+        total += queue.size();
     }
 
     return total;
@@ -156,8 +166,8 @@ size_t MessageQueueService::GetTotalMessageCount() const {
 bool MessageQueueService::HasMessage(MessageType type) const {
     std::lock_guard<std::mutex> lock(queue_mutex_);
 
-    for (const auto& pair : message_queues_) {
-        for (const auto& message : pair.second) {
+    for (const auto& queue : message_queues_) {
+        for (const auto& message : queue) {
             if (message->GetType() == type) {
                 return true;
             }
@@ -168,16 +178,15 @@ bool MessageQueueService::HasMessage(MessageType type) const {
 
 bool MessageQueueService::RemoveMessage(MessageType type) {
     std::lock_guard<std::mutex> lock(queue_mutex_);
-    for (auto& pair : message_queues_) {
-        auto& queue = pair.second;
+    for (auto& queue : message_queues_) {
         auto it = std::find_if(queue.begin(), queue.end(),
                                [type](const std::unique_ptr<BaseMessage>& msg) {
                                    return msg->GetType() == type;
                                });
         if (it != queue.end()) {
             queue.erase(it);
-            LOG_INFO("Removed message of type %d from queue %d",
-                     static_cast<int>(type), static_cast<int>(pair.first));
+            LOG_INFO("Removed message of type %d from queue",
+                     static_cast<int>(type));
             return true;
         }
     }

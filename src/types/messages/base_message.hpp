@@ -5,10 +5,12 @@
 
 #pragma once
 
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -20,11 +22,14 @@ namespace loramesher {
 
 /**
  * @brief Base message class for all message communications
- * 
+ *
  * This class provides common message functionality for serialization,
  * deserialization, and basic message operations. It is not intended to be
  * a base class for inheritance, but rather a standard message format that
  * all specific message types can be converted to.
+ *
+ * The payload is stored in a fixed-size internal array to avoid heap
+ * fragmentation on ESP32.
  */
 class BaseMessage {
    public:
@@ -36,7 +41,7 @@ class BaseMessage {
 
     /**
      * @brief Creates a new Base Message
-     * 
+     *
      * @param dest Destination address for the message
      * @param src Source address of the message
      * @param type Type of the message
@@ -46,39 +51,39 @@ class BaseMessage {
      */
     static std::optional<BaseMessage> Create(AddressType dest, AddressType src,
                                              MessageType type,
-                                             const std::vector<uint8_t>& data);
+                                             std::span<const uint8_t> data);
 
     /**
      * @brief Creates a new Base Message from serialized data
-     * 
-     * @param data Raw byte vector containing the serialized message
-     * @return std::optional<BaseMessage> Valid message if creation succeeded, 
+     *
+     * @param data Raw byte span containing the serialized message
+     * @return std::optional<BaseMessage> Valid message if creation succeeded,
      *         std::nullopt otherwise
      */
     static std::optional<BaseMessage> CreateFromSerialized(
-        const std::vector<uint8_t>& data);
+        std::span<const uint8_t> data);
 
     /**
      * @brief Constructor
-     * 
+     *
      * @param dest Destination address
      * @param src Source address
      * @param type Message type
      * @param data Payload data
      */
     BaseMessage(AddressType dest, AddressType src, MessageType type,
-                const std::vector<uint8_t>& data);
+                std::span<const uint8_t> data);
 
     /**
      * @brief Copy constructor
-     * 
+     *
      * @param other Message to copy from
      */
     BaseMessage(const BaseMessage& other);
 
     /**
      * @brief Copy assignment operator
-     * 
+     *
      * @param other Message to copy from
      * @return Reference to this message after copying
      */
@@ -86,14 +91,14 @@ class BaseMessage {
 
     /**
      * @brief Move constructor
-     * 
+     *
      * @param other Message to move from
      */
     BaseMessage(BaseMessage&& other) noexcept;
 
     /**
      * @brief Move assignment operator
-     * 
+     *
      * @param other Message to move from
      * @return Reference to this message after moving
      */
@@ -106,7 +111,7 @@ class BaseMessage {
 
     /**
      * @brief Sets the message header
-     * 
+     *
      * @param header New header for the message
      * @return Result Success if setting the header succeeded, error code otherwise
      */
@@ -114,7 +119,7 @@ class BaseMessage {
 
     /**
      * @brief Sets message header and payload
-     * 
+     *
      * @param dest Destination address
      * @param src Source address
      * @param type Message type
@@ -122,34 +127,36 @@ class BaseMessage {
      * @return Result Success if setting the header succeeded, error code otherwise
      */
     Result SetMessage(AddressType dest, AddressType src, MessageType type,
-                      const std::vector<uint8_t>& data);
+                      std::span<const uint8_t> data);
 
     /**
      * @brief Gets the message header
-     * 
+     *
      * @return Const reference to the message header
      */
     const BaseHeader& GetHeader() const { return header_; }
 
     /**
-     * @brief Gets the message payload
-     * 
-     * @return Const reference to the payload data
+     * @brief Gets the message payload as a span
+     *
+     * @return Span over the payload data (valid for the lifetime of this message)
      */
-    const std::vector<uint8_t>& GetPayload() const { return payload_; }
+    std::span<const uint8_t> GetPayload() const {
+        return {payload_data_, payload_size_};
+    }
 
     /**
      * @brief Gets the total size of the message
-     * 
+     *
      * @return Size in bytes including header and payload
      */
-    size_t GetTotalSize() const { return header_.GetSize() + payload_.size(); }
+    size_t GetTotalSize() const { return header_.GetSize() + payload_size_; }
 
     /**
      * @brief Serializes the complete message
-     * 
+     *
      * Serializes both header and payload into a byte vector.
-     * 
+     *
      * @return std::optional<std::vector<uint8_t>> Serialized message if successful,
      *         std::nullopt otherwise
      */
@@ -157,14 +164,14 @@ class BaseMessage {
 
     /**
      * @bief Gets the destination address of the message
-     * 
+     *
      * @return AddressType Destination address
      */
     AddressType GetDestination() const { return header_.GetDestination(); }
 
     /**
      * @brief Gets the source address of the message
-     * 
+     *
      * @return AddressType Source address
      */
     AddressType GetSource() const { return header_.GetSource(); }
@@ -200,7 +207,7 @@ class BaseMessage {
    private:
     /**
      * @brief Validates all input parameters
-     * 
+     *
      * @param dest Destination address
      * @param src Source address
      * @param type Message type
@@ -209,10 +216,13 @@ class BaseMessage {
      */
     static Result ValidateInputs(AddressType dest, AddressType src,
                                  MessageType type,
-                                 const std::vector<uint8_t>& data);
+                                 std::span<const uint8_t> data);
 
-    BaseHeader header_;             ///< Message header
-    std::vector<uint8_t> payload_;  ///< Message payload
+    BaseHeader header_;  ///< Message header
+
+    /// Fixed-size payload array — avoids heap fragmentation on ESP32
+    uint8_t payload_data_[kMaxPayloadSize] = {};
+    uint8_t payload_size_ = 0;  ///< Actual number of bytes in payload_data_
 
     ///< Optional callback to invoke before transmission
     std::function<void(BaseMessage&)> pre_send_callback_;
@@ -220,7 +230,7 @@ class BaseMessage {
 
 /**
  * @brief Interface for message types that can be converted to BaseMessage
- * 
+ *
  * All specific message types should implement this interface to provide
  * a standard way to convert them to the BaseMessage format for transmission.
  */
@@ -233,14 +243,14 @@ class IConvertibleToBaseMessage {
 
     /**
      * @brief Converts the specific message to a BaseMessage
-     * 
+     *
      * @return BaseMessage representing this message for transmission
      */
     virtual BaseMessage ToBaseMessage() const = 0;
 
     /**
      * @brief Serializes the message to a byte vector
-     * 
+     *
      * @return std::optional<std::vector<uint8_t>> Serialized message if successful,
      *         std::nullopt otherwise
      */

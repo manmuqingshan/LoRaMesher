@@ -5,6 +5,9 @@
 
 #include "sync_beacon_message.hpp"
 
+#include <array>
+#include <span>
+
 namespace loramesher {
 
 SyncBeaconMessage::SyncBeaconMessage(const SyncBeaconHeader& header)
@@ -165,12 +168,12 @@ bool SyncBeaconMessage::IsOriginalBeacon() const {
 }
 
 BaseMessage SyncBeaconMessage::ToBaseMessage() const {
-    // Calculate total payload size for sync beacon header
+    // Calculate total message size for sync beacon
     size_t total_message_size =
         header_.SyncBeaconFieldsSize() + BaseHeader::Size();
 
-    std::vector<uint8_t> payload(total_message_size);
-    utils::ByteSerializer serializer(payload);
+    std::array<uint8_t, 256> payload_buf{};
+    utils::ByteSerializer serializer(payload_buf.data(), total_message_size);
 
     // Serialize the sync beacon header-specific fields
     Result result = header_.Serialize(serializer);
@@ -180,11 +183,11 @@ BaseMessage SyncBeaconMessage::ToBaseMessage() const {
                            MessageType::SYNC_BEACON, {});
     }
 
-    // Create the base message with our serialized content as payload
-    auto base_message = BaseMessage::CreateFromSerialized(payload);
+    // Create the base message from the serialized bytes (includes full header)
+    auto base_message = BaseMessage::CreateFromSerialized(
+        std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
     if (!base_message.has_value()) {
         LOG_ERROR("Failed to create base message from sync beacon message");
-        // Return an empty message as fallback
         return BaseMessage(header_.GetDestination(), header_.GetSource(),
                            MessageType::SYNC_BEACON, {});
     }
