@@ -283,6 +283,20 @@ class LoRaMeshProtocol : public Protocol {
      */
     uint8_t GetDataSlotsPerSuperframe() const;
 
+    /**
+     * @brief Get number of messages pending in the TX queue
+     *
+     * @return size_t Number of messages waiting to be transmitted
+     */
+    size_t GetTxQueueSize() const;
+
+    /**
+     * @brief Get number of messages pending in the RX queue
+     *
+     * @return size_t Number of messages waiting to be processed
+     */
+    size_t GetRxQueueSize() const;
+
    private:
     /**
      * @brief Main protocol task function

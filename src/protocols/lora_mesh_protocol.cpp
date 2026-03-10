@@ -1280,6 +1280,16 @@ uint8_t LoRaMeshProtocol::GetDataSlotsPerSuperframe() const {
     return count;
 }
 
+size_t LoRaMeshProtocol::GetTxQueueSize() const {
+    return message_queue_service_->GetQueueSize(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::TX);
+}
+
+size_t LoRaMeshProtocol::GetRxQueueSize() const {
+    return message_queue_service_->GetQueueSize(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::RX);
+}
+
 Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
     if (!message_queue_service_) {
         return Result(LoraMesherErrorCode::kInvalidState,

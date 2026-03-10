@@ -197,6 +197,20 @@ class LoraMesher {
     uint8_t GetDataSlotsPerSuperframe() const;
 
     /**
+     * @brief Get number of messages pending in the TX queue
+     *
+     * @return size_t Number of messages waiting to be transmitted
+     */
+    size_t GetTxQueueSize() const;
+
+    /**
+     * @brief Get number of messages pending in the RX queue
+     *
+     * @return size_t Number of messages waiting to be processed
+     */
+    size_t GetRxQueueSize() const;
+
+    /**
      * @brief Set local node capabilities
      *
      * Updates the capabilities for this node. Changes will be propagated

@@ -294,6 +294,20 @@ uint8_t LoraMesher::GetDataSlotsPerSuperframe() const {
     return protocol->GetDataSlotsPerSuperframe();
 }
 
+size_t LoraMesher::GetTxQueueSize() const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetTxQueueSize();
+}
+
+size_t LoraMesher::GetRxQueueSize() const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetRxQueueSize();
+}
+
 std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
     std::vector<RouteEntry> routes;
 
