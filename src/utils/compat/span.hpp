@@ -3,9 +3,21 @@
 // (e.g. xtensa-esp32-elf-gcc 8.x which targets C++20 via -std=gnu++2a but
 // lacks the <span> header).  On toolchains that DO have <span> (GCC 10+,
 // Clang 7+, MSVC 19.26+) the native header is used transparently.
+//
+// We guard on __cpp_lib_span (the C++20 feature-test macro) rather than
+// __has_include(<span>) because some toolchains (e.g. older ESP32 Arduino
+// framework builds) ship a partial <span> that __has_include finds but that
+// lacks the contiguous-range/container constructors.  __cpp_lib_span is only
+// defined (in <version> or <span>) when the library implementation is fully
+// conformant.
 #pragma once
 
-#if defined(__has_include) && __has_include(<span>)
+// Load feature-test macros without pulling in all of <span>.
+#if defined(__has_include) && __has_include(<version>)
+#include <version>
+#endif
+
+#if defined(__cpp_lib_span) && __cpp_lib_span >= 202002L
 #include <span>
 #else
 
