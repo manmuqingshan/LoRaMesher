@@ -2598,12 +2598,18 @@ ${directionIcon} Direction: ${direction}
                 const nodesG = document.getElementById('networkNodes');
                 nodesG.innerHTML = '';
 
+                // nm=1 in RTENTRY means "dest is the NM" — collect all dest addresses
+                // that any node's routing table marks as NM.
+                const nmAddresses = new Set();
+                topology.forEach((routes) => {
+                    routes.forEach((route, dest) => { if (route.nm) nmAddresses.add(dest); });
+                });
+
                 nodeIds.forEach(nodeId => {
                     const pos = this.nodePositions.get(nodeId);
                     if (!pos) return;
 
-                    const routes = topology.get(nodeId);
-                    const isNM = routes ? [...routes.values()].some(r => r.nm) : false;
+                    const isNM = nmAddresses.has(nodeId);
 
                     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                     circle.setAttribute('cx', pos.x);
