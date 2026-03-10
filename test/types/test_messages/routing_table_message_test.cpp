@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/loramesher/routing_table_message.hpp"
@@ -65,9 +65,8 @@ class RoutingTableMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -283,7 +282,7 @@ TEST_F(RoutingTableMessageTest, ConversionToBaseMessageTest) {
     EXPECT_EQ(base_msg.GetHeader().GetType(), MessageType::ROUTE_TABLE);
 
     // And: Payload should contain RoutingTable fields + entries
-    const std::vector<uint8_t>& payload = base_msg.GetPayload();
+    auto payload = base_msg.GetPayload();
 
     // Payload should have 4 bytes header (network_id, version, entry_count) plus entry data
     const size_t expected_payload_size = msg_ptr->GetTotalPayloadSize();

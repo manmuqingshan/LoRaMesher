@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "routing_test_fixture.hpp"
 
 namespace loramesher {
@@ -84,7 +86,7 @@ TEST_F(TopologyRoutingTests, FourNodeLineTopology) {
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 2, [&]() {
+    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
         return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
                                       MessageType::DATA);
     });
@@ -95,7 +97,7 @@ TEST_F(TopologyRoutingTests, FourNodeLineTopology) {
         auto messages = GetReceivedMessages(*nodes[3], nodes[0]->address,
                                             MessageType::DATA);
         ASSERT_EQ(messages.size(), 1);
-        EXPECT_EQ(messages[0].GetPayload(), payload);
+        EXPECT_TRUE(std::ranges::equal(messages[0].GetPayload(), payload));
     }
 }
 
@@ -161,7 +163,7 @@ TEST_F(TopologyRoutingTests, FullMeshFourNodes) {
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 2, [&]() {
+    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
         return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
                                       MessageType::DATA);
     });
@@ -249,7 +251,7 @@ TEST_F(TopologyRoutingTests, StarTopologyFiveNodes) {
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 2, [&]() {
+    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
         return HasReceivedMessageFrom(*nodes[4], nodes[1]->address,
                                       MessageType::DATA);
     });
@@ -296,7 +298,7 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
     // Distance-vector needs additional rounds to converge to shorter paths.
     // With min_sleep_fraction each superframe is longer, so allow 2 extra.
     auto superframe_ms = GetSuperframeDuration(*nodes.front());
-    AdvanceTime(superframe_ms * 2, superframe_ms * 2, 15, 2,
+    AdvanceTime(superframe_ms * 2, superframe_ms * 2, 15, 5,
                 [&]() { return false; });
 
     // Print routing tables for debugging
@@ -329,7 +331,7 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 2, [&]() {
+    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
         return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                       MessageType::DATA);
     });
@@ -340,7 +342,7 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
         auto messages = GetReceivedMessages(*nodes[2], nodes[0]->address,
                                             MessageType::DATA);
         ASSERT_EQ(messages.size(), 1);
-        EXPECT_EQ(messages[0].GetPayload(), payload);
+        EXPECT_TRUE(std::ranges::equal(messages[0].GetPayload(), payload));
     }
 }
 

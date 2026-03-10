@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/loramesher/slot_request_message.hpp"
@@ -55,9 +55,8 @@ class SlotRequestMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -164,7 +163,7 @@ TEST_F(SlotRequestMessageTest, ConversionToBaseMessageTest) {
     EXPECT_EQ(base_msg.GetHeader().GetType(), MessageType::SLOT_REQUEST);
 
     // And: Payload should contain requested slots field
-    const std::vector<uint8_t>& payload = base_msg.GetPayload();
+    auto payload = base_msg.GetPayload();
     ASSERT_EQ(payload.size(), 1);
     EXPECT_EQ(payload[0], requested_slots);
 }

@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/loramesher/sync_beacon_message.hpp"
@@ -65,9 +65,8 @@ class SyncBeaconMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif

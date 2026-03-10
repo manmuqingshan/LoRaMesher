@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/loramesher/data_message.hpp"
@@ -56,9 +56,8 @@ class DataMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -214,7 +213,7 @@ TEST_F(DataMessageTest, ConversionToBaseMessageTest) {
     EXPECT_EQ(base_msg.GetHeader().GetType(), MessageType::DATA);
 
     // And: Payload should contain Data fields + user payload
-    const std::vector<uint8_t>& base_payload = base_msg.GetPayload();
+    auto base_payload = base_msg.GetPayload();
 
     ASSERT_EQ(base_payload.size(),
               DataHeader::DataFieldsSize() + payload.size());

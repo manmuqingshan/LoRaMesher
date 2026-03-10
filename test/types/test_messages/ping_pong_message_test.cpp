@@ -6,7 +6,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/ping_pong/ping_pong_message.hpp"
@@ -52,9 +52,8 @@ class PingPongMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -222,7 +221,7 @@ TEST_F(PingPongMessageTest, ConversionToBaseMessageTest) {
     EXPECT_EQ(base_msg.GetHeader().GetType(), MessageType::PING);
 
     // And: Payload should contain PingPong fields
-    const std::vector<uint8_t>& payload = base_msg.GetPayload();
+    auto payload = base_msg.GetPayload();
     ASSERT_EQ(payload.size(), PingPongHeader::PingPongFieldsSize());
 
     // Verify sequence number (little endian)

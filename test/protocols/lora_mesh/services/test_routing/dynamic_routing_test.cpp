@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "routing_test_fixture.hpp"
 
 namespace loramesher {
@@ -70,7 +72,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
     // Wait for routing tables to update
     // The route from N1 to N3 should now go through N2 or N4
     bool updated =
-        AdvanceTime(superframe_time * 8, superframe_time * 8, 25, 2, [&]() {
+        AdvanceTime(superframe_time * 8, superframe_time * 8, 25, 5, [&]() {
             // N1 should still have a route to N3, but with more hops
             if (!HasRouteTo(*nodes[0], nodes[2]->address)) {
                 return false;
@@ -100,7 +102,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
         ASSERT_TRUE(SendMessage(*nodes[0], *nodes[2], payload));
 
         bool received =
-            AdvanceTime(superframe_time * 4, superframe_time * 4, 50, 2, [&]() {
+            AdvanceTime(superframe_time * 4, superframe_time * 4, 50, 5, [&]() {
                 return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                               MessageType::DATA);
             });
@@ -155,7 +157,7 @@ TEST_F(DynamicRoutingTests, RouteRecoveryAfterNodeReconnect) {
 
     // Wait for route to be marked inactive or removed
     // Note: This may take up to route_timeout_ms
-    AdvanceTime(superframe_time * 6, superframe_time * 6, 50, 2,
+    AdvanceTime(superframe_time * 6, superframe_time * 6, 50, 5,
                 [&]() { return false; });
 
     std::cout << "=== After disconnect ===" << std::endl;
@@ -172,7 +174,7 @@ TEST_F(DynamicRoutingTests, RouteRecoveryAfterNodeReconnect) {
     // Wait for routes to recover - need all nodes to have complete routing
     // tables so intermediate nodes can forward messages
     bool recovered =
-        AdvanceTime(superframe_time * 12, superframe_time * 12, 50, 2, [&]() {
+        AdvanceTime(superframe_time * 12, superframe_time * 12, 50, 5, [&]() {
             // N1 should regain route to N3 with 2 hops
             // N2 (intermediate) must also know about N3 to forward messages
             return HasRouteTo(*nodes[0], nodes[2]->address) &&
@@ -190,14 +192,14 @@ TEST_F(DynamicRoutingTests, RouteRecoveryAfterNodeReconnect) {
     // Verify message delivery after recovery
     if (recovered) {
         // Allow extra time for data slot allocation to stabilize
-        AdvanceTime(superframe_time * 2, superframe_time * 2, 50, 2,
+        AdvanceTime(superframe_time * 2, superframe_time * 2, 50, 5,
                     [&]() { return false; });
 
         std::vector<uint8_t> payload = {0xAA, 0xBB};
         ASSERT_TRUE(SendMessage(*nodes[0], *nodes[2], payload));
 
         bool received =
-            AdvanceTime(superframe_time * 4, superframe_time * 4, 50, 2, [&]() {
+            AdvanceTime(superframe_time * 4, superframe_time * 4, 50, 5, [&]() {
                 return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
                                               MessageType::DATA);
             });
@@ -339,7 +341,7 @@ TEST_F(DynamicRoutingTests, BroadcastToAllNodes) {
         << "Failed to send broadcast message";
 
     // Wait for broadcast to propagate
-    bool all_received = AdvanceTime(10000, 15000, 200, 2, [&]() {
+    bool all_received = AdvanceTime(10000, 15000, 200, 5, [&]() {
         for (size_t i = 1; i < nodes.size(); i++) {
             if (!HasReceivedMessageFrom(*nodes[i], nodes[0]->address,
                                         MessageType::DATA)) {
@@ -363,7 +365,7 @@ TEST_F(DynamicRoutingTests, BroadcastToAllNodes) {
             << "Node " << i + 1 << " should receive exactly 1 broadcast";
 
         if (!messages.empty()) {
-            EXPECT_EQ(messages[0].GetPayload(), payload)
+            EXPECT_TRUE(std::ranges::equal(messages[0].GetPayload(), payload))
                 << "Broadcast payload mismatch at Node " << i + 1;
         }
     }

@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/loramesher/slot_allocation_message.hpp"
@@ -57,9 +57,8 @@ class SlotAllocationMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -190,7 +189,7 @@ TEST_F(SlotAllocationMessageTest, ConversionToBaseMessageTest) {
     EXPECT_EQ(base_msg.GetHeader().GetType(), MessageType::SLOT_ALLOCATION);
 
     // And: Payload should contain slot allocation fields
-    const std::vector<uint8_t>& payload = base_msg.GetPayload();
+    auto payload = base_msg.GetPayload();
 
     // Payload should be 4 bytes
     ASSERT_EQ(payload.size(), 4);

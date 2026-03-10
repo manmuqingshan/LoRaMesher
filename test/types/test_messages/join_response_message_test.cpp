@@ -10,7 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
-#include <sys/resource.h>
+#include <malloc.h>
 #endif
 
 #include "types/messages/loramesher/join_response_message.hpp"
@@ -59,9 +59,8 @@ class JoinResponseMessageTest : public ::testing::Test {
         GlobalMemoryStatusEx(&memStatus);
         return memStatus.ullTotalPhys;
 #elif defined(__linux__)
-        struct rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
-        return usage.ru_maxrss;
+        struct mallinfo2 info = mallinfo2();
+        return info.uordblks;
 #else
         return 0;
 #endif
@@ -304,7 +303,7 @@ TEST_F(JoinResponseMessageTest, ConversionToBaseMessageTest) {
     EXPECT_EQ(base_msg.GetHeader().GetType(), MessageType::JOIN_RESPONSE);
 
     // And: Payload should contain JoinResponse fields + superframe info
-    const std::vector<uint8_t>& payload = base_msg.GetPayload();
+    auto payload = base_msg.GetPayload();
 
     // Payload should have JoinResponseFieldsSize (includes sponsor address) plus superframe info
     ASSERT_EQ(payload.size(), JoinResponseHeader::JoinResponseFieldsSize() +
