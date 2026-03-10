@@ -7,7 +7,6 @@
 
 #include <functional>
 #include <memory>
-#include <span>
 
 #include "hardware/hardware_manager.hpp"
 #include "lora_mesh/services/message_queue_service.hpp"
@@ -17,6 +16,7 @@
 #include "os/rtos.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/protocols/protocol.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {

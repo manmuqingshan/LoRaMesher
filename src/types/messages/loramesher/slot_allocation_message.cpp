@@ -6,7 +6,8 @@
 #include "slot_allocation_message.hpp"
 
 #include <array>
-#include <span>
+
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 

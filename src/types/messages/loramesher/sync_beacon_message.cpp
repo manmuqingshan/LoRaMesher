@@ -6,7 +6,8 @@
 #include "sync_beacon_message.hpp"
 
 #include <array>
-#include <span>
+
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 

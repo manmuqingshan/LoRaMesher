@@ -7,11 +7,11 @@
 
 #include <algorithm>
 #include <mutex>
-#include <span>
 #include <vector>
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
+#include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {

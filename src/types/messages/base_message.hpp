@@ -10,13 +10,13 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
 #include "base_header.hpp"
 #include "types/error_codes/result.hpp"
 #include "utils/byte_operations.h"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 

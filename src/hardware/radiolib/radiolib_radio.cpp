@@ -1,11 +1,11 @@
 #include "radiolib_radio.hpp"
 
 #include <queue>
-#include <span>
 
 #include "config/system_config.hpp"
 #include "config/task_config.hpp"
 #include "radiolib_modules/radio_lib_code_errors.hpp"
+#include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 #include "utils/task_monitor.hpp"
 

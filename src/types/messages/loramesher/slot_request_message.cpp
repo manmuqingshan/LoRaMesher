@@ -5,7 +5,7 @@
 
 #include "slot_request_message.hpp"
 
-#include <span>
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 

@@ -6,12 +6,12 @@
 #pragma once
 
 #include <array>
-#include <span>
 #include <vector>
 #include "routing_table_entry.hpp"
 #include "routing_table_header.hpp"
 #include "types/messages/base_message.hpp"
 #include "utils/byte_operations.h"
+#include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {

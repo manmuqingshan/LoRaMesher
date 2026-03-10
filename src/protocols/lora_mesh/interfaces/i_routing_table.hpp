@@ -7,12 +7,13 @@
 
 #include <functional>
 #include <memory>
-#include <span>
 #include <vector>
+
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {

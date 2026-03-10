@@ -9,7 +9,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -28,6 +27,7 @@
 #include "types/messages/loramesher/sync_beacon_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {

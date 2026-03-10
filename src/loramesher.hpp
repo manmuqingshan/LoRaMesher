@@ -7,7 +7,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -18,6 +17,7 @@
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/node_capabilities.hpp"
+#include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {

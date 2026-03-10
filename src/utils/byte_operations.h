@@ -9,11 +9,11 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
 
+#include "utils/compat/span.hpp"
 #include "types/error_codes/result.hpp"
 
 namespace loramesher {

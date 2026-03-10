@@ -5,11 +5,12 @@
 
 #pragma once
 
-#include <span>
 #include <vector>
+
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {
