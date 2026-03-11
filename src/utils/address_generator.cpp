@@ -29,6 +29,39 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
         return GenerateFallback(config);
     }
 
+    if (config.use_legacy_mac_formula) {
+        if (id_length < 6) {
+            LOG_WARNING(
+                "Hardware ID too short for legacy formula, using fallback");
+            last_generation_source_ = "Fallback (legacy formula, ID too short)";
+            return GenerateFallback(config);
+        }
+        last_generation_source_ = "Legacy MAC (mac[4]<<8)|mac[5]";
+        LOG_INFO("Generating address from %s", last_generation_source_);
+        AddressType address = static_cast<AddressType>(
+            (static_cast<uint16_t>(hardware_id[4]) << 8) | hardware_id[5]);
+        if (config.avoid_reserved_addresses) {
+            if (address == 0x0000) {
+                address = 0x0001;
+                LOG_DEBUG("Avoided reserved address 0x0000, using 0x0001");
+            } else if (address == 0xFFFF) {
+                address = 0xFFFE;
+                LOG_DEBUG("Avoided reserved address 0xFFFF, using 0xFFFE");
+            }
+        }
+        if (!IsValidAddress(address, config.avoid_reserved_addresses)) {
+            LOG_WARNING(
+                "Legacy formula produced invalid address 0x%04X, using "
+                "fallback",
+                address);
+            return GenerateFallback(config);
+        }
+        LOG_DEBUG(
+            "Generated legacy address 0x%04X from mac[4]=0x%02X mac[5]=0x%02X",
+            address, hardware_id[4], hardware_id[5]);
+        return address;
+    }
+
     last_generation_source_ = "Hardware HAL";
     LOG_INFO("Generating address from %s", last_generation_source_);
 

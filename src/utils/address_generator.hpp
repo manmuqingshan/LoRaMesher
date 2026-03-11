@@ -23,12 +23,15 @@ class AddressGenerator {
         bool avoid_reserved_addresses;  ///< Avoid 0x0000 and 0xFFFF
         uint16_t
             address_mask;  ///< Mask for address generation (default: full 16-bit)
+        bool
+            use_legacy_mac_formula;  ///< Use (mac[4]<<8)|mac[5] — original LoRaMesher formula
 
         /// Default constructor with sensible defaults
         Config()
             : use_hardware_id(true),
               avoid_reserved_addresses(true),
-              address_mask(0xFFFF) {}
+              address_mask(0xFFFF),
+              use_legacy_mac_formula(true) {}
     };
 
     /**
