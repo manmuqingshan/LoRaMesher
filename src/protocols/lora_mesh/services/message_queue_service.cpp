@@ -5,7 +5,9 @@
 
 #include "message_queue_service.hpp"
 
+#include <algorithm>
 #include <numeric>
+
 #include "utils/logger.hpp"
 
 namespace loramesher {
