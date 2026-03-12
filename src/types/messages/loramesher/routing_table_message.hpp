@@ -75,8 +75,11 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
 
     /**
      * @brief Maximum number of routing table entries that fit in one message
+     *
+     * (255 - BaseHeader::Size(6) - RoutingTableFieldsSize(6)) / RoutingTableEntry::Size(7) = 34
      */
-    static constexpr uint8_t kMaxRoutingEntries = 40;
+    // TODO: Make it programatically
+    static constexpr uint8_t kMaxRoutingEntries = 34;
 
     /**
      * @brief Gets the list of routing table entries as a span

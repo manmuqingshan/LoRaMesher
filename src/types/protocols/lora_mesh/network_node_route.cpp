@@ -279,7 +279,9 @@ bool NetworkNodeRoute::UpdateCapabilities(uint8_t new_capabilities,
 }
 
 RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
-    return routing_entry;
+    RoutingTableEntry entry = routing_entry;
+    entry.control_slot_index = control_slot_index;
+    return entry;
 }
 
 void NetworkNodeRoute::ExpectRoutingMessage() {

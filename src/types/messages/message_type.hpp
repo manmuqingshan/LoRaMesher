@@ -53,6 +53,7 @@ enum class MessageType : uint8_t {
     SLOT_REQUEST = 0x44,     ///< 0100 0100: Request for slot allocation
     SLOT_ALLOCATION = 0x45,  ///< 0100 0101: Slot allocation response
     SYNC_BEACON = 0x46,      ///< 0100 0110: Multi-hop sync beacon
+    NM_CLAIM = 0x47,         ///< 0100 0111: Network Manager election claim
 };
 
 /**
