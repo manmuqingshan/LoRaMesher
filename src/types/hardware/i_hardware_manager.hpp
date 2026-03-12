@@ -256,6 +256,12 @@ class IHardwareManager {
      * @return hal::IHal* Pointer to HAL interface, nullptr if not initialized
      */
     virtual hal::IHal* getHal() = 0;
+
+    /**
+     * @brief Propagate local node address to the radio for log identification
+     * @param address Local node address
+     */
+    virtual void SetLocalAddress(AddressType address) = 0;
 };
 
 }  // namespace hardware
