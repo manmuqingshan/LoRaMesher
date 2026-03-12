@@ -32,7 +32,8 @@ class INetworkService {
         JOINING,           ///< Attempting to join network
         NORMAL_OPERATION,  ///< Normal network operation
         NETWORK_MANAGER,   ///< Acting as network manager
-        FAULT_RECOVERY     ///< Attempting to recover from fault
+        FAULT_RECOVERY,    ///< Attempting to recover from fault
+        NM_ELECTION        ///< Running for NM role after fault recovery backoff
     };
 
     /**

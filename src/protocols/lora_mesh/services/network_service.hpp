@@ -21,6 +21,7 @@
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
+#include "types/messages/loramesher/nm_claim_message.hpp"
 #include "types/messages/loramesher/routing_table_message.hpp"
 #include "types/messages/loramesher/slot_allocation_message.hpp"
 #include "types/messages/loramesher/slot_request_message.hpp"
@@ -35,7 +36,10 @@ namespace protocols {
 namespace lora_mesh {
 
 static const uint8_t kMaxNoReceivedSyncBeacons =
-    5;  ///< Max number of superframes without receiving sync beacons // TODO: set it configurable?
+    5;  ///< Max number of superframes without receiving sync beacons
+
+/// Minimum listen window before election fires (ms). 2 superframes @ 500ms ea.
+static constexpr uint32_t kElectionListenWindowMs = 5000;
 
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
@@ -727,6 +731,49 @@ class NetworkService : public INetworkService {
      */
     uint8_t GetHopDistanceToNM() const override;
 
+    /**
+     * @brief Callback type for protocol state changes
+     */
+    using StateChangeCallback = std::function<void(ProtocolState)>;
+
+    /**
+     * @brief Register a callback invoked whenever the protocol state changes
+     *
+     * @param callback Function called with the new state
+     */
+    void SetStateChangeCallback(StateChangeCallback callback) {
+        state_change_callback_ = std::move(callback);
+    }
+
+    /**
+     * @brief Returns true if an NM election backoff is currently in progress
+     */
+    bool IsElectionPending() const { return election_end_time_ != 0; }
+
+    /**
+     * @brief Initiate NM election backoff (called when entering FAULT_RECOVERY)
+     *
+     * Computes a weighted staggered backoff based on node role and address.
+     * NODE_ONLY nodes never start an election.
+     */
+    void StartElectionBackoff();
+
+    /**
+     * @brief Process a received NM_CLAIM message
+     *
+     * @param message The received NM_CLAIM message
+     * @return Result
+     */
+    Result ProcessNMClaim(const BaseMessage& message);
+
+    /**
+     * @brief Broadcast an NM_CLAIM to all neighbors
+     *
+     * Queues the claim in the DISCOVERY_TX slot queue.
+     * @return Result
+     */
+    Result SendNMClaim();
+
    private:
     /**
      * @brief Get comprehensive link quality for a node
@@ -919,11 +966,32 @@ class NetworkService : public INetworkService {
     void SetSyncBeaconPreSendCallback(BaseMessage& base_msg);
 
     /**
+     * @brief Handle a foreign-network sync beacon (NM state only)
+     *
+     * Called when the NM receives a SYNC_BEACON from a different network.
+     * Broadcasts an NM_CLAIM so the foreign NM can compare election priorities
+     * and the lower-priority network surrenders gracefully.
+     *
+     * @param beacon The foreign sync beacon
+     */
+    void HandleForeignBeacon(const SyncBeaconMessage& beacon);
+
+    /**
      * @brief Get max hops from routing table
      *
      * @return uint8_t Maximum hops from routing table
      */
     uint8_t GetMaxHopsFromRoutingTable() const;
+
+    /**
+     * @brief Compute election priority for this node
+     *
+     * Lower value = higher priority. NETWORK_MANAGER role gets lower base
+     * value, ensuring it wins over AUTO nodes.
+     *
+     * @return uint8_t Priority value (0 = highest)
+     */
+    uint8_t ComputeElectionPriority() const;
 
     /**
      * @brief Find lowest available control slot index
@@ -1014,6 +1082,18 @@ class NetworkService : public INetworkService {
 
     // Periodic cleanup
     uint32_t last_cleanup_time_ = 0;  ///< Last time route cleanup was performed
+
+    // NM election state
+    uint32_t election_end_time_ =
+        0;  ///< Tick count when election backoff expires (0 = none)
+    uint8_t election_priority_ =
+        0xFF;  ///< Our election priority (lower = higher priority)
+
+    // Stable network identifier (generated at CreateNetwork, preserved across elections)
+    uint16_t network_id_ = 0;
+
+    // State-change notification callback
+    StateChangeCallback state_change_callback_;
 
     // Thread safety
     mutable std::mutex network_mutex_;

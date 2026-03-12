@@ -599,8 +599,11 @@ Result SuperframeService::UpdateSuperframeState() {
         // Check if we've wrapped around (new superframe)
         bool new_superframe = false;
 
-        // Detect new superframe (guard against first invocation after Start() when last_slot_ == 0xFFFF)
-        if (current_slot == 0 && last_slot_ != 0xFFFF) {
+        // Detect new superframe: wrap-around occurs when current_slot < last_slot_
+        // (covers both the normal case where current_slot == 0, and the case where
+        // a large time jump skips slot 0 entirely, landing at e.g. slot 5 after
+        // last_slot_ == 13).  Guard against first invocation (last_slot_ == 0xFFFF).
+        if (current_slot < last_slot_ && last_slot_ != 0xFFFF) {
             new_superframe = true;
             // Only handle new superframe if auto-advance is enabled
             if (auto_advance_) {

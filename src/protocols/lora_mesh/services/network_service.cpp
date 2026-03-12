@@ -183,8 +183,15 @@ Result NetworkService::ProcessRoutingTableMessage(
 
     bool routing_changed = false;
 
-    // Update network manager from routing message
-    if (network_manager != network_manager_ && network_manager != 0) {
+    // Update network manager from routing message only when this node has no
+    // NM yet (network_manager_ == 0).  Once any non-zero value is set — either
+    // from a SYNC_BEACON or from a previous routing table — SYNC_BEACON is the
+    // authoritative source for all subsequent updates.  Accepting routing-table
+    // NM updates in NORMAL_OPERATION, JOINING, or FAULT_RECOVERY would allow
+    // cross-network tables (delivered after bridging two networks) to silently
+    // corrupt network_manager_, causing JOIN_REQUEST to go to the wrong NM or
+    // SYNC_BEACON_TX to flip to SYNC_BEACON_RX.
+    if (network_manager_ == 0 && network_manager != 0) {
         std::lock_guard<std::mutex> lock(network_mutex_);
         network_manager_ = network_manager;
         LOG_INFO("Updated network manager to 0x%04X", network_manager);
@@ -209,6 +216,16 @@ Result NetworkService::ProcessRoutingTableMessage(
         config_.max_hops, source_capabilities, source_allocated_data_slots);
 
     routing_changed |= routes_updated;
+
+    // Propagate control_slot_index from each received entry into the routing
+    // table.  This lets any node reconstruct the full TDMA schedule if it
+    // wins an election.
+    for (const auto& entry : entries) {
+        if (entry.control_slot_index != 0xFF) {
+            routing_table_->SetControlSlotIndex(entry.destination,
+                                                entry.control_slot_index);
+        }
+    }
 
     // Update network topology if needed
     if (routing_changed) {
@@ -434,6 +451,9 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
         case MessageType::SYNC_BEACON:
             return ProcessSyncBeacon(message, reception_timestamp);
 
+        case MessageType::NM_CLAIM:
+            return ProcessNMClaim(message);
+
         case MessageType::DATA:
             return ProcessDataMessage(message, reception_timestamp);
 
@@ -464,6 +484,9 @@ INetworkService::ProtocolState NetworkService::GetState() const {
 void NetworkService::SetState(ProtocolState state) {
     state_ = state;
     LOG_INFO("Network service state changed to %d", static_cast<int>(state));
+    if (state_change_callback_) {
+        state_change_callback_(state);
+    }
 }
 
 AddressType NetworkService::GetNetworkManagerAddress() const {
@@ -613,6 +636,19 @@ Result NetworkService::CreateNetwork() {
     }
 
     LOG_INFO("Created new network as manager 0x%04X", node_address_);
+
+    // Ensure election_priority_ is always set so cross-network NM_CLAIM
+    // comparisons work correctly even when the node was configured as
+    // NETWORK_MANAGER from boot (never went through StartElectionBackoff).
+    election_priority_ = ComputeElectionPriority();
+
+    // Generate stable network_id_ if not already set (e.g. from a prior beacon)
+    if (network_id_ == 0) {
+        network_id_ = static_cast<uint16_t>(node_address_ ^
+                                            (GetRTOS().GetRandom() & 0xFFFF));
+        if (network_id_ == 0)
+            network_id_ = node_address_;  // never 0
+    }
 
     // Set ourselves as network manager
     SetNetworkManager(node_address_);
@@ -2163,16 +2199,32 @@ uint32_t NetworkService::GetJoinTimeout() {
 
 Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                                          uint32_t reception_timestamp) {
-    // Process sync beacons in discovery, joining, normal operation, and network manager states
-    if (state_ != ProtocolState::DISCOVERY &&
-        state_ != ProtocolState::JOINING &&
-        state_ != ProtocolState::NORMAL_OPERATION &&
-        state_ != ProtocolState::FAULT_RECOVERY) {
-        LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_));
+    // NETWORK_MANAGER special case: only react to foreign-network beacons.
+    // We never synchronize to another node's superframe when we are the NM,
+    // but we do need to detect and respond to foreign networks.
+    if (state_ == ProtocolState::NETWORK_MANAGER) {
+        auto nm_beacon_opt =
+            SyncBeaconMessage::CreateFromSerialized(*message.Serialize());
+        if (nm_beacon_opt.has_value()) {
+            const auto& sb = nm_beacon_opt.value();
+            uint16_t bid = sb.GetNetworkId();
+            if (network_id_ != 0 && bid != 0 && bid != network_id_) {
+                HandleForeignBeacon(sb);
+            }
+        }
         return Result::Success();
     }
 
-    // TODO: If state == network_manager, we can listen to sync beacon to set the neighbour nodes.
+    // Process sync beacons in discovery, joining, normal operation, fault
+    // recovery, and NM election states.
+    if (state_ != ProtocolState::DISCOVERY &&
+        state_ != ProtocolState::JOINING &&
+        state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::FAULT_RECOVERY &&
+        state_ != ProtocolState::NM_ELECTION) {
+        LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_));
+        return Result::Success();
+    }
 
     // Deserialize sync beacon message
     auto sync_beacon_opt =
@@ -2199,6 +2251,25 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
     last_sync_beacon_received_ = current_time;
 
+    // Foreign-beacon guard for stable operating states: don't silently adopt a
+    // different network's identity.  DISCOVERY / FAULT_RECOVERY / NM_ELECTION
+    // may join any live network, so they fall through.
+    {
+        uint16_t bid = sync_beacon.GetNetworkId();
+        if (network_id_ != 0 && bid != 0 && bid != network_id_) {
+            if (state_ == ProtocolState::NORMAL_OPERATION ||
+                state_ == ProtocolState::JOINING) {
+                LOG_INFO(
+                    "Ignoring foreign SYNC_BEACON (net 0x%04X vs ours "
+                    "0x%04X)",
+                    bid, network_id_);
+                return Result::Success();
+            }
+            // DISCOVERY, FAULT_RECOVERY, NM_ELECTION: fall through and join
+            // whichever live network we detected.
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(network_mutex_);
         // Update network manager from the sync beacon header
@@ -2207,6 +2278,23 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
             network_manager_ = beacon_nm;
             LOG_INFO("Updated network manager to 0x%04X from sync beacon",
                      beacon_nm);
+        }
+
+        // Preserve stable network_id_ from beacon (survives NM elections)
+        uint16_t beacon_network_id = sync_beacon.GetNetworkId();
+        if (beacon_network_id != 0 && network_id_ != beacon_network_id) {
+            network_id_ = beacon_network_id;
+            LOG_INFO("Stored network_id 0x%04X from sync beacon", network_id_);
+        }
+
+        // Cancel any pending election — a live NM is broadcasting
+        if ((state_ == ProtocolState::FAULT_RECOVERY ||
+             state_ == ProtocolState::NM_ELECTION) &&
+            election_end_time_ != 0) {
+            LOG_INFO(
+                "Cancelling NM election: received sync beacon from NM 0x%04X",
+                beacon_nm);
+            election_end_time_ = 0;
         }
 
         // Store max_hops from the sync beacon for slot allocation calculations
@@ -2233,6 +2321,13 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
             LOG_INFO("Updated beacon_node_count_ to %d from sync beacon",
                      beacon_node_count_);
         }
+    }
+
+    // If we were electing ourselves and got a beacon, pivot to DISCOVERY so the
+    // block below triggers joining to the real NM.
+    if (state_ == ProtocolState::NM_ELECTION) {
+        selected_sponsor_ = 0;  // reset so sponsor is picked from this beacon
+        SetState(ProtocolState::DISCOVERY);
     }
 
     // Add/update route to NM based on sync beacon info
@@ -2417,7 +2512,7 @@ Result NetworkService::SendSyncBeacon() {
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
         0xFFFF,         // Broadcast destination
         node_address_,  // Network manager as source
-        node_address_,  // TODO: At this moment NetworkId is network Manager
+        network_id_,    // Stable network identifier (survives NM elections)
         total_slots,    // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
         node_address_,  // Network manager address
@@ -2599,7 +2694,25 @@ Result NetworkService::HandleSuperframeStart() {
             LOG_WARNING(
                 "No received sync beacon for %d times, entering FaultRecovery",
                 kMaxNoReceivedSyncBeacons);
-            state_ = ProtocolState::FAULT_RECOVERY;
+            SetState(ProtocolState::FAULT_RECOVERY);
+            StartElectionBackoff();
+        }
+    } else if (state_ == ProtocolState::FAULT_RECOVERY) {
+        // Decrement election backoff if one is pending
+        if (election_end_time_ != 0) {
+            uint32_t now = GetRTOS().getTickCount();
+            if (now >= election_end_time_) {
+                LOG_INFO(
+                    "Election backoff expired (priority=%d), entering "
+                    "NM_ELECTION",
+                    election_priority_);
+                election_end_time_ = 0;
+                // Switch to discovery slots so the NM_CLAIM is sent through
+                // the DISCOVERY_RX fallback TX path in this same slot
+                SetDiscoverySlots();
+                SendNMClaim();  // queue claim for next DISCOVERY_TX slot
+                SetState(ProtocolState::NM_ELECTION);
+            }
         }
     }
 
@@ -2969,6 +3082,159 @@ uint8_t NetworkService::FindLowestAvailableControlSlot() {
         }
     }
     return 255;  // Fallback (shouldn't happen with <255 nodes)
+}
+
+// ---------------------------------------------------------------------------
+// NM election helpers
+// ---------------------------------------------------------------------------
+
+uint8_t NetworkService::ComputeElectionPriority() const {
+    // Lower value = higher priority.
+    // NETWORK_MANAGER role: base 0–63 (always beats AUTO)
+    // AUTO role:            base 64–191
+    // NODE_ONLY:            never wins (returns 0xFF)
+    if (node_role_ == NodeRole::NODE_ONLY)
+        return 0xFF;
+
+    uint8_t role_base = (node_role_ == NodeRole::NETWORK_MANAGER) ? 0 : 64;
+    // Lower address → lower priority value → wins ties
+    uint8_t addr_component =
+        static_cast<uint8_t>((node_address_ & 0xFF) >> 1);  // 0–127
+    return static_cast<uint8_t>(
+        std::min(static_cast<uint16_t>(role_base + addr_component),
+                 static_cast<uint16_t>(0xFE)));
+}
+
+void NetworkService::StartElectionBackoff() {
+    if (node_role_ == NodeRole::NODE_ONLY) {
+        election_end_time_ = 0;  // NODE_ONLY never elects
+        return;
+    }
+
+    election_priority_ = ComputeElectionPriority();
+
+    // Backoff formula (all in ms):
+    //   listen_window + role_bonus + addr_bonus + jitter
+    uint32_t listen_window_ms = kElectionListenWindowMs;
+    uint32_t role_bonus_ms =
+        (node_role_ == NodeRole::NETWORK_MANAGER) ? 0 : listen_window_ms;
+    // addr_bonus: up to 1 extra listen window spread over address space
+    uint32_t addr_bonus_ms = (listen_window_ms * (node_address_ & 0xFF)) / 256;
+    uint32_t jitter_ms = static_cast<uint32_t>(GetRTOS().GetRandom()) %
+                         (listen_window_ms / 2 + 1);
+
+    uint32_t backoff_ms =
+        listen_window_ms + role_bonus_ms + addr_bonus_ms + jitter_ms;
+
+    election_end_time_ = GetRTOS().getTickCount() + backoff_ms;
+
+    LOG_INFO(
+        "Election backoff started: priority=%d, delay=%ums "
+        "(role_bonus=%u addr_bonus=%u jitter=%u)",
+        election_priority_, backoff_ms, role_bonus_ms, addr_bonus_ms,
+        jitter_ms);
+}
+
+Result NetworkService::SendNMClaim() {
+    uint8_t node_count =
+        static_cast<uint8_t>(routing_table_->GetSize() + 1);  // +1 for self
+    auto claim_opt = NMClaimMessage::Create(node_address_, election_priority_,
+                                            100,  // battery (simplified)
+                                            node_count, network_id_);
+    if (!claim_opt) {
+        LOG_ERROR("Failed to create NM_CLAIM message");
+        return Result::Error(LoraMesherErrorCode::kConfigurationError);
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(claim_opt->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::DISCOVERY_TX,
+        std::move(base_msg));
+
+    LOG_INFO("Queued NM_CLAIM (priority=%d, network_id=0x%04X)",
+             election_priority_, network_id_);
+    return Result::Success();
+}
+
+void NetworkService::HandleForeignBeacon(const SyncBeaconMessage& beacon) {
+    LOG_INFO(
+        "Foreign network 0x%04X detected (ours: 0x%04X) — broadcasting "
+        "NM_CLAIM so the secondary NM can compare priorities",
+        beacon.GetNetworkId(), network_id_);
+    SendNMClaim();
+}
+
+Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
+    auto claim_opt = NMClaimMessage::CreateFromSerialized(*message.Serialize());
+    if (!claim_opt) {
+        LOG_ERROR("Failed to deserialize NM_CLAIM message");
+        return Result::Error(LoraMesherErrorCode::kSerializationError);
+    }
+    const auto& claim = *claim_opt;
+
+    AddressType claimant = claim.GetSource();
+    uint8_t their_priority = claim.GetPriority();
+
+    LOG_INFO("Received NM_CLAIM from 0x%04X, priority=%d (ours=%d)", claimant,
+             their_priority, election_priority_);
+
+    // NETWORK_MANAGER state: cross-network merge path.
+    // If the incoming claim has a better (lower) priority we yield; otherwise
+    // we are the winner and the remote node will surrender when they hear our
+    // own NM_CLAIM (queued by HandleForeignBeacon on the next beacon exchange).
+    if (state_ == ProtocolState::NETWORK_MANAGER) {
+        if (their_priority < election_priority_) {
+            LOG_INFO(
+                "Foreign NM 0x%04X priority 0x%02X beats ours 0x%02X — "
+                "yielding network 0x%04X",
+                claimant, their_priority, election_priority_, network_id_);
+            // Adopt winner's network id so our nodes eventually re-join there
+            if (claim.GetNetworkId() != 0) {
+                network_id_ = claim.GetNetworkId();
+            }
+            // Enter DISCOVERY directly — cannot call StartDiscovery() because
+            // NETWORK_MANAGER-role nodes skip discovery and re-create a network.
+            // By setting state to DISCOVERY we stop broadcasting sync beacons
+            // (our nodes lose sync → FAULT_RECOVERY → rejoin the winner) and
+            // we listen for the winner's beacon to join their network.
+            network_found_ = false;
+            network_creator_ = false;
+            selected_sponsor_ = 0;
+            discovery_start_time_ = GetRTOS().getTickCount();
+            SetDiscoverySlots();
+            SetState(ProtocolState::DISCOVERY);
+        }
+        // else: our priority wins; the remote will surrender when they receive
+        // our NM_CLAIM (already queued by HandleForeignBeacon).
+        return Result::Success();
+    }
+
+    // Only relevant in FAULT_RECOVERY or NM_ELECTION states
+    if (state_ != ProtocolState::FAULT_RECOVERY &&
+        state_ != ProtocolState::NM_ELECTION) {
+        return Result::Success();
+    }
+
+    // If their priority is lower (= higher priority), surrender
+    if (their_priority < election_priority_) {
+        LOG_INFO(
+            "Surrendering to higher-priority claimant 0x%04X (their=%d "
+            "ours=%d)",
+            claimant, their_priority, election_priority_);
+        election_end_time_ = 0;  // cancel our election
+
+        // Store network_id from the claimant's beacon if available
+        if (claim.GetNetworkId() != 0) {
+            network_id_ = claim.GetNetworkId();
+        }
+
+        // Restart discovery: the claimant will become NM, we'll join them
+        StartDiscovery(
+            60000 /* discovery_timeout_ms — long, claim sets up network */);
+    }
+    // If our priority is lower or equal, we win — ignore their claim
+
+    return Result::Success();
 }
 
 }  // namespace lora_mesh

@@ -174,6 +174,12 @@ Result LoRaMeshProtocol::Init(
             OnNetworkTopologyChange(updated, dest, next_hop, hops);
         });
 
+    // State-change callback: wake up the protocol task immediately
+    network_service_->SetStateChangeCallback(
+        [this](lora_mesh::INetworkService::ProtocolState new_state) {
+            OnStateChange(new_state);
+        });
+
     // Create main protocol task
     bool task_created = GetRTOS().CreateTask(
         ProtocolTaskFunction, "LoRaMeshMain", PROTOCOL_TASK_STACK_SIZE, this,
@@ -549,8 +555,14 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
+                // Keep polling so we notice election_end_time_ expiry
                 timeout_ms =
                     std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                break;
+            case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
+                // Wait two full slots for subslot-based NM_CLAIM TX +
+                // reception of counter-claims before calling CreateNetwork()
+                timeout_ms = 2 * protocol->GetSlotDuration();
                 break;
             default:
                 // Use default timeout for other states
@@ -594,11 +606,31 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
                         case lora_mesh::INetworkService::ProtocolState::
                             FAULT_RECOVERY:
-                            LOG_WARNING("Protocol in fault recovery state");
-                            result = protocol->StartDiscovery();
+                            // Election countdown is handled by HandleSuperframeStart.
+                            // For NODE_ONLY nodes (no election), restart discovery.
+                            if (!protocol->network_service_
+                                     ->IsElectionPending()) {
+                                LOG_WARNING(
+                                    "FAULT_RECOVERY: no election pending, "
+                                    "restarting discovery");
+                                result = protocol->StartDiscovery();
+                                if (!result) {
+                                    LOG_ERROR("Failed to restart discovery: %s",
+                                              result.GetErrorMessage().c_str());
+                                }
+                            }
+                            break;
+
+                        case lora_mesh::INetworkService::ProtocolState::
+                            NM_ELECTION:
+                            // Election backoff expired: become NM
+                            LOG_INFO("NM_ELECTION: creating network");
+                            result =
+                                protocol->network_service_->CreateNetwork();
                             if (!result) {
-                                LOG_ERROR("Failed to restart discovery: %s",
-                                          result.GetErrorMessage().c_str());
+                                LOG_ERROR(
+                                    "NM election failed to create network: %s",
+                                    result.GetErrorMessage().c_str());
                             }
                             break;
 
@@ -644,11 +676,23 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
 
                 case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                    LOG_WARNING(
-                        "Fault recovery timeout - restarting discovery");
-                    result = protocol->StartDiscovery();
+                    // For NODE_ONLY nodes (no election pending), restart discovery
+                    if (!protocol->network_service_->IsElectionPending()) {
+                        LOG_WARNING(
+                            "FAULT_RECOVERY timeout - restarting discovery");
+                        result = protocol->StartDiscovery();
+                        if (!result) {
+                            LOG_ERROR("Failed to restart discovery: %s",
+                                      result.GetErrorMessage().c_str());
+                        }
+                    }
+                    break;
+
+                case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
+                    LOG_INFO("NM_ELECTION timeout: creating network");
+                    result = protocol->network_service_->CreateNetwork();
                     if (!result) {
-                        LOG_ERROR("Failed to restart discovery: %s",
+                        LOG_ERROR("NM election failed to create network: %s",
                                   result.GetErrorMessage().c_str());
                     }
                     break;
