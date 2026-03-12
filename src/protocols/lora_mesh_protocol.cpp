@@ -72,6 +72,16 @@ Result LoRaMeshProtocol::Init(
     std::shared_ptr<hardware::IHardwareManager> hardware,
     AddressType node_address) {
 
+    hardware->SetLocalAddress(node_address);
+
+    // Initialize hardware
+    Result hw_result = hardware->Initialize();
+    if (!hw_result) {
+        LOG_ERROR("Hardware initialization failed: %s",
+                  hw_result.GetErrorMessage().c_str());
+        return hw_result;
+    }
+
     // Store hardware reference and node address
     hardware_ = hardware;
     node_address_ = node_address;
@@ -112,7 +122,7 @@ Result LoRaMeshProtocol::Init(
     }
 
     // Set up hardware radio callback to send events to NetworkService
-    Result hw_result = hardware_->setActionReceive(
+    hw_result = hardware_->setActionReceive(
         [this](std::unique_ptr<radio::RadioEvent> event) {
             if (!event) {
                 LOG_WARNING("Received null radio event");

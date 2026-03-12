@@ -29,22 +29,6 @@ Result LoraMesher::Initialize() {
 
     LOG_INFO("Initializing LoraMesher");
 
-    // Create hardware manager as its concrete type
-    auto concrete_hw_manager = std::make_shared<hardware::HardwareManager>(
-        config_.getPinConfig(), config_.getRadioConfig());
-
-    // Then cast it to the interface type
-    hardware_manager_ = std::static_pointer_cast<hardware::IHardwareManager>(
-        concrete_hw_manager);
-
-    // Initialize hardware
-    Result hw_result = hardware_manager_->Initialize();
-    if (!hw_result) {
-        LOG_ERROR("Hardware initialization failed: %s",
-                  hw_result.GetErrorMessage().c_str());
-        return hw_result;
-    }
-
     // Initialize protocol
     Result protocol_result = InitializeProtocol();
     if (!protocol_result) {
@@ -52,8 +36,6 @@ Result LoraMesher::Initialize() {
                   protocol_result.GetErrorMessage().c_str());
         return protocol_result;
     }
-
-    concrete_hw_manager->SetLocalAddress(node_address_);
 
     is_initialized_ = true;
     LOG_INFO("LoraMesher initialized successfully");
@@ -67,6 +49,12 @@ Result LoraMesher::InitializeProtocol() {
         return Result(LoraMesherErrorCode::kConfigurationError,
                       "Failed to create protocol manager");
     }
+
+    // Create hardware manager
+    auto concrete_hw_manager = std::make_shared<hardware::HardwareManager>(
+        config_.getPinConfig(), config_.getRadioConfig());
+    hardware_manager_ = std::static_pointer_cast<hardware::IHardwareManager>(
+        concrete_hw_manager);
 
     // Get configuration and resolve node address
     ProtocolConfig protocol_config = config_.getProtocolConfig();
