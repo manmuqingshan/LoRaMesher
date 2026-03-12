@@ -1,7 +1,7 @@
 # LoRaMesher Protocol Specification
 
-**Version**: 1.5
-**Last Updated**: 2026-01-28
+**Version**: 1.6
+**Last Updated**: 2026-03-12
 **Protocol Type**: Distance-Vector Mesh Routing with Power-Aware TDMA and Sponsor-Based Joining
 
 This document provides the complete technical specification for the LoRaMesher protocol, a distance-vector routing protocol designed for LoRa mesh networks with TDMA coordination. Version 1.2 introduces sponsor-based join mechanisms and enhanced routing table architecture. Version 1.2.1 synchronizes documentation with actual implementation and moves unimplemented features to the Future Work section. Version 1.2.2 adds discovery timeout jitter to prevent race conditions when multiple nodes start simultaneously.
@@ -229,7 +229,14 @@ stateDiagram-v2
   - Reset synchronization state
 - **Transitions**:
   - Recovery successful → `DISCOVERY`
+  - Election backoff expires → `NM_ELECTION`
   - Recovery failed → Protocol termination
+
+#### NM_ELECTION
+- **Purpose**: Election backoff expired; node has broadcast NM_CLAIM and is waiting for counter-claims before calling CreateNetwork().
+- **Transitions**:
+  - → `NETWORK_MANAGER` : timeout (2 × slot_duration) expires with no higher-priority claim received
+  - → `DISCOVERY` : higher-priority NM_CLAIM received; surrender and seek to join winner
 
 ### 2.3 State Transition Triggers
 
@@ -302,6 +309,7 @@ enum class MessageType : uint8_t {
     SLOT_REQUEST = 0x44, // 0100 0100: Request slot allocation
     SLOT_ALLOCATION = 0x45, // 0100 0101: Slot allocation response
     SYNC_BEACON = 0x46,  // 0100 0110: Multi-hop sync beacon
+    NM_CLAIM = 0x47,     // 0100 0111: Broadcast during NM election to claim the Network Manager role
 };
 ```
 
@@ -537,7 +545,25 @@ struct SyncBeaconHeader {
 
 **Node Count (v1.4)**: The `node_count` field carries the Network Manager's authoritative count of control slots needed. All nodes use this value to determine `allocated_control_slots` in their slot frame, replacing the previous independent computation `max(routing_table.size(), my_control_slot_index + 1)`. This ensures all nodes agree on the slot frame structure regardless of their routing table view. The NM computes this as `max_assigned_control_slot_index + 1`.
 
-#### 3.3.5 Data Messages
+#### 3.3.5 NM Election Messages
+```cpp
+// Network Manager election messages
+NM_CLAIM = 0x47,  // Broadcast during NM election to claim the Network Manager role
+```
+
+**NM_CLAIM payload** (5 bytes after BaseHeader):
+```cpp
+struct NMClaimPayload {
+    uint8_t  election_priority;    // lower = higher priority
+    uint8_t  battery_level;        // 0–100 %
+    uint8_t  network_node_count;   // nodes claimant knows
+    uint16_t network_id;           // stable network identifier
+};
+```
+
+See Section 5.8 for the full election algorithm.
+
+#### 3.3.6 Data Messages
 ```cpp
 // Application data messages (currently implemented)
 DATA = 0x11,  // Regular data message (point-to-point)
@@ -1832,14 +1858,41 @@ auto mesher = LoraMesher::Builder()
 
 ### 5.8 Network Manager Election Sequence
 
-> **Note**: Automatic Network Manager election is planned but not yet implemented. See Section 10 (Future Work) for the planned election protocol.
+Implemented. When a node misses `kMaxNoReceivedSyncBeacons` (5) consecutive sync beacons it enters FAULT_RECOVERY and starts a weighted staggered-backoff timer:
 
-**Current Behavior**: Network manager designation can be controlled via the `NodeRole` configuration (see Section 6.1.2):
-- **Explicit designation**: Configure a node with `NodeRole::NETWORK_MANAGER` to immediately create and manage a network
-- **Implicit designation**: With `NodeRole::AUTO` (default), nodes will create a network if discovery times out
-- **Join-only nodes**: Configure with `NodeRole::NODE_ONLY` to prevent network creation
+```
+election_delay = kElectionListenWindowMs (5 000 ms)           // mandatory anti-flap window
+               + role_bonus   (0 for NETWORK_MANAGER role, else kElectionListenWindowMs)
+               + addr_bonus   (kElectionListenWindowMs × (addr & 0xFF) / 256)
+               + jitter       (0 – kElectionListenWindowMs/2 ms, random)
+```
 
-When the network manager fails, nodes transition to FAULT_RECOVERY state and return to DISCOVERY mode to find or create a new network. Automatic manager election via MANAGER_ELECTION and MANAGER_ACCEPT messages is a planned feature.
+`NODE_ONLY` nodes never enter election (`election_delay = 0` = disabled).
+
+**When the timer expires**:
+1. `SetDiscoverySlots()` — switches slot table to DISCOVERY_RX so NM_CLAIM can be sent immediately
+2. Queues NM_CLAIM in DISCOVERY_TX; transmitted in the same slot via DISCOVERY_RX fallback
+3. Transitions to NM_ELECTION and waits `2 × slot_duration` for counter-claims
+
+**On receiving NM_CLAIM** (in FAULT_RECOVERY or NM_ELECTION):
+- If their `election_priority` < ours → surrender: cancel backoff, `StartDiscovery()`
+- Otherwise ignore
+
+**Election priority** (lower = wins):
+```
+NETWORK_MANAGER role: base 0–63   (always beats AUTO)
+AUTO role:            base 64–191
+NODE_ONLY:            0xFF (never wins)
++ addr_component = (node_address & 0xFF) >> 1  (lower address wins ties)
+```
+
+After `2 × slot_duration` with no surrender trigger → `CreateNetwork()` → NETWORK_MANAGER.
+Stable `network_id_` (set at `CreateNetwork()`, preserved from received beacons) ensures rejoining nodes recognise the new NM as the same logical network.
+
+**Node role behavior**:
+- **Explicit designation**: Configure a node with `NodeRole::NETWORK_MANAGER` to get lowest election priority base (0–63)
+- **Implicit designation**: With `NodeRole::AUTO` (default), nodes use election priority base 64–191
+- **Join-only nodes**: Configure with `NodeRole::NODE_ONLY` to prevent network creation entirely
 
 ### 5.6 Fault Recovery and Network Healing
 
@@ -2359,6 +2412,66 @@ if (sponsor_address == node_address_) {
 
 ---
 
+## 6.9 Network Merging (Path A — Lite Merge via NM_ELECTION Extension)
+
+When two independently formed networks come within radio range of each other, the "lite merge"
+mechanism automatically merges them into a single network governed by the lower-priority NM.
+
+### 6.9.1 Mechanism
+
+The merge reuses the existing NM_ELECTION / NM_CLAIM machinery:
+
+| Step | Actor | Action |
+|------|-------|--------|
+| 1 | Both NMs | Detect a foreign-network SYNC_BEACON (`beacon_network_id ≠ network_id_`) |
+| 2 | Both NMs | `HandleForeignBeacon()` → broadcast `NM_CLAIM` with own `election_priority_` |
+| 3 | Higher-priority NM | Receives lower-priority claim → yields: enter `DISCOVERY`, stop broadcasting |
+| 4 | Lower-priority NM | Receives higher-priority claim → do nothing (wins, remote will surrender) |
+| 5 | Yielding NM | Hears winner's `SYNC_BEACON` in `DISCOVERY` state → `StartJoining()` → joins |
+| 6 | Yielding NM's nodes | Miss 5 sync beacons → `FAULT_RECOVERY` → `DISCOVERY` → join winner's network |
+
+**Priority rule** (`ComputeElectionPriority()`):
+- `NETWORK_MANAGER` role: base 0–63 (always wins against `AUTO`)
+- `AUTO` role: base 64–191
+- Within the same role, lower address → lower priority value → wins
+
+### 6.9.2 Implementation
+
+Three changes in `network_service.cpp`:
+
+1. **`ProcessSyncBeacon()`** — NETWORK_MANAGER state: detects foreign beacon and calls
+   `HandleForeignBeacon()`. NORMAL_OPERATION/JOINING: silently drops foreign beacons
+   without overwriting `network_id_`.
+
+2. **`HandleForeignBeacon()`** — new private method: logs detection and calls `SendNMClaim()`
+   to queue an NM_CLAIM in the DISCOVERY_TX slot queue (sent via the DISCOVERY_RX fallback path).
+
+3. **`ProcessNMClaim()`** — NETWORK_MANAGER branch: if incoming priority is lower (wins), the
+   node yields by entering DISCOVERY state directly (bypassing the NETWORK_MANAGER role guard
+   in `StartDiscovery()` that would otherwise re-create the network immediately).
+
+`CreateNetwork()` always initialises `election_priority_` via `ComputeElectionPriority()` so
+nodes configured with `NETWORK_MANAGER` role participate correctly in priority comparisons
+even if they never went through `StartElectionBackoff()`.
+
+### 6.9.3 Known Limitations
+
+**Path A is a best-effort merge suitable for static networks with overlapping edge nodes.**
+The following scenarios require Path B (full merge protocol with `FOREIGN_DISCOVERY_RX` slots):
+
+1. **Interior nodes** — secondary nodes that cannot hear the primary NM directly will end up
+   in `FAULT_RECOVERY` and may create a new orphan network if no bridge node relays timing.
+   Mitigation: enable links so all secondary nodes can reach the primary NM directly.
+
+2. **TDMA misalignment** — detection is opportunistic: one NM's `SYNC_BEACON_TX` (slot 0)
+   must land in the other NM's `CONTROL_RX` or `DISCOVERY_RX` slot. Expected wait: 3–10
+   superframe durations (~48–160 s @ 1 s/slot × 16 slots). No periodic scan window exists.
+
+3. **Repeated proximity** — if networks drift in/out of range frequently, the merge loop
+   repeats, which is functionally correct but generates burst NM_CLAIM traffic.
+
+---
+
 ## 7. Packet Structure
 
 ### 7.1 Physical Layer Frame
@@ -2750,46 +2863,8 @@ struct DiscoveryResponse {
 **Note**: Original type code 0x24 was reassigned because it conflicts with PONG (0x24).
 
 #### 10.6.4 Network Manager Election Protocol
-```cpp
-// Planned election messages
-MANAGER_ELECTION = 0x49,  // Manager election broadcast (planned)
-MANAGER_ACCEPT = 0x4A,    // Accept elected manager (planned)
-```
 
-**Election Sequence** (Planned):
-```mermaid
-sequenceDiagram
-    participant A as Node A
-    participant B as Node B (Failed Manager)
-    participant C as Node C
-    participant D as Node D
-
-    Note over A,D: Normal operation with B as network manager
-    B->>A: SYNC_BEACON (regular operation)
-
-    Note over B: Network Manager B fails/disconnects
-
-    Note over A,D: Sync timeout detection
-    A->>A: No sync beacon received (timeout)
-
-    Note over A,D: Manager election process
-    A->>*: Broadcast MANAGER_ELECTION (nodeId=A, priority=high)
-    C->>*: Broadcast MANAGER_ELECTION (nodeId=C, priority=medium)
-    D->>*: Broadcast MANAGER_ELECTION (nodeId=D, priority=low)
-
-    Note over A,D: Election resolution (highest priority wins)
-    A->>A: I have highest priority - become manager
-    C->>A: MANAGER_ACCEPT (accept A as manager)
-    D->>A: MANAGER_ACCEPT (accept A as manager)
-
-    Note over A,D: New manager takes control
-    A->>*: Broadcast SYNC_BEACON (new manager)
-```
-
-**Election Priority Criteria** (Proposed):
-1. Lowest node address (deterministic)
-2. Highest battery level (power-aware)
-3. Best network connectivity (topology-aware)
+`NM_CLAIM = 0x47` is now implemented (see Section 5.8 and Section 3.3.5). No further election messages are planned.
 
 #### 10.6.5 Configuration Parameters (Planned)
 ```cpp
@@ -2877,7 +2952,12 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 - **Memory Footprint**: ~4.4KB RAM usage suitable for ESP32 deployment
 
 ### Implementation Notes
-This specification has been synchronized with the actual codebase as of version 1.5. Several features documented in earlier versions are marked as planned in Section 10:
+This specification has been synchronized with the actual codebase as of version 1.6. Several features documented in earlier versions are marked as planned in Section 10:
+
+**v1.6 Changelog**:
+- **NM_ELECTION state** (Section 2.2): New state added; node broadcasts NM_CLAIM and waits for counter-claims before calling `CreateNetwork()`.
+- **NM_CLAIM message** (Section 3.3.5, 3.2.1): `NM_CLAIM = 0x47` implemented with 5-byte payload carrying `election_priority`, `battery_level`, `network_node_count`, and `network_id`.
+- **Network Manager election algorithm** (Section 5.8): Full staggered-backoff election with weighted priority (role + address component). Replaces the "planned but not implemented" placeholder.
 
 **v1.5 Changelog**:
 - **Route re-activation fix** (Section 4.3): `UpdateRoute()` no longer overwrites an inactive route with a worse advertisement; the existing (better) route is preserved and the node is simply re-activated. Prevents false `max_hops` inflation that shifted the superframe structure.
@@ -2886,7 +2966,6 @@ This specification has been synchronized with the actual codebase as of version 
 - Frame header fields (Flags, TTL, Sequence Number, Checksum)
 - Explicit route poisoning and network healing beacons
 - Hop count as primary routing metric
-- Network Manager election protocol
 - Explicit discovery request/response messages
 
 The protocol is specifically designed for embedded systems with limited resources while maintaining the flexibility to scale to larger networks.

@@ -124,6 +124,11 @@
             border-bottom: 1px solid #eee;
             position: relative;
         }
+        .node-timeline-orchestrator {
+            background: #f0f0f0;
+            border-left: 3px solid #95a5a6;
+            opacity: 0.85;
+        }
         .node-label {
             position: absolute;
             left: 10px;
@@ -917,6 +922,15 @@
                 this.setupEventListeners();
             }
 
+            _isOrchestrator(nodeId) {
+                return nodeId.toUpperCase() === 'FFFF';
+            }
+            _getNodeLabel(nodeId) {
+                if (this._isOrchestrator(nodeId)) return 'Test';
+                if (nodeId === 'unknown') return 'Unknown';
+                return `Node 0x${nodeId}`;
+            }
+
             setupEventListeners() {
                 const uploadSection = document.getElementById('uploadSection');
                 const fileInput = document.getElementById('fileInput');
@@ -1659,7 +1673,7 @@
                         <input type="checkbox" class="file-checkbox" ${hidden ? '' : 'checked'}
                                onchange="analyzer.toggleNode('${nodeId}')">
                         <div class="file-info">
-                            <div class="file-name">Node 0x${nodeId}</div>
+                            <div class="file-name">${this._getNodeLabel(nodeId)}</div>
                         </div>
                     `;
                     list.appendChild(item);
@@ -2092,11 +2106,11 @@
                 this.nodes.forEach((node, nodeId) => {
                     if (this.hiddenNodes.has(nodeId)) return; // skip hidden nodes
                     const nodeDiv = document.createElement('div');
-                    nodeDiv.className = 'node-timeline';
+                    nodeDiv.className = 'node-timeline' + (this._isOrchestrator(nodeId) ? ' node-timeline-orchestrator' : '');
                     
                     const label = document.createElement('div');
                     label.className = 'node-label';
-                    label.textContent = `Node 0x${nodeId}`;
+                    label.textContent = this._getNodeLabel(nodeId);
                     nodeDiv.appendChild(label);
 
                     // Get slot events for this node
@@ -2457,6 +2471,8 @@ ${directionIcon} Direction: ${direction}
                 topology.forEach((_, nodeId) => nodeIdSet.add(nodeId));
                 links.forEach(l => { nodeIdSet.add(l.from); nodeIdSet.add(l.to); });
                 this.hiddenNodes.forEach(id => nodeIdSet.delete(id));
+                nodeIdSet.delete('FFFF');
+                nodeIdSet.delete('ffff');
                 const nodeIds = [...nodeIdSet];
 
                 const W = svg.clientWidth || svg.getBoundingClientRect().width || 800;

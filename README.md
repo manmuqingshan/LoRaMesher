@@ -412,29 +412,68 @@ Checks enabled: `clang-analyzer-*`, `bugprone-*` (UAF, dangling handles, infinit
 `cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others. See `.clang-tidy`
 at the repo root for the full list.
 
-### Profiling (LLVM instrumentation)
+### Profiling / Code Coverage (LLVM instrumentation)
+
+The `test_native_profile` environment compiles and links with
+`-fprofile-instr-generate -fcoverage-mapping` plus the clang profiling runtime
+(`libclang_rt.profile-x86_64.a`), wired in automatically by `extra_script.py`.
+
+> **Important:** PlatformIO runs the test binary in a subprocess that does not
+> inherit environment changes made inside the build script. You must prefix the
+> `pio test` command with `LLVM_PROFILE_FILE` in the shell so the raw profile
+> data lands in `.pio/coverage/` instead of `default.profraw` in the project root.
+
+#### 1. Run the instrumented tests (background task — takes several minutes)
 
 ```bash
-# Build and run tests with instrumentation
-LLVM_PROFILE_FILE="loramesher.profraw" pio test -e test_native_profile -f "test_routing"
-
-# Merge raw profile data
-llvm-profdata merge -sparse loramesher.profraw -o loramesher.profdata
-
-# Console report (hotspot functions)
-llvm-cov report \
-  .pio/build/test_native_profile/program \
-  -instr-profile=loramesher.profdata \
-  -sources src/
-
-# HTML coverage/hotspot report
-llvm-cov show \
-  .pio/build/test_native_profile/program \
-  -instr-profile=loramesher.profdata \
-  -format=html -output-dir=coverage_report/ \
-  -sources src/
-# Open coverage_report/index.html in a browser
+LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
+    pio test -e test_native_profile -v \
+    --filter "protocols/lora_mesh/services/test_routing"
 ```
+
+The `.pio/coverage/` directory is created automatically by `extra_script.py`.
+
+#### 2. Merge raw profile data
+
+```bash
+llvm-profdata merge -sparse .pio/coverage/*.profraw \
+    -o .pio/coverage/loramesher.profdata
+```
+
+If `llvm-profdata` is not in PATH, try the versioned binary
+(e.g. `llvm-profdata-18`).
+
+#### 3. Locate the test binary
+
+```bash
+find .pio/build/test_native_profile -name "program" 2>/dev/null
+```
+
+Typically: `.pio/build/test_native_profile/program`
+
+#### 4. Generate coverage report
+
+**Text summary (per-file line / function / region coverage):**
+
+```bash
+llvm-cov report .pio/build/test_native_profile/program \
+    -instr-profile=.pio/coverage/loramesher.profdata \
+    --ignore-filename-regex='(test/|googletest|\.pio)'
+```
+
+**HTML report (line-by-line, browsable):**
+
+```bash
+llvm-cov show .pio/build/test_native_profile/program \
+    -instr-profile=.pio/coverage/loramesher.profdata \
+    -format=html \
+    -output-dir=coverage/ \
+    --ignore-filename-regex='(test/|googletest|\.pio)'
+# Open coverage/index.html in a browser
+```
+
+Replace `llvm-cov` / `llvm-profdata` with the versioned binary if needed
+(e.g. `llvm-cov-18`, `llvm-profdata-18`).
 
 
 # Building the new Protocol using BMX6 and node syncrhonization

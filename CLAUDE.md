@@ -10,7 +10,8 @@ LoRaMesher is a C++20 library implementing a distance-vector routing protocol fo
 
 ### Desktop Testing (Pio testing [Recommended])
 
-Allways use it as a background task, it takes some time
+Allways use it as a background task, it takes some time.
+Only execute one test at a time.
 
 ```bash
 pio test -e test_native -v 

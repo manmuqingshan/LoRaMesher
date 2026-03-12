@@ -1,0 +1,22 @@
+---
+Checks: >
+  -*,
+  clang-analyzer-*,
+  clang-analyzer-cplusplus.NewDelete,
+  clang-analyzer-cplusplus.NewDeleteLeaks,
+  clang-analyzer-cplusplus.SmartPtr,
+  clang-analyzer-core.*,
+  bugprone-use-after-move,
+  bugprone-dangling-handle,
+  bugprone-infinite-loop,
+  bugprone-move-forwarding-reference,
+  cppcoreguidelines-owning-memory,
+  cppcoreguidelines-no-malloc,
+  modernize-use-nullptr,
+  modernize-avoid-bind,
+  misc-redundant-expression,
+  concurrency-mt-unsafe
+
+WarningsAsErrors: ''
+HeaderFilterRegex: 'src/.*'
+CheckOptions: []
