@@ -63,6 +63,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         : time_controller_(virtual_network_), log_directory_("test_logs") {}
 
     void SetUp() override {
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
