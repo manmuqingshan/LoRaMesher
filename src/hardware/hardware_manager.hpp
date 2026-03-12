@@ -146,7 +146,7 @@ class HardwareManager : public IHardwareManager {
      * @brief Propagate local node address to the radio for log identification
      * @param address Local node address
      */
-    void SetLocalAddress(AddressType address);
+    void SetLocalAddress(AddressType address) override;
 
     /**
      * @brief Update the radio configuration

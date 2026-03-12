@@ -26,6 +26,7 @@ PingPongProtocol::~PingPongProtocol() {
 }
 
 Result PingPongProtocol::Start() {
+
     // Ensure hardware is available
     if (!hardware_) {
         return Result(LoraMesherErrorCode::kInvalidState,
@@ -77,6 +78,17 @@ Result PingPongProtocol::Stop() {
 Result PingPongProtocol::Init(
     std::shared_ptr<hardware::IHardwareManager> hardware,
     AddressType node_address) {
+
+    hardware->SetLocalAddress(node_address);
+
+    // Initialize hardware
+    Result hw_result = hardware->Initialize();
+    if (!hw_result) {
+        LOG_ERROR("Hardware initialization failed: %s",
+                  hw_result.GetErrorMessage().c_str());
+        return hw_result;
+    }
+
     // Store hardware reference and node address
     hardware_ = hardware;
     node_address_ = node_address;
@@ -125,7 +137,7 @@ Result PingPongProtocol::Init(
     }
 
     // Set up hardware event callback - just enqueues the message
-    Result hw_result = hardware_->setActionReceive(
+    hw_result = hardware_->setActionReceive(
         [this](std::unique_ptr<radio::RadioEvent> event) {
             // Create a copy of the pointer that can be passed to the queue
             auto event_ptr =

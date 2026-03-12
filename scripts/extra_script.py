@@ -7,17 +7,16 @@
 
 Import("env")
 import os
+import subprocess
 from os.path import join, realpath
 
-# Get current platform
 current_platform = env.get("PIOPLATFORM", "")
+current_env = env.get("PIOENV", "")
 
-# Only use clang for native builds
 if current_platform in ["native", "test_native"]:
-    env.Replace(CC="clang", CXX="clang++")
+    env.Replace(CC="clang", CXX="clang++", LINK="clang++")
 
-# Set LSAN/ASAN runtime options for native test builds so lsan.supp is loaded
-if current_platform == "native":
+if current_platform == "native" and current_env != "test_native_profile":
     project_dir = env.subst("$PROJECT_DIR")
     lsan_supp = os.path.join(project_dir, "lsan.supp")
     env.Append(ENV={
@@ -25,7 +24,41 @@ if current_platform == "native":
         "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=0:exitcode=1",
     })
 
-# Get global environment
+# For the profile env: create the coverage output directory, wire LLVM_PROFILE_FILE
+# into all available env layers (build-script env changes do not reach the test binary
+# subprocess — set LLVM_PROFILE_FILE in the shell before pio test to control the path),
+# add -fprofile-instr-generate to LINKFLAGS (build_flags only reaches CCFLAGS, not
+# LINKFLAGS), and explicitly link libclang_rt.profile-x86_64.a (clang++ only auto-links
+# it when the flag is present on the link step).
+_profile_rt_lib = None
+if current_env == "test_native_profile":
+    project_dir = env.subst("$PROJECT_DIR")
+    coverage_dir = os.path.join(project_dir, ".pio", "coverage")
+    os.makedirs(coverage_dir, exist_ok=True)
+    profile_file = os.path.join(coverage_dir, "%e-%p.profraw")
+    env.Append(ENV={"LLVM_PROFILE_FILE": profile_file})
+    os.environ["LLVM_PROFILE_FILE"] = profile_file
+    DefaultEnvironment().Replace(ENV={
+        **DefaultEnvironment().get("ENV", {}),
+        "LLVM_PROFILE_FILE": profile_file,
+    })
+
+    env.Append(LINKFLAGS=["-fprofile-instr-generate"])
+
+    try:
+        rt = subprocess.check_output(
+            ["clang++", "--print-file-name=libclang_rt.profile-x86_64.a"],
+            text=True
+        ).strip()
+        if os.path.exists(rt):
+            _profile_rt_lib = rt
+            env.Append(LINKFLAGS=[rt])
+            print(f"LoRaMesher: Linking LLVM profiling runtime: {rt}")
+        else:
+            print("LoRaMesher: Warning: LLVM profiling runtime not found; .profraw will not be written")
+    except Exception as e:
+        print(f"LoRaMesher: Warning: could not locate LLVM profiling runtime: {e}")
+
 global_env = DefaultEnvironment()
 
 def set_platform_cpp_standard(environment, platform):
@@ -34,37 +67,20 @@ def set_platform_cpp_standard(environment, platform):
     @param environment The environment to modify (can be library or global)
     @param platform The target platform string
     """
+    environment.Replace(CXXFLAGS=[f for f in environment.get("CXXFLAGS", []) if not f.startswith("-std=")])
 
-    # First, remove any existing C++11 flags
-    environment.Replace(CXXFLAGS=[flag for flag in environment.get("CXXFLAGS", []) if "-std=gnu++11" not in flag])
-    
-    # Set platform-specific flags
     if platform in ["native", "test_native"]:
-        print("LoRaMesher: Setting native platform flags (C++20)")
-        environment.Append(CXXFLAGS=["-std=c++20", "-std=gnu++20"])
-    
+        environment.Append(CXXFLAGS=["-std=gnu++20"])
     elif platform == "espressif32":
-        print("LoRaMesher: Setting ESP32 platform flags (C++2a)")
-        environment.Append(CXXFLAGS=["-std=c++2a", "-std=gnu++2a"])
-    
-    # You can add more platform-specific settings here as needed
-    else:
-        print(f"LoRaMesher: Unknown platform '{platform}', no custom flags applied")
+        environment.Append(CXXFLAGS=["-std=gnu++2a"])
 
-# Apply C++ standard settings to the library environment
 set_platform_cpp_standard(env, current_platform)
-
-# Apply the same settings to the global environment (affects project and other libraries)
 set_platform_cpp_standard(global_env, current_platform)
 
-print("LoRaMesher: Configuring global environment for platform:", current_platform)
-
-#
-# Pass flags to the other Project Dependencies (libraries)
-#
 for lb in env.GetLibBuilders():
-    # Set the C++ standard flags for dependent libraries too
     set_platform_cpp_standard(lb.env, current_platform)
+    if current_platform in ["native", "test_native"]:
+        lb.env.Replace(CC="clang", CXX="clang++", LINK="clang++")
 
     # If newer versions of googletest are used, the following lines can be uncommented to include specific paths
     # # Include specific paths for GoogleTest library
@@ -79,8 +95,15 @@ for lb in env.GetLibBuilders():
     #     # Exclude google test files from the build process
     #     lb.env.Replace(SRC_FILTER=["-<googletest/test/*>",])
 
-# Operate with the project environment (files located in the `src` folder)
-
 Import("projenv")
-# Set the C++ standard for the project environment too
 set_platform_cpp_standard(projenv, current_platform)
+if current_platform in ["native", "test_native"]:
+    for e in [projenv, global_env]:
+        e.Replace(CC="clang", CXX="clang++", LINK="clang++")
+
+if current_env == "test_native_profile":
+    for e in [projenv, global_env]:
+        e.Append(LINKFLAGS=["-fprofile-instr-generate"])
+        if _profile_rt_lib:
+            e.Append(LINKFLAGS=[_profile_rt_lib])
+        e.Append(ENV={"LLVM_PROFILE_FILE": profile_file})
