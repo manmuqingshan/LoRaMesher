@@ -85,11 +85,13 @@ TEST_F(TopologyRoutingTests, FourNodeLineTopology) {
                            << error_msg.GetErrorMessage();
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
+    uint32_t step_ms = 50u;
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
-        return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
-                                      MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
+                                          MessageType::DATA);
+        });
 
     EXPECT_TRUE(received) << "N4 did not receive message from N1";
 
@@ -162,11 +164,13 @@ TEST_F(TopologyRoutingTests, FullMeshFourNodes) {
     ASSERT_TRUE(SendMessage(*nodes[0], *nodes[3], payload));
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
+    uint32_t step_ms = 50u;
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
-        return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
-                                      MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
+                                          MessageType::DATA);
+        });
 
     EXPECT_TRUE(received) << "N4 did not receive message from N1";
 }
@@ -250,11 +254,13 @@ TEST_F(TopologyRoutingTests, StarTopologyFiveNodes) {
     ASSERT_TRUE(SendMessage(*nodes[1], *nodes[4], payload));
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
+    uint32_t step_ms = 50u;
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
-        return HasReceivedMessageFrom(*nodes[4], nodes[1]->address,
-                                      MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(*nodes[4], nodes[1]->address,
+                                          MessageType::DATA);
+        });
 
     EXPECT_TRUE(received) << "N5 did not receive message from N2";
 }
@@ -298,7 +304,8 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
     // Distance-vector needs additional rounds to converge to shorter paths.
     // With min_sleep_fraction each superframe is longer, so allow 2 extra.
     auto superframe_ms = GetSuperframeDuration(*nodes.front());
-    AdvanceTime(superframe_ms * 2, superframe_ms * 2, 15, 5,
+    uint32_t step_ms = 50u;
+    AdvanceTime(superframe_ms * 2, superframe_ms * 2, step_ms, 0,
                 [&]() { return false; });
 
     // Print routing tables for debugging
@@ -331,10 +338,11 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
     // Wait for message to be routed
-    bool received = AdvanceTime(5000, superframe_duration * 5, 15, 5, [&]() {
-        return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
-                                      MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
+                                          MessageType::DATA);
+        });
 
     EXPECT_TRUE(received) << "N3 did not receive message from N1";
 

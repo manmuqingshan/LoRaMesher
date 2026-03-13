@@ -100,35 +100,49 @@ class RTOSMock : public RTOS {
      * @param mode The time mode to use (real or virtual)
      */
     void setTimeMode(TimeMode mode) {
-        std::lock_guard<std::mutex> lock(timeMutex_);
+        uint64_t debug_time = 0;
+        int debug_case = 0;  // 1 = to-real, 2 = to-virtual
 
-        // If switching to real time, sync the virtual time with real time
-        if (mode == TimeMode::kRealTime &&
-            timeMode_ == TimeMode::kVirtualTime) {
-            auto now = std::chrono::steady_clock::now();
-            auto duration = now.time_since_epoch();
-            virtualTimeMs_ =
-                std::chrono::duration_cast<std::chrono::milliseconds>(duration)
-                    .count();
+        {
+            std::lock_guard<std::mutex> lock(timeMutex_);
+
+            // If switching to real time, sync the virtual time with real time
+            if (mode == TimeMode::kRealTime &&
+                timeMode_ == TimeMode::kVirtualTime) {
+                auto now = std::chrono::steady_clock::now();
+                virtualTimeMs_ =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch())
+                        .count();
+                debug_time = virtualTimeMs_;
+                debug_case = 1;
+            }
+            // If switching to virtual time, initialize with current real time
+            else if (mode == TimeMode::kVirtualTime &&
+                     timeMode_ == TimeMode::kRealTime) {
+                auto now = std::chrono::steady_clock::now();
+                virtualTimeMs_ =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch())
+                        .count();
+                debug_time = virtualTimeMs_;
+                debug_case = 2;
+            }
+
+            timeMode_ = mode;
+        }  // timeMutex_ released here
+
+        // Log AFTER releasing timeMutex_ to avoid M1→M2 lock-order inversion.
+        if (debug_case == 1) {
             LOG_DEBUG(
                 "MOCK: Switching to real time mode, synced virtual time to "
                 "%llu ms",
-                (unsigned long long)virtualTimeMs_);
-        }
-        // If switching to virtual time, initialize with current real time
-        else if (mode == TimeMode::kVirtualTime &&
-                 timeMode_ == TimeMode::kRealTime) {
-            auto now = std::chrono::steady_clock::now();
-            auto duration = now.time_since_epoch();
-            virtualTimeMs_ =
-                std::chrono::duration_cast<std::chrono::milliseconds>(duration)
-                    .count();
+                (unsigned long long)debug_time);
+        } else if (debug_case == 2) {
             LOG_DEBUG(
                 "MOCK: Switching to virtual time mode, initialized to %llu ms",
-                (unsigned long long)virtualTimeMs_);
+                (unsigned long long)debug_time);
         }
-
-        timeMode_ = mode;
     }
 
     /**
@@ -466,23 +480,25 @@ class RTOSMock : public RTOS {
                   task_name.c_str(), thread_id);
 
         // Set up confirmation mechanism
+        bool already_suspended = false;
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // If already suspended, nothing to do
             if (task_info->suspended) {
-                LOG_DEBUG("MOCK: Task '%s' is already suspended",
-                          task_name.c_str());
-                return true;
+                already_suspended = true;
+            } else {
+                // Set suspended state and prepare for acknowledgment
+                task_info->suspended = true;
+                task_info->suspension_acknowledged = false;
             }
-
-            // Set suspended state and prepare for acknowledgment
-            task_info->suspended = true;
-            task_info->suspension_acknowledged = false;
-
-            LOG_DEBUG("MOCK: Set suspended flag for task '%s'",
+        }  // task_info->mutex released before logging
+        if (already_suspended) {
+            LOG_DEBUG("MOCK: Task '%s' is already suspended",
                       task_name.c_str());
+            return true;
         }
+        LOG_DEBUG("MOCK: Set suspended flag for task '%s'", task_name.c_str());
 
         // CRITICAL FIX: Notify ALL condition variables the task might be waiting on
         task_info->cv.notify_all();  // For ShouldStopOrPause
@@ -514,30 +530,27 @@ class RTOSMock : public RTOS {
 
         // Wait for the task to acknowledge it's suspended
         // This happens when the task calls ShouldStopOrPause()
+        bool acknowledged;
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Wait with a reasonable timeout (500ms)
             // Use our waitFor helper that respects virtual time
-            bool acknowledged =
+            acknowledged =
                 waitFor(task_info->suspend_ack_cv, lock, 10, [task_info]() {
                     return task_info->suspension_acknowledged ||
                            task_info->stop_requested.load(
                                std::memory_order_relaxed);
                 });
-
-            if (!acknowledged) {
-                LOG_WARNING(
-                    "MOCK: Timeout waiting for task '%s' to acknowledge "
-                    "suspension",
-                    task_name.c_str());
-                // Return true anyway, as the suspension flag is set
-                return true;
-            }
-
-            LOG_DEBUG("MOCK: Task '%s' acknowledged suspension",
-                      task_name.c_str());
+        }  // task_info->mutex released before logging
+        if (!acknowledged) {
+            LOG_WARNING(
+                "MOCK: Timeout waiting for task '%s' to acknowledge suspension",
+                task_name.c_str());
+            // Return true anyway, as the suspension flag is set
+            return true;
         }
+        LOG_DEBUG("MOCK: Task '%s' acknowledged suspension", task_name.c_str());
 
         return true;
     }
@@ -1544,9 +1557,6 @@ class RTOSMock : public RTOS {
      * @return Handle to the created system semaphore
      */
     SemaphoreHandle_t CreateSystemSemaphore() override {
-        std::cout << "MOCK: Creating system semaphore (real-time mode)"
-                  << std::endl;
-
         std::timed_mutex* system_mutex = new std::timed_mutex();
         __lsan_ignore_object(system_mutex);
         return (SemaphoreHandle_t)system_mutex;
@@ -1644,19 +1654,24 @@ class RTOSMock : public RTOS {
      */
     uint32_t createTimer(std::function<void()> callback, uint32_t delayMs,
                          uint32_t periodMs = 0) {
-        std::lock_guard<std::mutex> lock(timeMutex_);
+        uint32_t timerId;
+        uint64_t expiryTime;
+        {
+            std::lock_guard<std::mutex> lock(timeMutex_);
 
-        TimerCallback timer;
-        timer.callback = callback;
-        timer.expiryTime = virtualTimeMs_ + delayMs;
-        timer.period = periodMs;
-        timer.active = true;
+            TimerCallback timer;
+            timer.callback = callback;
+            timer.expiryTime = virtualTimeMs_ + delayMs;
+            timer.period = periodMs;
+            timer.active = true;
 
-        uint32_t timerId = static_cast<uint32_t>(timerCallbacks_.size());
-        timerCallbacks_.push_back(timer);
+            timerId = static_cast<uint32_t>(timerCallbacks_.size());
+            expiryTime = timer.expiryTime;
+            timerCallbacks_.push_back(timer);
+        }  // timeMutex_ released
 
         LOG_DEBUG("MOCK: Created timer %u, expires at %llu ms, period %u ms",
-                  timerId, (unsigned long long)timer.expiryTime, periodMs);
+                  timerId, (unsigned long long)expiryTime, periodMs);
 
         return timerId;
     }
@@ -1668,14 +1683,21 @@ class RTOSMock : public RTOS {
      * @return true if timer was found and stopped, false otherwise
      */
     bool stopTimer(uint32_t timerId) {
-        std::lock_guard<std::mutex> lock(timeMutex_);
+        bool invalid = false;
+        {
+            std::lock_guard<std::mutex> lock(timeMutex_);
 
-        if (timerId >= timerCallbacks_.size()) {
+            if (timerId >= timerCallbacks_.size()) {
+                invalid = true;
+            } else {
+                timerCallbacks_[timerId].active = false;
+            }
+        }  // timeMutex_ released
+
+        if (invalid) {
             LOG_WARNING("MOCK: Invalid timer ID %u", timerId);
             return false;
         }
-
-        timerCallbacks_[timerId].active = false;
         LOG_DEBUG("MOCK: Stopped timer %u", timerId);
         return true;
     }
@@ -1734,7 +1756,10 @@ class RTOSMock : public RTOS {
 
         if (!success) {
             // Timeout occurred (should be rare due to long wait_until)
+            // Unlock before logging to avoid task_info->mutex → logger_semaphore ordering
+            lock.unlock();
             LOG_DEBUG("MOCK: waitFor timed out waiting for condition variable");
+            lock.lock();
         }
 
         // Clean up our wait registration
@@ -1858,17 +1883,18 @@ class RTOSMock : public RTOS {
 
         std::thread::id current_id = std::this_thread::get_id();
 
-        // Acquire lock before accessing tasks_ map to prevent use-after-free
-        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+        TaskInfo* task_info = nullptr;
+        {
+            // Acquire tasksMutex_ only to find the task_info pointer
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+            task_info = findCurrentTaskInfoUnsafe(current_id);
+            if (!task_info)
+                return false;
+        }  // tasksMutex_ released before acquiring task_info->mutex (breaks lock-order cycle)
 
-        TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
-        if (!task_info) {
-            return false;
-        }
-
-        // Need to lock task's mutex to safely modify waiting_on_queue_cvs
         std::lock_guard<std::mutex> task_lock(task_info->mutex);
         task_info->waiting_on_queue_cvs.push_back(cv);
+        task_info->queue_cv_count_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -1883,19 +1909,21 @@ class RTOSMock : public RTOS {
 
         std::thread::id current_id = std::this_thread::get_id();
 
-        // Acquire lock before accessing tasks_ map to prevent use-after-free
-        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+        TaskInfo* task_info = nullptr;
+        {
+            // Acquire tasksMutex_ only to find the task_info pointer
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+            task_info = findCurrentTaskInfoUnsafe(current_id);
+            if (!task_info)
+                return false;
+        }  // tasksMutex_ released before acquiring task_info->mutex (breaks lock-order cycle)
 
-        TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
-        if (!task_info)
-            return false;
-
-        // Need to lock task's mutex to safely modify waiting_on_queue_cvs
         std::lock_guard<std::mutex> task_lock(task_info->mutex);
         auto& cvs = task_info->waiting_on_queue_cvs;
         auto it = std::find(cvs.begin(), cvs.end(), cv);
         if (it != cvs.end()) {
             cvs.erase(it);
+            task_info->queue_cv_count_.fetch_sub(1, std::memory_order_relaxed);
             return true;
         }
         return false;
@@ -1934,7 +1962,8 @@ class RTOSMock : public RTOS {
             return false;
 
         // Task is blocked if it has registered queue CVs it's waiting on
-        if (!it->second.waiting_on_queue_cvs.empty())
+        // Use atomic count — avoids data race with register/unregister that only hold task_info->mutex
+        if (it->second.queue_cv_count_.load(std::memory_order_acquire) > 0)
             return true;
 
         // Check if THIS task's delay_cv is registered in waitingTasks_
@@ -1943,6 +1972,7 @@ class RTOSMock : public RTOS {
             const_cast<std::condition_variable*>(&it->second.delay_cv));
     }
 
+   public:
     /**
      * @brief Wait for tasks that were just woken to re-block
      *
@@ -1995,6 +2025,7 @@ class RTOSMock : public RTOS {
         // Timeout is acceptable - tasks may have completed or be in transition
     }
 
+   private:
     struct TaskInfo {
         std::string name;
         uint32_t stack_size = 0;
@@ -2008,12 +2039,12 @@ class RTOSMock : public RTOS {
 
         std::mutex mutex;
         std::condition_variable cv;
-        bool suspended = false;
+        std::atomic<bool> suspended{false};
         std::atomic<bool> stop_requested{false};
 
         // For suspend/resume acknowledgment
-        bool suspension_acknowledged = false;
-        bool resume_acknowledged = false;
+        std::atomic<bool> suspension_acknowledged{false};
+        std::atomic<bool> resume_acknowledged{false};
         std::condition_variable suspend_ack_cv;
         std::condition_variable resume_ack_cv;
 
@@ -2026,6 +2057,8 @@ class RTOSMock : public RTOS {
 
         // For tracking queue condition variables the task is waiting on
         std::vector<std::condition_variable*> waiting_on_queue_cvs;
+        std::atomic<int> queue_cv_count_{
+            0};  // mirrors waiting_on_queue_cvs.size(); atomic for hasRegisteredWait
 
         // For timed-join in DeleteTask()
         std::shared_ptr<std::promise<void>> exit_signal;

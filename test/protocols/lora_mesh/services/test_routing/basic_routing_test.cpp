@@ -67,11 +67,14 @@ TEST_F(BasicRoutingTests, DirectNeighborRouting) {
     ASSERT_TRUE(SendMessage(node1, node2, payload)) << "Failed to send message";
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
+    uint32_t step_ms = 50u;
 
     // Wait for message to be received
-    bool received = AdvanceTime(5000, superframe_duration * 3, 100, 5, [&]() {
-        return HasReceivedMessageFrom(node2, node1.address, MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(5000, superframe_duration * 3, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(node2, node1.address,
+                                          MessageType::DATA);
+        });
 
     EXPECT_TRUE(received) << "Node2 did not receive message from Node1";
 
@@ -152,12 +155,14 @@ TEST_F(BasicRoutingTests, ThreeNodeChain) {
         << "Failed to send message";
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
+    uint32_t step_ms = 50u;
 
     // Wait for message to be received
-    bool received = AdvanceTime(5000, superframe_duration * 3, 100, 5, [&]() {
-        return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
-                                      MessageType::DATA);
-    });
+    bool received =
+        AdvanceTime(5000, superframe_duration * 3, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
+                                          MessageType::DATA);
+        });
 
     EXPECT_TRUE(received)
         << "Node3 did not receive message from Node1 through 2-hop routing";

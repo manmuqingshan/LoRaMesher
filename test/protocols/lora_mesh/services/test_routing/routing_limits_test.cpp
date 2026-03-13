@@ -48,9 +48,10 @@ TEST_F(RoutingLimitsTests, MaxHopCountEnforcement) {
     // Wait for routing tables to propagate
     // This may take longer due to the chain length
     auto superframe_time = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms = 50u;
 
     // Wait for routing tables to fill up
-    AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 4,
+    AdvanceTime(superframe_time * 2, superframe_time * 2, step_ms, 0,
                 [&]() { return false; });
 
     // Print routing tables for debugging
@@ -162,9 +163,10 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
         << "Routing stabilization failed for " << num_nodes << " nodes";
 
     auto superframe_time = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms = 50u;
 
     // Wait for routing tables to fill up
-    AdvanceTime(superframe_time * 2, superframe_time * 2, 15, 5,
+    AdvanceTime(superframe_time * 2, superframe_time * 2, step_ms, 0,
                 [&]() { return false; });
 
     // Get max network nodes from config
@@ -232,8 +234,8 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
     std::vector<uint8_t> payload = {0x10, 0x20, 0x30};
     ASSERT_TRUE(SendMessage(*nodes[0], *nodes[num_nodes - 1], payload));
 
-    bool received =
-        AdvanceTime(superframe_time * 3, superframe_time * 3, 15, 5, [&]() {
+    bool received = AdvanceTime(
+        superframe_time * 3, superframe_time * 3, step_ms, 0, [&]() {
             return HasReceivedMessageFrom(*nodes[num_nodes - 1],
                                           nodes[0]->address, MessageType::DATA);
         });
@@ -302,12 +304,13 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
     // Wait for route to expire
     // Add some buffer time beyond the timeout
     auto superframe_time = GetSuperframeDuration(*nodes[0]);
+    uint32_t step_ms = 50u;
     uint32_t wait_time = route_timeout_ms + superframe_time * 2;
 
     std::cout << "Waiting " << wait_time << " ms for route to expire..."
               << std::endl;
 
-    bool route_expired = AdvanceTime(wait_time, wait_time, 100, 5, [&]() {
+    bool route_expired = AdvanceTime(wait_time, wait_time, step_ms, 0, [&]() {
         const auto& routes = nodes[0]->protocol->GetNetworkNodes();
         for (const auto& route : routes) {
             if (route.routing_entry.destination == nodes[2]->address) {

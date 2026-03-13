@@ -73,13 +73,13 @@ class NMElectionTests : public RoutingTestFixture {
         uint32_t superframe_ms = GetSuperframeDuration(*candidates.front());
         uint32_t timeout_ms = ElectionBudgetMs(superframe_ms);
         uint32_t slot_ms = GetSlotDuration(*candidates.front());
-        uint32_t step_ms = std::max(slot_ms / 2, 50u);
+        uint32_t step_ms = 50u;
 
         uint32_t elapsed = 0;
         uint32_t print_every = superframe_ms * 2;  // Print every 2 superframes
         uint32_t next_print = print_every;
 
-        return AdvanceTime(timeout_ms, timeout_ms, step_ms, 5, [&]() {
+        return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             elapsed += step_ms;
             int nm_count = 0;
             int normal_count = 0;
@@ -234,9 +234,9 @@ TEST_F(NMElectionTests, NodeOnly_NeverElects) {
     uint32_t superframe_ms = GetSuperframeDuration(node2);
     uint32_t budget_ms = ElectionBudgetMs(superframe_ms);
     uint32_t slot_ms = GetSlotDuration(node2);
-    uint32_t step_ms = std::max(slot_ms / 2, 50u);
+    uint32_t step_ms = 50u;
 
-    AdvanceTime(budget_ms, 0, step_ms, 5);
+    AdvanceTime(budget_ms, 0, step_ms, 0);
 
     EXPECT_NE(node2.protocol->GetState(), ProtocolState::NETWORK_MANAGER)
         << "NODE_ONLY Node2 must NOT become NETWORK_MANAGER";

@@ -94,7 +94,7 @@ class NMMergeTests : public RoutingTestFixture {
         uint32_t discovery_ms = GetDiscoveryTimeout(ref);
         uint32_t budget_ms = MergeBudgetMs(superframe_ms, discovery_ms);
         uint32_t slot_ms = GetSlotDuration(ref);
-        uint32_t step_ms = std::max(slot_ms / 2, 50u);
+        uint32_t step_ms = 50u;
 
         int expected_normal = static_cast<int>(nodes.size()) - 1;
 
@@ -102,7 +102,7 @@ class NMMergeTests : public RoutingTestFixture {
         uint32_t print_every = superframe_ms * 2;
         uint32_t next_print = print_every;
 
-        return AdvanceTime(budget_ms, budget_ms, step_ms, 5, [&]() {
+        return AdvanceTime(budget_ms, budget_ms, step_ms, 0, [&]() {
             elapsed += step_ms;
             int nm_count = 0;
             int normal_count = 0;

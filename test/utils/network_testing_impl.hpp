@@ -404,9 +404,9 @@ class VirtualNetwork {
      * 
      * @param time_ms Time to advance in milliseconds
      */
-    void AdvanceTime(uint32_t time_ms) {
+    bool AdvanceTime(uint32_t time_ms) {
         current_time_ += time_ms;
-        ProcessPendingMessages();
+        return ProcessPendingMessages() > 0;
     }
 
     /**
@@ -589,7 +589,7 @@ class VirtualNetwork {
      * detection. Messages with overlapping on-air windows at the same
      * receiver are dropped (simulating real radio behavior).
      */
-    void ProcessPendingMessages() {
+    size_t ProcessPendingMessages() {
         // Extract messages due for delivery under lock
         std::vector<PendingMessage> messages_to_deliver;
         {
@@ -612,25 +612,32 @@ class VirtualNetwork {
         }
 
         // For each destination, detect collisions and deliver non-collided messages
+        size_t delivered = 0;
         for (auto& [dest, dest_messages] : by_destination) {
             auto non_collided = DetectAndFilterCollisions(dest_messages);
             for (const auto& msg : non_collided) {
-                DeliverMessage(msg);
+                if (DeliverMessage(msg)) {
+                    ++delivered;
+                }
             }
         }
+        return delivered;
     }
 
     /**
      * @brief Deliver a message to its destination
+     *
+     * @return true if the message was accepted by the radio, false if the
+     *         radio was busy (message has been re-queued for retry)
      */
-    void DeliverMessage(const PendingMessage& msg) {
+    bool DeliverMessage(const PendingMessage& msg) {
         // Check if destination node exists
         auto it = nodes_.find(msg.destination);
         if (it == nodes_.end()) {
             LOG_ERROR(
                 "Message delivery failed - Node 0x%04X not found in network",
                 msg.destination);
-            return;
+            return false;
         }
 
         // Get the destination radio
@@ -638,23 +645,23 @@ class VirtualNetwork {
         if (!radio) {
             LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
                       msg.destination);
-            return;
+            return false;
         }
 
-        // Double-check that the radio can still receive when delivery time arrives
+        // If the radio is busy (e.g., processing a previous message), re-queue
+        // for retry 1ms later rather than dropping — mirrors real LoRa behaviour
+        // where a sender retransmits if no ACK is received.
         if (!radio->CanReceive()) {
-            radio::RadioState radio_state = radio->GetRadioState();
-            LOG_WARNING(
-                "[%u ms] - Message delivery cancelled - Node 0x%04X cannot "
-                "receive "
-                "(state: %d)",
-                GetCurrentTime(), msg.destination,
-                static_cast<int>(radio_state));
-            return;
+            PendingMessage retry = msg;
+            retry.delivery_time = current_time_ + 1;
+            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+            pending_messages_.push_back(retry);
+            return false;
         }
 
         // Deliver the message to the radio
         radio->ReceiveMessage(msg.data, msg.rssi, msg.snr);
+        return true;
     }
 };
 
@@ -723,9 +730,18 @@ class VirtualTimeController {
         } else {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
-#endif  // LORAMESHER_BUILD_NATIVE
 
+        bool messages_delivered = network_.AdvanceTime(time_ms);
+        if (messages_delivered) {
+            // Give protocol tasks time to process delivered messages through the
+            // full pipeline (radio ISR → protocol stack → application callback).
+            // WaitForNotify-blocked tasks are not detected by waitForTasksToReblock,
+            // so a brief sleep guarantees the pipeline completes before advancing time.
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+#else
         network_.AdvanceTime(time_ms);
+#endif  // LORAMESHER_BUILD_NATIVE
         ProcessTimeDependentEvents();
     }
 

@@ -145,6 +145,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
         node->hardware_manager = std::make_shared<hardware::HardwareManager>(
             node->pin_config, mock_config);
 
+        node->hardware_manager->SetLocalAddress(
+            0xFFFF);  // radio task logs as [0xFFFF] (test orchestrator)
         Result result = node->hardware_manager->Initialize();
         if (!result) {
             std::cerr << "Failed to initialize hardware manager for " << name
@@ -310,7 +312,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
      */
     bool AdvanceTime(uint32_t time_ms, uint32_t timeout_ms = 0,
                      uint32_t check_interval_ms = 10,
-                     uint32_t real_sleep_ms = 2,
+                     uint32_t real_sleep_ms = 0,
                      std::function<bool()> condition = nullptr) {
 
         // If no condition was provided, advance time directly
@@ -816,13 +818,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
      */
     bool WaitForNetworkFormation(const std::vector<TestNode*>& nodes,
                                  int expected_normal_nodes,
-                                 uint32_t check_interval_ms = 15) {
+                                 uint32_t check_interval_ms = 0) {
 
         auto* first_node = nodes.front();
         uint32_t timeout_ms =
             GetDiscoveryTimeout(*first_node) * (nodes.size() + 4);
         LOG_DEBUG("Using default timeout of %u ms for network formation",
                   timeout_ms);
+
+        uint32_t step_ms = std::max(check_interval_ms, 50u);
 
         uint32_t elapsed = 0;
 
@@ -849,10 +853,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
             }
 
             // Advance time and try again
-            AdvanceTime(check_interval_ms);
-            elapsed += check_interval_ms;
-
-            std::this_thread::yield();
+            AdvanceTime(step_ms);
+            elapsed += step_ms;
         }
 
         return false;
