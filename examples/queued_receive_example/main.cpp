@@ -79,13 +79,12 @@ os::TaskHandle_t receive_task_handle = nullptr;
 void ReceiveTask(void* /*pvParameters*/) {
     AppMessage* msg = nullptr;
     for (;;) {
-        auto result = os::RTOS::instance().ReceiveFromQueue(
-            receive_queue, &msg, MAX_DELAY);
+        auto result = os::RTOS::instance().ReceiveFromQueue(receive_queue, &msg,
+                                                            MAX_DELAY);
 
         if (result == os::QueueResult::kOk && msg != nullptr) {
-            std::cout << "App received " << msg->data.size()
-                      << " bytes from 0x" << std::hex << msg->source
-                      << std::dec << std::endl;
+            std::cout << "App received " << msg->data.size() << " bytes from 0x"
+                      << std::hex << msg->source << std::dec << std::endl;
 
             // --- Your application logic here ---
             // e.g. parse message, update state, trigger display refresh
@@ -106,11 +105,10 @@ void ConfigureAndStart() {
 
     // Step 2: Create the application receive task
     os::RTOS::instance().CreateTask(
-        ReceiveTask,
-        "App_LoRa_Recv",
-        4096,    // Stack size in bytes
+        ReceiveTask, "App_LoRa_Recv",
+        4096,  // Stack size in bytes
         nullptr,
-        2,       // Priority — adjust relative to your other tasks
+        2,  // Priority — adjust relative to your other tasks
         &receive_task_handle);
 
     // Step 3: Configure hardware and radio
@@ -131,18 +129,18 @@ void ConfigureAndStart() {
     //
     // The callback runs on LoRaMesher's internal task. Keep it minimal:
     // allocate, copy, enqueue. All real work happens in ReceiveTask.
-    mesher->SetDataCallback([](AddressType source,
-                               const std::vector<uint8_t>& data) {
-        auto* msg = new AppMessage{source, data};
-        auto result = os::RTOS::instance().SendToQueue(
-            receive_queue, &msg, 0 /* non-blocking */);
+    mesher->SetDataCallback(
+        [](AddressType source, const std::vector<uint8_t>& data) {
+            auto* msg = new AppMessage{source, data};
+            auto result = os::RTOS::instance().SendToQueue(
+                receive_queue, &msg, 0 /* non-blocking */);
 
-        if (result != os::QueueResult::kOk) {
-            // Queue full — drop and free rather than block the mesher task
-            delete msg;
-            std::cerr << "Receive queue full, dropping packet" << std::endl;
-        }
-    });
+            if (result != os::QueueResult::kOk) {
+                // Queue full — drop and free rather than block the mesher task
+                delete msg;
+                std::cerr << "Receive queue full, dropping packet" << std::endl;
+            }
+        });
 
     // Step 5: Start LoRaMesher — creates its own background tasks internally
     Result init_result = mesher->Start();
@@ -152,8 +150,8 @@ void ConfigureAndStart() {
         return;
     }
 
-    std::cout << "LoRaMesher started. Node address: 0x"
-              << std::hex << mesher->GetNodeAddress() << std::dec << std::endl;
+    std::cout << "LoRaMesher started. Node address: 0x" << std::hex
+              << mesher->GetNodeAddress() << std::dec << std::endl;
 }
 
 // =============================================================================
@@ -175,7 +173,8 @@ void loop() {
         AddressType dest = routes[0].destination;
         if (dest != mesher->GetNodeAddress()) {
             std::string hello = "Hello!";
-            mesher->Send(dest, std::vector<uint8_t>(hello.begin(), hello.end()));
+            mesher->Send(dest,
+                         std::vector<uint8_t>(hello.begin(), hello.end()));
         }
     }
 
