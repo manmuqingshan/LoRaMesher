@@ -568,6 +568,84 @@
         .network-node-circle:active { cursor: grabbing; }
         .network-edge-path { pointer-events: none; }
         .network-edge-label { pointer-events: none; user-select: none; font-family: monospace; font-size: 11px; }
+        /* ── Canvas Timeline ── */
+        .timeline-canvas-wrapper {
+            display: flex;
+            position: relative;
+        }
+        #nodeLabelsColumn {
+            width: 110px;
+            flex-shrink: 0;
+            border-right: 2px solid #ddd;
+            background: white;
+            z-index: 1;
+        }
+        .node-label-row {
+            height: 60px;
+            display: flex;
+            align-items: center;
+            padding: 0 6px;
+            font-weight: bold;
+            font-size: 12px;
+            color: #2c3e50;
+            border-bottom: 1px solid #eee;
+            overflow: hidden;
+            box-sizing: border-box;
+            cursor: pointer;
+            user-select: none;
+        }
+        .node-label-row:hover { background: #f0f7ff; }
+        .node-label-row.orchestrator {
+            background: #f5f5f5;
+            border-left: 3px solid #95a5a6;
+        }
+        #timelineCanvas {
+            flex: 1;
+            min-width: 0;
+            display: block;
+            cursor: crosshair;
+        }
+        #minimapCanvas {
+            display: block;
+            width: 100%;
+            border-top: 2px solid #aaa;
+            cursor: crosshair;
+            background: #1a1a2e;
+        }
+        #timelineTooltip {
+            position: fixed;
+            background: rgba(30,39,46,0.97);
+            color: #ecf0f1;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 10000;
+            pointer-events: none;
+            max-width: 340px;
+            white-space: pre-line;
+            line-height: 1.5;
+            box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.12);
+            overflow: visible;
+        }
+        #timelineTooltip.bubble-above::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: var(--arrow-x, 50%);
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: rgba(30,39,46,0.97);
+        }
+        #timelineTooltip.bubble-below::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: var(--arrow-x, 50%);
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-bottom-color: rgba(30,39,46,0.97);
+        }
     </style>
 </head>
 <body>
@@ -711,20 +789,20 @@
                     <div class="timeline-controls">
                         <label>Zoom:</label>
                         <button onclick="zoomOut()">-</button>
-                        <input type="range" id="zoomSlider" min="1" max="100" value="10" oninput="updateZoom()">
+                        <input type="range" id="zoomSlider" min="1" max="2000" value="1" oninput="updateZoom()">
                         <button onclick="zoomIn()">+</button>
-                        <span id="zoomLevel">10x</span>
-
-                        <label style="margin-left: 20px;">Time Range:</label>
-                        <input type="range" id="timeRangeSlider" min="0" max="100" value="0" oninput="updateTimeRange()">
-                        <span id="timeRangeLabel">0ms - 1000ms</span>
-
+                        <span id="zoomLevel">1x</span>
+                        <span id="timeRangeLabel" style="margin-left:20px; font-family:monospace; font-size:12px;"></span>
                         <button onclick="resetView()" style="margin-left: 20px;">Reset View</button>
                         <button onclick="refreshFiles()" style="margin-left: 10px;">🔄 Refresh</button>
                     </div>
-                    <div class="timeline" id="slotTimeline">
-                        <div class="timeline-content" id="timelineContent"></div>
+                    <!-- Canvas timeline: labels column + main canvas -->
+                    <div class="timeline-canvas-wrapper" id="timelineWrapper">
+                        <div id="nodeLabelsColumn"></div>
+                        <canvas id="timelineCanvas"></canvas>
                     </div>
+                    <!-- Minimap overview -->
+                    <canvas id="minimapCanvas" height="60"></canvas>
                 </div>
             </div>
 
@@ -750,6 +828,11 @@
                     <button class="btn" onclick="analyzer.downloadTopologyJSON()">Download JSON</button>
                     <button class="btn" onclick="analyzer.downloadTopologySVG()">Download SVG</button>
                     <button class="btn" onclick="analyzer.resetNetworkLayout()">Reset Layout</button>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
+                      <input type="checkbox" id="showInferredLinks" checked
+                             onchange="analyzer.toggleInferredLinks(this.checked)">
+                      Show inferred multi-hop routes
+                    </label>
                 </div>
                 <!-- Time scrubber -->
                 <div id="topologyScrubber" style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:12px; display:none;">
@@ -776,6 +859,7 @@
                     <span><span style="display:inline-block;width:14px;height:4px;background:#f39c12;vertical-align:middle;border-radius:2px;margin-right:4px;"></span>Medium (86-170)</span>
                     <span><span style="display:inline-block;width:14px;height:4px;background:#e74c3c;vertical-align:middle;border-radius:2px;margin-right:4px;"></span>Poor (0-85)</span>
                     <span><span style="display:inline-block;width:14px;height:4px;border-top:3px dashed #aaa;vertical-align:middle;margin-right:4px;"></span>Inactive</span>
+                    <span><span style="display:inline-block;width:14px;height:4px;border-top:2px dashed #9b59b6;vertical-align:middle;margin-right:4px;"></span>Inferred (multi-hop)</span>
                     <span><span style="display:inline-block;width:14px;height:14px;background:#f1c40f;border-radius:50%;vertical-align:middle;border:2px solid #f39c12;margin-right:4px;"></span>Network Manager</span>
                 </div>
                 <!-- Empty state -->
@@ -882,6 +966,32 @@
             return { name: typeName, category, cssClass };
         }
 
+        // ── Canvas Timeline constants ──
+        const TL_LABEL_W  = 110;   // px — node label column width
+        const TL_ROW_H    = 60;    // px — row height per node
+        const TL_RULER_H  = 24;    // px — time ruler height
+        const MINIMAP_H_C = 60;    // px — minimap height
+
+        const SLOT_COLORS_MAP = {
+            sleep:'#95a5a6', tx:'#e74c3c', rx:'#27ae60',
+            sync_beacon_tx:'#f39c12', sync_beacon_rx:'#f1c40f',
+            discovery:'#9b59b6', discovery_rx:'#9b59b6', discovery_tx:'#8e44ad',
+            control_tx:'#e67e22', control_rx:'#d35400',
+            joining:'#16a085', data:'#2980b9',
+        };
+        function slotColor(t){ return SLOT_COLORS_MAP[t.toLowerCase()] || '#7f8c8d'; }
+
+        const MSG_COLORS_MAP = {
+            tx:'#e74c3c', rx:'#27ae60',
+            beacon:'#8e44ad', 'beacon-rx':'#bb8fce',
+            join:'#2980b9', 'join-rx':'#7fb3d3',
+            control:'#2c3e50', 'control-rx':'#7d8693',
+            routing:'#d35400', 'routing-rx':'#f0b27a',
+            system:'#7f8c8d', 'system-rx':'#a6acaf',
+            collision:'#c0392b', unknown:'#95a5a6', 'unknown-rx':'#cacfd2',
+        };
+        function msgColor(t){ return MSG_COLORS_MAP[t] || '#95a5a6'; }
+
         class LogAnalyzer {
             constructor() {
                 this.files = new Map(); // Map of file ID to file data
@@ -902,8 +1012,14 @@
                 this.routingEntries  = [];        // [{timestamp, nodeId, dest, via, hops, quality, active, nm}]
                 this.nodePositions   = new Map(); // nodeId -> {x, y} — persists across time scrubs
                 this.networkCurrentTime = null;   // null = snap to latest on render
+                this.showInferredLinks = true;
                 this._dragging = null;
                 this._networkDragSetup = false;
+                this.superframeBoundaries = [];
+                this._hitMap = [];
+                this._tlDrag = null;
+                this._mmDrag = null;
+                this._canvasListenersSetup = false;
 
                 // Check for File System Access API support
                 this.supportsFileSystemAccess = 'showOpenFilePicker' in window;
@@ -923,7 +1039,7 @@
             }
 
             _isOrchestrator(nodeId) {
-                return nodeId.toUpperCase() === 'FFFF';
+                return nodeId.toUpperCase() === 'FFFF' || nodeId === '0000';
             }
             _getNodeLabel(nodeId) {
                 if (this._isOrchestrator(nodeId)) return 'Test';
@@ -1326,6 +1442,8 @@
                     const msTimestampMatch = line.match(/\[(\d+) ms\]/);
                     // Format 2: 11:10:33.936 > [INFO] [0x8681] message
                     const timeTimestampMatch = line.match(/^(\d{1,2}):(\d{2}):(\d{2})\.(\d{3})\s*>/);
+                    // Format 3: 2026-03-13 05-14-25.659266 [INFO] [0x1001] message
+                    const dateTimeTimestampMatch = line.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2})-(\d{2})\.(\d+)/);
 
                     if (msTimestampMatch) {
                         timestamp = parseInt(msTimestampMatch[1]);
@@ -1341,6 +1459,26 @@
                         timestamp = (hours * 3600 + minutes * 60 + seconds) * 1000 + ms;
 
                         // Store original time format for display
+                        const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
+                        fileData.originalTimeMap.set(timestamp, originalTime);
+
+                        const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
+                        nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                        hasValidTimestamps = true;
+                    } else if (dateTimeTimestampMatch) {
+                        const year    = parseInt(dateTimeTimestampMatch[1]);
+                        const month   = parseInt(dateTimeTimestampMatch[2]) - 1; // 0-indexed
+                        const day     = parseInt(dateTimeTimestampMatch[3]);
+                        const hours   = parseInt(dateTimeTimestampMatch[4]);
+                        const minutes = parseInt(dateTimeTimestampMatch[5]);
+                        const seconds = parseInt(dateTimeTimestampMatch[6]);
+                        // Truncate microseconds to 3-digit ms precision
+                        const subseconds = dateTimeTimestampMatch[7];
+                        const ms = parseInt(subseconds.substring(0, 3).padEnd(3, '0'));
+
+                        // Use epoch-based timestamp for accurate cross-day support
+                        timestamp = new Date(year, month, day, hours, minutes, seconds, ms).getTime();
+
                         const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
                         fileData.originalTimeMap.set(timestamp, originalTime);
 
@@ -1747,6 +1885,25 @@
                 this.hiddenNodes.forEach(id => {
                     if (!this.nodes.has(id)) this.hiddenNodes.delete(id);
                 });
+
+                // Build per-node indexed slot/message arrays for fast canvas rendering
+                this.nodes.forEach((node, nodeId) => {
+                    const nodeSlots = this.events.filter(
+                        e => e.nodeId === nodeId && e.type === 'slot_transition'
+                    );
+                    node.slots = nodeSlots.map((slot, i, arr) => ({
+                        start:    slot.timestamp,
+                        end:      arr[i + 1] ? arr[i + 1].timestamp : slot.timestamp + 1000,
+                        slotType: slot.slotType,
+                        slotNum:  slot.slotNum,
+                        nodeId:   slot.nodeId,
+                    }));
+                    node.messages = this.messages.filter(m => m.nodeId === nodeId);
+                });
+                // Detect superframe boundaries (slot 0 transitions)
+                this.superframeBoundaries = this.events
+                    .filter(e => e.type === 'slot_transition' && e.slotNum === 0)
+                    .map(e => e.timestamp);
             }
 
             toggleFile(fileId) {
@@ -2069,6 +2226,7 @@
                 this.renderTimeline();
                 this.renderMessages();
                 this.renderStats();
+                if (!this._canvasListenersSetup) this._setupCanvasListeners();
             }
 
             updateLogInfo() {
@@ -2083,204 +2241,493 @@
             }
 
             renderTimeline() {
-                const timelineContent = document.getElementById('timelineContent');
-                timelineContent.innerHTML = '';
+                const wrapper = document.getElementById('timelineWrapper');
+                if (!wrapper) return;
 
-                // Initialize time window if not set
-                if (this.timeWindowEnd === 0) {
+                // Initialize time window
+                if (this.timeWindowEnd === 0 || this.timeWindowEnd <= this.timeWindowStart) {
                     this.timeWindowStart = this.timeRange.start;
-                    this.timeWindowEnd = this.timeRange.end;
+                    this.timeWindowEnd   = this.timeRange.end;
                 }
 
-                const windowDuration = this.timeWindowEnd - this.timeWindowStart;
-                const totalDuration = this.timeRange.end - this.timeRange.start;
-                
-                // Calculate pixels per millisecond based on zoom level
-                const basePixelsPerMs = 1200 / totalDuration;
-                const pixelsPerMs = basePixelsPerMs * this.zoomLevel;
-                
-                // Set content width based on zoom
-                const contentWidth = totalDuration * pixelsPerMs + 200;
-                timelineContent.style.width = `${contentWidth}px`;
+                if (!this._canvasListenersSetup) this._setupCanvasListeners();
 
-                this.nodes.forEach((node, nodeId) => {
-                    if (this.hiddenNodes.has(nodeId)) return; // skip hidden nodes
-                    const nodeDiv = document.createElement('div');
-                    nodeDiv.className = 'node-timeline' + (this._isOrchestrator(nodeId) ? ' node-timeline-orchestrator' : '');
-                    
-                    const label = document.createElement('div');
-                    label.className = 'node-label';
-                    label.textContent = this._getNodeLabel(nodeId);
-                    nodeDiv.appendChild(label);
-
-                    // Get slot events for this node
-                    const nodeSlots = this.events.filter(e => 
-                        e.nodeId === nodeId && e.type === 'slot_transition'
-                    );
-
-                    // Render individual slot transitions (don't group them)
-                    nodeSlots.forEach((slot, index) => {
-                        const nextSlot = nodeSlots[index + 1];
-                        const slotEnd = nextSlot ? nextSlot.timestamp : slot.timestamp + 100; // Default 100ms if no next slot
-                        
-                        this.addSlotBar(nodeDiv, {
-                            slotType: slot.slotType,
-                            start: slot.timestamp,
-                            end: slotEnd,
-                            slotNum: slot.slotNum
-                        }, pixelsPerMs);
-                    });
-
-                    // Render message indicators for this node
-                    const nodeMessages = this.messages.filter(m => m.nodeId === nodeId);
-                    nodeMessages.forEach(message => {
-                        this.addMessageIndicator(nodeDiv, message, pixelsPerMs);
-                    });
-
-                    timelineContent.appendChild(nodeDiv);
-                });
-
-                // Update control labels
+                this._renderTimelineCanvas();
+                this._renderMinimapCanvas();
+                this.updateNodeLabels();
                 this.updateControlLabels();
             }
 
-            addSlotBar(nodeDiv, slot, pixelsPerMs) {
-                const bar = document.createElement('div');
-                bar.className = `slot-bar slot-${slot.slotType.toLowerCase()}`;
-                
-                const left = (slot.start - this.timeRange.start) * pixelsPerMs + 110;
-                const width = Math.max(2, (slot.end - slot.start) * pixelsPerMs);
-                
-                bar.style.left = `${left}px`;
-                bar.style.width = `${width}px`;
-                
-                // Only show text if width is sufficient
-                if (width > 40) {
-                    bar.textContent = `${slot.slotType} #${slot.slotNum}`;
-                } else if (width > 20) {
-                    bar.textContent = `#${slot.slotNum}`;
-                }
-                
-                // Enhanced tooltip with detailed information
-                const duration = slot.end - slot.start;
-                const relativeTime = (slot.start - this.timeRange.start).toFixed(1);
-                
-                bar.title = `🔸 Slot ${slot.slotNum}: ${slot.slotType}
-📅 Start: ${this.formatTimestamp(slot.start)}
-⏱️ End: ${this.formatTimestamp(slot.end)}
-⏳ Duration: ${duration}ms
-📊 Relative: ${relativeTime}ms from start
-📋 Click to copy timestamp`;
+            _renderTimelineCanvas() {
+                const canvas = document.getElementById('timelineCanvas');
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
 
-                // Click to copy timestamp
-                bar.addEventListener('click', () => {
-                    this.copyToClipboard(this.formatTimestamp(slot.start));
+                // Collect visible nodes in order
+                const visibleNodes = [];
+                this.nodes.forEach((node, nodeId) => {
+                    if (!this.hiddenNodes.has(nodeId)) visibleNodes.push({ nodeId, node });
                 });
 
-                nodeDiv.appendChild(bar);
+                // Size canvas
+                const W = Math.max(1, (canvas.parentElement ? canvas.parentElement.clientWidth : 800) - TL_LABEL_W);
+                const H = Math.max(1, visibleNodes.length * TL_ROW_H + TL_RULER_H);
+                canvas.width  = W;
+                canvas.height = H;
+
+                let vStart = this.timeWindowStart;
+                let vEnd   = this.timeWindowEnd;
+                if (vEnd <= vStart) vEnd = vStart + 1000;
+                const ppm = W / (vEnd - vStart);
+
+                // Background
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, W, H);
+
+                // Ruler
+                this._drawRuler(ctx, W, ppm, vStart, vEnd);
+
+                // Superframe boundaries
+                ctx.strokeStyle = 'rgba(80,80,200,0.18)';
+                ctx.lineWidth = 1;
+                for (const sfT of this.superframeBoundaries) {
+                    if (sfT < vStart || sfT > vEnd) continue;
+                    const x = (sfT - vStart) * ppm;
+                    ctx.beginPath(); ctx.moveTo(x, TL_RULER_H); ctx.lineTo(x, H); ctx.stroke();
+                }
+
+                // Node rows
+                this._hitMap = [];
+                visibleNodes.forEach(({ nodeId, node }, rowIdx) => {
+                    const rowY = TL_RULER_H + rowIdx * TL_ROW_H;
+
+                    // Alternating background
+                    if (rowIdx % 2 === 1) {
+                        ctx.fillStyle = 'rgba(0,0,0,0.025)';
+                        ctx.fillRect(0, rowY, W, TL_ROW_H);
+                    }
+                    // Row border
+                    ctx.strokeStyle = '#e8e8e8';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(0, rowY + TL_ROW_H); ctx.lineTo(W, rowY + TL_ROW_H); ctx.stroke();
+
+                    // Slot bars
+                    for (const slot of (node.slots || [])) {
+                        if (slot.end < vStart || slot.start > vEnd) continue;
+                        const x1 = Math.max(0, (slot.start - vStart) * ppm);
+                        const x2 = Math.min(W, (slot.end   - vStart) * ppm);
+                        const bw  = Math.max(1, x2 - x1);
+                        ctx.fillStyle = slotColor(slot.slotType);
+                        ctx.fillRect(x1, rowY + 2, bw, 38);
+
+                        // Label text
+                        if (bw > 24) {
+                            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+                            ctx.font = 'bold 10px sans-serif';
+                            ctx.textAlign = 'left';
+                            const lbl = bw > 70 ? `${slot.slotType} #${slot.slotNum}` : `#${slot.slotNum}`;
+                            ctx.save();
+                            ctx.beginPath(); ctx.rect(x1 + 2, rowY + 2, bw - 4, 38); ctx.clip();
+                            ctx.fillText(lbl, x1 + 4, rowY + 2 + 38/2 + 3);
+                            ctx.restore();
+                        }
+
+                        this._hitMap.push({
+                            x1, y1: rowY, x2: x1 + bw, y2: rowY + TL_ROW_H,
+                            type: 'slot', data: slot, nodeId
+                        });
+                    }
+
+                    // Message pills (bottom lane)
+                    const MSG_PILL_Y = 42, MSG_PILL_H = 16;
+                    for (const msg of (node.messages || [])) {
+                        if (msg.timestamp < vStart || msg.timestamp > vEnd) continue;
+                        const cx = Math.max(0, Math.min(W - 1, (msg.timestamp - vStart) * ppm));
+                        const pw = 14;
+                        const px = Math.max(0, Math.min(W - pw, cx - pw / 2));
+                        ctx.fillStyle = msgColor(msg.type);
+                        ctx.beginPath();
+                        ctx.roundRect(px, rowY + MSG_PILL_Y, pw, MSG_PILL_H, 3);
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                        ctx.font = 'bold 9px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(this._getMsgLetter(msg), px + pw / 2, rowY + MSG_PILL_Y + MSG_PILL_H - 4);
+                        this._hitMap.push({
+                            x1: px, y1: rowY + MSG_PILL_Y, x2: px + pw, y2: rowY + MSG_PILL_Y + MSG_PILL_H,
+                            type: 'msg', data: msg, nodeId
+                        });
+                    }
+                });
             }
 
-            addMessageIndicator(nodeDiv, message, pixelsPerMs) {
-                const indicator = document.createElement('div');
-                indicator.className = `message-indicator message-${message.type}`;
-                
-                const left = (message.timestamp - this.timeRange.start) * pixelsPerMs + 110;
-                const width = 3; // Fixed width for message indicators
-                
-                indicator.style.left = `${left}px`;
-                indicator.style.width = `${width}px`;
-                
-                // Add message type indicator based on the actual message type name
-                const typeMap = {
-                    'tx': 'TX',
-                    'rx': 'RX',
-                    'beacon': 'B',
-                    'control': 'C',
-                    'join': 'J',
-                    'routing': 'R',
-                    'system': 'S',
-                    'collision': '💥',
-                    'unknown': '?'
-                };
-                
-                // Use the typeName if available, otherwise fall back to type
-                let displayText = '?';
-                if (message.typeName) {
-                    // Create shorter display text from typeName
-                    switch (message.typeName) {
-                        case 'SYNC_BEACON': displayText = 'B'; break;
-                        case 'JOIN_REQUEST': 
-                        case 'JOIN_RESPONSE': displayText = 'J'; break;
-                        case 'ROUTE_TABLE': displayText = 'R'; break;
-                        case 'DATA': displayText = 'D'; break;
-                        case 'ACK': displayText = 'A'; break;
-                        case 'PING': displayText = 'P'; break;
-                        case 'PONG': displayText = 'P'; break;
-                        case 'HELLO': displayText = 'H'; break;
-                        case 'SYNC': displayText = 'S'; break;
-                        case 'SLOT_REQUEST': 
-                        case 'SLOT_ALLOCATION': displayText = 'S'; break;
-                        default: displayText = typeMap[message.type] || '?';
+            _getMsgLetter(msg) {
+                switch (msg.typeName) {
+                    case 'SYNC_BEACON':                   return 'B';
+                    case 'JOIN_REQUEST':
+                    case 'JOIN_RESPONSE':                 return 'J';
+                    case 'ROUTE_TABLE':                   return 'R';
+                    case 'DATA':                          return 'D';
+                    case 'ACK':                           return 'A';
+                    case 'PING': case 'PONG':             return 'P';
+                    case 'HELLO': case 'SYNC':            return 'H';
+                    case 'SLOT_REQUEST':
+                    case 'SLOT_ALLOCATION':               return 'S';
+                    default: {
+                        const t = msg.type || '';
+                        if (t.startsWith('beacon'))  return 'B';
+                        if (t.startsWith('join'))    return 'J';
+                        if (t.startsWith('routing')) return 'R';
+                        if (t.startsWith('tx'))      return 'T';
+                        if (t.startsWith('rx'))      return 'X';
+                        return '?';
                     }
+                }
+            }
+
+            _drawRuler(ctx, W, ppm, vStart, vEnd) {
+                ctx.fillStyle = '#f0f2f5';
+                ctx.fillRect(0, 0, W, TL_RULER_H);
+                ctx.strokeStyle = '#ccc';
+                ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(0, TL_RULER_H); ctx.lineTo(W, TL_RULER_H); ctx.stroke();
+
+                const duration = vEnd - vStart;
+                const niceSteps = [1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,30000,60000,300000,600000];
+                const targetTicks = Math.max(2, Math.floor(W / 90));
+                const rawStep = duration / targetTicks;
+                const step = niceSteps.find(s => s >= rawStep) || niceSteps[niceSteps.length - 1];
+
+                ctx.fillStyle = '#555';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                const first = Math.ceil(vStart / step) * step;
+                for (let t = first; t <= vEnd; t += step) {
+                    const x = (t - vStart) * ppm;
+                    ctx.strokeStyle = '#bbb';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(x, TL_RULER_H - 5); ctx.lineTo(x, TL_RULER_H); ctx.stroke();
+                    if (x > 2 && x < W - 2) ctx.fillText(this.formatTimestamp(t), x, TL_RULER_H - 7);
+                }
+            }
+
+            _renderMinimapCanvas() {
+                const canvas = document.getElementById('minimapCanvas');
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+
+                const W = (canvas.parentElement ? canvas.parentElement.clientWidth : 800);
+                canvas.width = Math.max(1, W);
+
+                const totalDur = this.timeRange.end - this.timeRange.start;
+                if (totalDur <= 0) return;
+                const ppm = W / totalDur;
+
+                // Dark background
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(0, 0, W, MINIMAP_H_C);
+
+                // Draw all visible nodes stacked
+                const visibleNodes = [];
+                this.nodes.forEach((node, nodeId) => {
+                    if (!this.hiddenNodes.has(nodeId)) visibleNodes.push({ nodeId, node });
+                });
+                const nNodes = visibleNodes.length;
+                if (nNodes > 0) {
+                    const bandH = MINIMAP_H_C / nNodes;
+                    visibleNodes.forEach(({ node }, i) => {
+                        const bandY = i * bandH;
+                        for (const slot of (node.slots || [])) {
+                            const x1 = (slot.start - this.timeRange.start) * ppm;
+                            const x2 = (slot.end   - this.timeRange.start) * ppm;
+                            ctx.fillStyle = slotColor(slot.slotType);
+                            ctx.fillRect(x1, bandY, Math.max(1, x2 - x1), bandH);
+                        }
+                    });
+                }
+
+                // Superframe ticks
+                ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                ctx.lineWidth = 1;
+                for (const sf of this.superframeBoundaries) {
+                    const x = (sf - this.timeRange.start) * ppm;
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MINIMAP_H_C); ctx.stroke();
+                }
+
+                // Dim unselected areas
+                const selX1 = Math.max(0, (this.timeWindowStart - this.timeRange.start) * ppm);
+                const selX2 = Math.min(W, (this.timeWindowEnd   - this.timeRange.start) * ppm);
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                if (selX1 > 0)   ctx.fillRect(0,     0, selX1,     MINIMAP_H_C);
+                if (selX2 < W)   ctx.fillRect(selX2, 0, W - selX2, MINIMAP_H_C);
+
+                // Selection border
+                ctx.strokeStyle = '#4a9eff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(selX1, 1, selX2 - selX1, MINIMAP_H_C - 2);
+
+                // Handles
+                ctx.fillStyle = '#4a9eff';
+                ctx.fillRect(selX1 - 4, 0, 8, MINIMAP_H_C);
+                ctx.fillRect(selX2 - 4, 0, 8, MINIMAP_H_C);
+            }
+
+            updateNodeLabels() {
+                const col = document.getElementById('nodeLabelsColumn');
+                if (!col) return;
+                col.innerHTML = '';
+
+                // Ruler spacer
+                const rulerSpacer = document.createElement('div');
+                rulerSpacer.style.cssText = `height:${TL_RULER_H}px; border-bottom:1px solid #ccc; background:#f0f2f5; box-sizing:border-box;`;
+                col.appendChild(rulerSpacer);
+
+                this.nodes.forEach((node, nodeId) => {
+                    if (this.hiddenNodes.has(nodeId)) return;
+                    const row = document.createElement('div');
+                    row.className = 'node-label-row' + (this._isOrchestrator(nodeId) ? ' orchestrator' : '');
+                    row.textContent = this._getNodeLabel(nodeId);
+                    row.title = `Click to toggle ${this._getNodeLabel(nodeId)}`;
+                    row.addEventListener('click', () => this.toggleNode(nodeId));
+                    col.appendChild(row);
+                });
+            }
+
+            _buildTooltipHTML(hit) {
+                if (hit.type === 'slot') {
+                    const s = hit.data;
+                    const dur = s.end - s.start;
+                    return `<b>Slot #${s.slotNum}: ${s.slotType}</b>\n` +
+                           `Start: ${this.formatTimestamp(s.start)}\n` +
+                           `End:   ${this.formatTimestamp(s.end)}\n` +
+                           `Duration: ${dur}ms\n` +
+                           `Node: ${this._getNodeLabel(hit.nodeId)}\n` +
+                           `<i>Click to copy timestamp</i>`;
                 } else {
-                    displayText = typeMap[message.type] || '?';
+                    const m = hit.data;
+                    const dir = m.direction === 'transmitted' ? 'TX' : m.direction === 'received' ? 'RX' : (m.direction || '');
+                    let lines = `<b>${m.typeName || m.type} [${dir}]</b>\n` +
+                                `Time: ${this.formatTimestamp(m.timestamp)}\n` +
+                                `From: 0x${m.from}  →  To: 0x${m.to}`;
+                    if (m.size  !== undefined) lines += `\nSize: ${m.size} B`;
+                    if (m.rssi  !== undefined) lines += `\nRSSI: ${m.rssi} dBm  SNR: ${m.snr} dB`;
+                    lines += '\n<i>Click to copy timestamp</i>';
+                    return lines;
                 }
-                if (width > 15) {
-                    indicator.textContent = displayText;
+            }
+
+            _clampWindow() {
+                const s = this.timeRange.start;
+                const e = this.timeRange.end;
+                if (e <= s) return;
+                const dur = this.timeWindowEnd - this.timeWindowStart;
+                if (this.timeWindowStart < s) {
+                    this.timeWindowStart = s;
+                    this.timeWindowEnd   = Math.min(e, s + dur);
                 }
-                
-                // Enhanced tooltip with detailed message type information
-                const direction = message.direction || 'unknown';
-                const directionIcon = direction === 'transmitted' ? '📤' : 
-                                    direction === 'received' ? '📥' : '📊';
-                
-                const typeName = message.typeName || message.type.toUpperCase();
-                const category = message.category || 'unknown';
-                
-                const extraLines = [];
-                if (message.size !== undefined) extraLines.push(`📦 Size: ${message.size} B`);
-                if (message.rssi !== undefined) extraLines.push(`📶 RSSI: ${message.rssi} dBm`);
-                if (message.snr  !== undefined) extraLines.push(`📡 SNR: ${message.snr} dB`);
-                const extraStr = extraLines.length ? '\n' + extraLines.join('\n') : '';
+                if (this.timeWindowEnd > e) {
+                    this.timeWindowEnd   = e;
+                    this.timeWindowStart = Math.max(s, e - dur);
+                }
+            }
 
-                indicator.title = `🔸 Message: ${typeName} (${category})
-📅 Time: ${this.formatTimestamp(message.timestamp)}
-📤 From: 0x${message.from}
-📥 To: 0x${message.to}
-${directionIcon} Direction: ${direction}
-📂 Category: ${category}${extraStr}
-📊 Relative: ${(message.timestamp - this.timeRange.start).toFixed(1)}ms from start
-📋 Click to copy timestamp`;
+            _setupCanvasListeners() {
+                if (this._canvasListenersSetup) return;
+                this._canvasListenersSetup = true;
 
-                // Click to copy timestamp
-                indicator.addEventListener('click', () => {
-                    this.copyToClipboard(this.formatTimestamp(message.timestamp));
+                const tlCanvas = document.getElementById('timelineCanvas');
+                const mmCanvas = document.getElementById('minimapCanvas');
+                const tooltip  = document.getElementById('timelineTooltip');
+                if (!tlCanvas || !mmCanvas) { this._canvasListenersSetup = false; return; }
+
+                // ── Timeline: mouse wheel zoom ──
+                tlCanvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const rect = tlCanvas.getBoundingClientRect();
+                    const mouseXRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / tlCanvas.width));
+                    const vStart = this.timeWindowStart, vEnd = this.timeWindowEnd;
+                    const viewDur = vEnd - vStart;
+                    const timeAtMouse = vStart + mouseXRatio * viewDur;
+                    const totalDur = this.timeRange.end - this.timeRange.start;
+
+                    const factor = e.deltaY > 0 ? 1.25 : 0.8;
+                    const newDur = Math.min(totalDur, Math.max(50, viewDur * factor));
+
+                    this.timeWindowStart = timeAtMouse - mouseXRatio * newDur;
+                    this.timeWindowEnd   = this.timeWindowStart + newDur;
+                    this._clampWindow();
+
+                    if (totalDur > 0) {
+                        const newZoom = Math.max(1, Math.round(totalDur / (this.timeWindowEnd - this.timeWindowStart)));
+                        this.zoomLevel = newZoom;
+                        const slider = document.getElementById('zoomSlider');
+                        if (slider) slider.value = Math.min(2000, newZoom);
+                    }
+                    this._renderTimelineCanvas();
+                    this._renderMinimapCanvas();
+                    this.updateControlLabels();
+                }, { passive: false });
+
+                // ── Timeline: drag to pan ──
+                tlCanvas.addEventListener('mousedown', (e) => {
+                    if (e.button !== 0) return;
+                    this._tlDrag = { startX: e.clientX, startWS: this.timeWindowStart, startWE: this.timeWindowEnd };
+                    tlCanvas.style.cursor = 'grabbing';
                 });
 
-                nodeDiv.appendChild(indicator);
+                window.addEventListener('mousemove', (e) => {
+                    if (this._tlDrag) {
+                        const dx = e.clientX - this._tlDrag.startX;
+                        const viewDur = this._tlDrag.startWE - this._tlDrag.startWS;
+                        const ppm = tlCanvas.width / (viewDur || 1);
+                        const dt = -dx / ppm;
+                        this.timeWindowStart = this._tlDrag.startWS + dt;
+                        this.timeWindowEnd   = this._tlDrag.startWE + dt;
+                        this._clampWindow();
+                        this._renderTimelineCanvas();
+                        this._renderMinimapCanvas();
+                        this.updateControlLabels();
+                    }
+                    if (this._mmDrag) {
+                        const rect = mmCanvas.getBoundingClientRect();
+                        const mx = e.clientX - rect.left;
+                        const totalDur = this.timeRange.end - this.timeRange.start;
+                        if (totalDur <= 0) return;
+                        const ppm = mmCanvas.width / totalDur;
+                        const dx = mx - this._mmDrag.startX;
+                        const dt = dx / ppm;
+                        const minWin = 100;
+                        if (this._mmDrag.mode === 'left') {
+                            this.timeWindowStart = Math.min(this._mmDrag.startWS + dt, this._mmDrag.startWE - minWin);
+                        } else if (this._mmDrag.mode === 'right') {
+                            this.timeWindowEnd = Math.max(this._mmDrag.startWE + dt, this._mmDrag.startWS + minWin);
+                        } else {
+                            this.timeWindowStart = this._mmDrag.startWS + dt;
+                            this.timeWindowEnd   = this._mmDrag.startWE + dt;
+                        }
+                        this._clampWindow();
+                        this._renderTimelineCanvas();
+                        this._renderMinimapCanvas();
+                        this.updateControlLabels();
+                    }
+                });
+
+                window.addEventListener('mouseup', () => {
+                    if (this._tlDrag) { this._tlDrag = null; tlCanvas.style.cursor = 'crosshair'; }
+                    this._mmDrag = null;
+                });
+
+                // ── Timeline: tooltip ──
+                tlCanvas.addEventListener('mousemove', (e) => {
+                    if (this._tlDrag || !tooltip) return;
+                    const rect = tlCanvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const hit = this._hitMap.findLast(h => mx >= h.x1 && mx <= h.x2 && my >= h.y1 && my <= h.y2);
+                    if (hit) {
+                        if (hit.type === 'msg') {
+                            // Anchor bubble above (or below) the pill
+                            const pillCenterX = rect.left + hit.x1 + (hit.x2 - hit.x1) / 2;
+                            const pillTopY    = rect.top  + hit.y1;
+                            tooltip.className = 'bubble-above';
+                            tooltip.style.left    = pillCenterX + 'px';
+                            tooltip.style.top     = '0px';
+                            tooltip.style.display = 'block';
+                            tooltip.innerHTML = this._buildTooltipHTML(hit);
+                            const tw = tooltip.offsetWidth;
+                            const th = tooltip.offsetHeight;
+                            let tx = pillCenterX - tw / 2;
+                            let ty = pillTopY - th - 10;
+                            const aboveFits = ty > 4;
+                            if (!aboveFits) {
+                                ty = rect.top + hit.y2 + 10;
+                                tooltip.className = 'bubble-below';
+                            }
+                            tx = Math.max(4, Math.min(window.innerWidth - tw - 4, tx));
+                            const arrowX = pillCenterX - tx;
+                            const arrowXPct = Math.max(10, Math.min(90, (arrowX / tw) * 100));
+                            tooltip.style.setProperty('--arrow-x', arrowXPct + '%');
+                            tooltip.style.left = tx + 'px';
+                            tooltip.style.top  = ty + 'px';
+                        } else {
+                            tooltip.className = '';
+                            const tx = Math.min(e.clientX + 14, window.innerWidth - 360);
+                            const ty = Math.min(e.clientY + 10, window.innerHeight - 180);
+                            tooltip.style.left = tx + 'px';
+                            tooltip.style.top  = ty + 'px';
+                            tooltip.style.display = 'block';
+                            tooltip.innerHTML = this._buildTooltipHTML(hit);
+                        }
+                    } else {
+                        tooltip.style.display = 'none';
+                        tooltip.className = '';
+                    }
+                });
+
+                tlCanvas.addEventListener('mouseleave', () => {
+                    if (tooltip) { tooltip.style.display = 'none'; tooltip.className = ''; }
+                });
+
+                // ── Timeline: click to copy ──
+                tlCanvas.addEventListener('click', (e) => {
+                    if (this._tlDrag) return;
+                    const rect = tlCanvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const hit = this._hitMap.findLast(h => mx >= h.x1 && mx <= h.x2 && my >= h.y1 && my <= h.y2);
+                    if (hit) {
+                        const ts = hit.type === 'slot' ? hit.data.start : hit.data.timestamp;
+                        this.copyToClipboard(this.formatTimestamp(ts));
+                    }
+                });
+
+                // ── Minimap drag ──
+                mmCanvas.addEventListener('mousedown', (e) => {
+                    if (e.button !== 0) return;
+                    const rect = mmCanvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const totalDur = this.timeRange.end - this.timeRange.start;
+                    if (totalDur <= 0) return;
+                    const ppm = mmCanvas.width / totalDur;
+                    const selX1 = (this.timeWindowStart - this.timeRange.start) * ppm;
+                    const selX2 = (this.timeWindowEnd   - this.timeRange.start) * ppm;
+
+                    let mode;
+                    if      (Math.abs(mx - selX1) <= 8)       mode = 'left';
+                    else if (Math.abs(mx - selX2) <= 8)       mode = 'right';
+                    else if (mx > selX1 - 2 && mx < selX2 + 2) mode = 'body';
+                    else {
+                        // Click outside: center view on click position
+                        const clickTime = this.timeRange.start + mx / ppm;
+                        const viewDur = this.timeWindowEnd - this.timeWindowStart;
+                        this.timeWindowStart = clickTime - viewDur / 2;
+                        this.timeWindowEnd   = this.timeWindowStart + viewDur;
+                        this._clampWindow();
+                        this._renderTimelineCanvas();
+                        this._renderMinimapCanvas();
+                        this.updateControlLabels();
+                        return;
+                    }
+                    this._mmDrag = { mode, startX: mx, startWS: this.timeWindowStart, startWE: this.timeWindowEnd };
+                });
+
+                // ── Window resize ──
+                window.addEventListener('resize', () => {
+                    if (this.timeRange.end > 0) {
+                        this._renderTimelineCanvas();
+                        this._renderMinimapCanvas();
+                    }
+                });
             }
 
             updateControlLabels() {
                 const zoomLevelSpan = document.getElementById('zoomLevel');
+                if (zoomLevelSpan) zoomLevelSpan.textContent = `${this.zoomLevel}x`;
+
                 const timeRangeLabel = document.getElementById('timeRangeLabel');
-                const timeRangeSlider = document.getElementById('timeRangeSlider');
-                
-                if (zoomLevelSpan) {
-                    zoomLevelSpan.textContent = `${this.zoomLevel}x`;
-                }
-                
                 if (timeRangeLabel) {
-                    timeRangeLabel.textContent = `${this.formatTimestamp(this.timeWindowStart)} - ${this.formatTimestamp(this.timeWindowEnd)}`;
-                }
-                
-                if (timeRangeSlider) {
-                    const totalDuration = this.timeRange.end - this.timeRange.start;
-                    const windowDuration = this.timeWindowEnd - this.timeWindowStart;
-                    const maxStart = totalDuration - windowDuration;
-                    const currentStart = this.timeWindowStart - this.timeRange.start;
-                    
-                    timeRangeSlider.max = maxStart;
-                    timeRangeSlider.value = currentStart;
+                    timeRangeLabel.textContent =
+                        `${this.formatTimestamp(this.timeWindowStart)} — ${this.formatTimestamp(this.timeWindowEnd)}`;
                 }
             }
 
@@ -2406,6 +2853,27 @@ ${directionIcon} Direction: ${direction}
                 return links;
             }
 
+            getInferredLinks(topologyMap) {
+                const links = new Map();
+                topologyMap.forEach((routes) => {
+                    routes.forEach((route, dest) => {
+                        if (route.hops <= 1) return;
+                        if (this.hiddenNodes.has(route.via) || this.hiddenNodes.has(dest)) return;
+                        const key = `${route.via}→${dest}`;
+                        if (!links.has(key)) {
+                            links.set(key, {
+                                from: route.via, to: dest,
+                                hops: route.hops - 1,
+                                quality: route.quality,
+                                active: route.active,
+                                inferred: true
+                            });
+                        }
+                    });
+                });
+                return [...links.values()];
+            }
+
             getTopologyChangeTimestamps() {
                 // Sorted deduplicated array of all routing entry timestamps
                 const seen = new Set();
@@ -2465,14 +2933,17 @@ ${directionIcon} Direction: ${direction}
 
                 const topology = this.getTopologyAtTime(this.networkCurrentTime);
                 const links = this.getDirectLinks(topology);
+                const inferredLinks = this.showInferredLinks ? this.getInferredLinks(topology) : [];
 
-                // Collect all nodeIds (from topology + link endpoints), excluding hidden
+                // Collect all nodeIds (from topology + link endpoints + multi-hop dests), excluding hidden
                 const nodeIdSet = new Set();
                 topology.forEach((_, nodeId) => nodeIdSet.add(nodeId));
+                topology.forEach((routes) => { routes.forEach((_, dest) => nodeIdSet.add(dest)); });
                 links.forEach(l => { nodeIdSet.add(l.from); nodeIdSet.add(l.to); });
                 this.hiddenNodes.forEach(id => nodeIdSet.delete(id));
                 nodeIdSet.delete('FFFF');
                 nodeIdSet.delete('ffff');
+                nodeIdSet.delete('0000');
                 const nodeIds = [...nodeIdSet];
 
                 const W = svg.clientWidth || svg.getBoundingClientRect().width || 800;
@@ -2485,7 +2956,7 @@ ${directionIcon} Direction: ${direction}
                 }
 
                 this._renderNetworkDefs();
-                this._renderNetworkEdges(links);
+                this._renderNetworkEdges(links, inferredLinks);
                 this._renderNetworkNodes(nodeIds, topology);
             }
 
@@ -2513,7 +2984,8 @@ ${directionIcon} Direction: ${direction}
                     }
 
                     const topology = this.getTopologyAtTime(this.networkCurrentTime);
-                    this._renderNetworkEdges(this.getDirectLinks(topology));
+                    const inferredLinks = this.showInferredLinks ? this.getInferredLinks(topology) : [];
+                    this._renderNetworkEdges(this.getDirectLinks(topology), inferredLinks);
                 });
                 svg.addEventListener('mouseup', () => { this._dragging = null; });
                 svg.addEventListener('mouseleave', () => { this._dragging = null; });
@@ -2522,7 +2994,7 @@ ${directionIcon} Direction: ${direction}
             _renderNetworkDefs() {
                 const defs = document.getElementById('networkDefs');
                 defs.innerHTML = '';
-                [['arrow-green','#27ae60'],['arrow-yellow','#f39c12'],['arrow-red','#e74c3c'],['arrow-gray','#aaaaaa']]
+                [['arrow-green','#27ae60'],['arrow-yellow','#f39c12'],['arrow-red','#e74c3c'],['arrow-gray','#aaaaaa'],['arrow-purple','#9b59b6']]
                     .forEach(([id, color]) => {
                         const m = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
                         m.setAttribute('id', id);
@@ -2539,7 +3011,7 @@ ${directionIcon} Direction: ${direction}
                     });
             }
 
-            _renderNetworkEdges(links) {
+            _renderNetworkEdges(links, inferredLinks = []) {
                 const edgesG = document.getElementById('networkEdges');
                 const labelsG = document.getElementById('networkLabels');
                 edgesG.innerHTML = '';
@@ -2547,6 +3019,60 @@ ${directionIcon} Direction: ${direction}
 
                 const NODE_R = 30;
                 const CURVE_OFFSET = 22;
+
+                // Render inferred links first (behind direct links)
+                inferredLinks.forEach(link => {
+                    const posFrom = this.nodePositions.get(link.from);
+                    const posTo   = this.nodePositions.get(link.to);
+                    if (!posFrom || !posTo) return;
+
+                    const dx = posTo.x - posFrom.x;
+                    const dy = posTo.y - posFrom.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 1) return;
+
+                    const nx = -dy / dist;
+                    const ny = dx / dist;
+
+                    const sx = posFrom.x + nx * CURVE_OFFSET;
+                    const sy = posFrom.y + ny * CURVE_OFFSET;
+                    const ex = posTo.x + nx * CURVE_OFFSET;
+                    const ey = posTo.y + ny * CURVE_OFFSET;
+
+                    const dox = ex - sx, doy = ey - sy;
+                    const doDist = Math.sqrt(dox * dox + doy * doy);
+                    if (doDist < 1) return;
+                    const udx = dox / doDist, udy = doy / doDist;
+
+                    const startX = sx + udx * NODE_R, startY = sy + udy * NODE_R;
+                    const endX = ex - udx * NODE_R,   endY = ey - udy * NODE_R;
+
+                    const midX = (startX + endX) / 2 + nx * CURVE_OFFSET;
+                    const midY = (startY + endY) / 2 + ny * CURVE_OFFSET;
+
+                    const d = `M${startX.toFixed(1)},${startY.toFixed(1)} Q${midX.toFixed(1)},${midY.toFixed(1)} ${endX.toFixed(1)},${endY.toFixed(1)}`;
+
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    path.setAttribute('d', d);
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('stroke', '#9b59b6');
+                    path.setAttribute('stroke-width', 1);
+                    path.setAttribute('stroke-dasharray', '4,4');
+                    path.setAttribute('opacity', '0.5');
+                    path.setAttribute('marker-end', 'url(#arrow-purple)');
+                    path.setAttribute('class', 'network-edge-path network-edge-inferred');
+                    edgesG.appendChild(path);
+
+                    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    label.setAttribute('x', midX.toFixed(1));
+                    label.setAttribute('y', midY.toFixed(1));
+                    label.setAttribute('text-anchor', 'middle');
+                    label.setAttribute('dominant-baseline', 'central');
+                    label.setAttribute('fill', '#9b59b6');
+                    label.setAttribute('class', 'network-edge-label');
+                    label.textContent = `${link.hops}h`;
+                    labelsG.appendChild(label);
+                });
 
                 links.forEach(link => {
                     const posFrom = this.nodePositions.get(link.from);
@@ -2687,6 +3213,11 @@ ${directionIcon} Direction: ${direction}
                 return 'url(#arrow-red)';
             }
 
+            toggleInferredLinks(val) {
+                this.showInferredLinks = val;
+                this.renderNetwork();
+            }
+
             networkOnSliderInput(idx) {
                 const changeTimes = this.getTopologyChangeTimestamps();
                 idx = Math.max(0, Math.min(parseInt(idx), changeTimes.length - 1));
@@ -2776,48 +3307,39 @@ ${directionIcon} Direction: ${direction}
 
         // Zoom control functions
         function zoomIn() {
-            const zoomSlider = document.getElementById('zoomSlider');
-            const newValue = Math.min(100, parseInt(zoomSlider.value) + 5);
-            zoomSlider.value = newValue;
+            const slider = document.getElementById('zoomSlider');
+            const cur = parseInt(slider.value);
+            slider.value = cur < 50 ? cur + 5 : Math.min(2000, Math.round(cur * 1.5));
             updateZoom();
         }
 
         function zoomOut() {
-            const zoomSlider = document.getElementById('zoomSlider');
-            const newValue = Math.max(1, parseInt(zoomSlider.value) - 5);
-            zoomSlider.value = newValue;
+            const slider = document.getElementById('zoomSlider');
+            const cur = parseInt(slider.value);
+            slider.value = cur <= 50 ? Math.max(1, cur - 5) : Math.max(1, Math.round(cur / 1.5));
             updateZoom();
         }
 
         function updateZoom() {
-            const zoomSlider = document.getElementById('zoomSlider');
-            analyzer.zoomLevel = parseInt(zoomSlider.value);
-            analyzer.renderTimeline();
-        }
-
-        function updateTimeRange() {
-            const timeRangeSlider = document.getElementById('timeRangeSlider');
-            const totalDuration = analyzer.timeRange.end - analyzer.timeRange.start;
-            const windowDuration = totalDuration / analyzer.zoomLevel;
-            const sliderValue = parseInt(timeRangeSlider.value);
-            
-            analyzer.timeWindowStart = analyzer.timeRange.start + sliderValue;
-            analyzer.timeWindowEnd = analyzer.timeWindowStart + windowDuration;
-            
+            const slider = document.getElementById('zoomSlider');
+            const newZoom = parseInt(slider.value);
+            const totalDur = analyzer.timeRange.end - analyzer.timeRange.start;
+            if (totalDur <= 0) { analyzer.zoomLevel = newZoom; return; }
+            const center = (analyzer.timeWindowStart + analyzer.timeWindowEnd) / 2;
+            const newDur = totalDur / newZoom;
+            analyzer.zoomLevel = newZoom;
+            analyzer.timeWindowStart = center - newDur / 2;
+            analyzer.timeWindowEnd   = analyzer.timeWindowStart + newDur;
+            analyzer._clampWindow();
             analyzer.renderTimeline();
         }
 
         function resetView() {
-            const zoomSlider = document.getElementById('zoomSlider');
-            const timeRangeSlider = document.getElementById('timeRangeSlider');
-            
-            zoomSlider.value = 10;
-            timeRangeSlider.value = 0;
-            
-            analyzer.zoomLevel = 10;
+            const slider = document.getElementById('zoomSlider');
+            if (slider) slider.value = 1;
+            analyzer.zoomLevel = 1;
             analyzer.timeWindowStart = analyzer.timeRange.start;
-            analyzer.timeWindowEnd = analyzer.timeRange.end;
-            
+            analyzer.timeWindowEnd   = analyzer.timeRange.end;
             analyzer.renderTimeline();
         }
 
@@ -2905,6 +3427,7 @@ ${directionIcon} Direction: ${direction}
             }
         }
     </script>
+    <div id="timelineTooltip" style="display:none;"></div>
     <div id="copyToast" class="copy-toast">Timestamp copied!</div>
 </body>
 </html>
