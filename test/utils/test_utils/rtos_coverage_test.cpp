@@ -139,8 +139,9 @@ TEST(RTOSCoverageTest, AdvanceTimeFiresTimer) {
                      100 /*delayMs*/, 0 /*one-shot*/);
 
     // Periodic timer: period = 150 ms, first fire after 150 ms
-    rtos.createTimer([&periodic_calls]() { periodic_calls.fetch_add(1); },
-                     150 /*delayMs*/, 150 /*periodMs*/);
+    uint32_t periodic_timer_id =
+        rtos.createTimer([&periodic_calls]() { periodic_calls.fetch_add(1); },
+                         150 /*delayMs*/, 150 /*periodMs*/);
 
     // --- First advance: 200 ms ---
     // One-shot (100 ms) should fire once; periodic (150 ms) should fire once.
@@ -159,6 +160,7 @@ TEST(RTOSCoverageTest, AdvanceTimeFiresTimer) {
     EXPECT_GE(periodic_calls.load(), 2)
         << "periodic timer should have fired at least twice total";
 
+    rtos.stopTimer(periodic_timer_id);
     rtos.setTimeMode(RTOSMock::TimeMode::kRealTime);
 }
 
