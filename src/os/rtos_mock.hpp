@@ -274,9 +274,15 @@ class RTOSMock : public RTOS {
         auto exit_signal = std::make_shared<std::promise<void>>();
         auto exit_future = exit_signal->get_future().share();
 
+        // Start-gate: block the task thread until it is registered in tasks_
+        auto ready_signal = std::make_shared<std::promise<void>>();
+        auto ready_future = ready_signal->get_future().share();
+
         auto* thread = new std::thread([taskFunction, shared_params, task_name,
-                                        exit_signal =
-                                            std::move(exit_signal)]() mutable {
+                                        exit_signal = std::move(exit_signal),
+                                        ready_future]() mutable {
+            ready_future
+                .wait();  // Wait until this task is registered in tasks_
             try {
                 // Call the user's task function with the captured parameters
                 taskFunction(*shared_params);
@@ -308,6 +314,9 @@ class RTOSMock : public RTOS {
             // LOG_DEBUG("MOCK: Task '%s' registered with thread ID %p",
             //   task_name.c_str(), task_info.thread_id);
         }
+
+        // Unblock the task thread now that registration is complete
+        ready_signal->set_value();
 
         if (taskHandle) {
             *taskHandle = thread;
