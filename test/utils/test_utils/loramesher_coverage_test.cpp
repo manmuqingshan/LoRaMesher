@@ -75,7 +75,8 @@ class LoraMesherCoverageTest : public ::testing::Test {
                           .withLoRaMeshProtocol()
                           .Build();
         if (mesher) {
-            mesher->Start();
+            Result start_result = mesher->Start();
+            EXPECT_TRUE(start_result) << start_result.GetErrorMessage();
         }
         return mesher;
     }
@@ -88,7 +89,8 @@ class LoraMesherCoverageTest : public ::testing::Test {
                           .withPingPongProtocol()
                           .Build();
         if (mesher) {
-            mesher->Start();
+            Result start_result = mesher->Start();
+            EXPECT_TRUE(start_result) << start_result.GetErrorMessage();
         }
         return mesher;
     }
@@ -1574,12 +1576,15 @@ TEST_F(BuilderCoverageTest, BuildWithInvalidConfig) {
     // Config::IsValid() = false → Build() throws std::invalid_argument
     PinConfig invalid_pins(-1, -1, -1, -1);
 
-    EXPECT_THROW(LoraMesher::Builder()
-                     .withRadioConfig(radio_config_)
-                     .withPinConfig(invalid_pins)
-                     .withLoRaMeshProtocol()
-                     .Build(),
-                 std::invalid_argument);
+    EXPECT_THROW(
+        {
+            auto r = LoraMesher::Builder()
+                         .withRadioConfig(radio_config_)
+                         .withPinConfig(invalid_pins)
+                         .withLoRaMeshProtocol()
+                         .Build();
+        },
+        std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------
