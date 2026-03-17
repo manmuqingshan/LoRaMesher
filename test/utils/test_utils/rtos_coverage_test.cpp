@@ -885,4 +885,33 @@ TEST(RTOSCoverageTest, GiveSystemSemaphoreNullHandleReturnsFalse) {
     EXPECT_FALSE(result);
 }
 
+// ---------------------------------------------------------------------------
+// getTaskStateString() — all switch branches
+// ---------------------------------------------------------------------------
+
+TEST(RTOSCoverageTest, GetTaskStateStringReady) {
+    EXPECT_STREQ(RTOS::getTaskStateString(TaskState::kReady), "Ready");
+}
+
+TEST(RTOSCoverageTest, GetTaskStateStringBlocked) {
+    EXPECT_STREQ(RTOS::getTaskStateString(TaskState::kBlocked), "Blocked");
+}
+
+TEST(RTOSCoverageTest, GetTaskStateStringSuspended) {
+    EXPECT_STREQ(RTOS::getTaskStateString(TaskState::kSuspended), "Suspended");
+}
+
+TEST(RTOSCoverageTest, GetTaskStateStringDeleted) {
+    EXPECT_STREQ(RTOS::getTaskStateString(TaskState::kDeleted), "Deleted");
+}
+
+TEST(RTOSCoverageTest, GetTaskStateStringUnknown) {
+    EXPECT_STREQ(RTOS::getTaskStateString(TaskState::kUnknown), "Unknown");
+}
+
+TEST(RTOSCoverageTest, GetTaskStateStringDefault) {
+    auto invalid = static_cast<TaskState>(99);
+    EXPECT_STREQ(RTOS::getTaskStateString(invalid), "Unknown");
+}
+
 #endif  // ARDUINO
