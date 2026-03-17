@@ -360,6 +360,94 @@ TEST_F(PingPongProtocolTest, SendMessageAfterInit) {
     EXPECT_TRUE(result) << result.GetErrorMessage();
 }
 
+// ---- Multi-destination CheckTimeouts coverage ----
+
+TEST_F(PingPongProtocolTest, CheckTimeoutsAllDestsExpiredMapBecomesEmpty) {
+    ASSERT_TRUE(InitProtocol());
+    ASSERT_TRUE(protocol_->Start());
+
+    static constexpr AddressType kDest1 = 0x0001;
+    static constexpr AddressType kDest2 = 0x0002;
+    static constexpr AddressType kDest3 = 0x0003;
+
+    int fired = 0;
+    auto cb = [&](AddressType, uint32_t, bool ok) {
+        if (!ok) {
+            fired++;
+        }
+    };
+
+    // Send pings to 3 distinct destinations with 1ms timeout each
+    protocol_->SendPing(kDest1, kNodeAddress, 1, cb);
+    protocol_->SendPing(kDest2, kNodeAddress, 1, cb);
+    protocol_->SendPing(kDest3, kNodeAddress, 1, cb);
+
+    // Wait for all to expire
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // First CheckTimeouts should fire all 3 callbacks and clear the map
+    protocol_->CheckTimeouts();
+    EXPECT_EQ(fired, 3);
+
+    // Second CheckTimeouts call with no pings pending should be a no-op
+    int fired_after = fired;
+    protocol_->CheckTimeouts();
+    EXPECT_EQ(fired, fired_after);
+}
+
+TEST_F(PingPongProtocolTest, CheckTimeoutsNoCallbackStillRemoves) {
+    ASSERT_TRUE(InitProtocol());
+    ASSERT_TRUE(protocol_->Start());
+
+    // Send ping with nullptr callback — should not crash on timeout
+    Result result =
+        protocol_->SendPing(kRemoteAddress, kNodeAddress, 1, nullptr);
+    EXPECT_TRUE(result) << result.GetErrorMessage();
+
+    // Wait for timeout
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // CheckTimeouts must handle nullptr callback without crashing
+    EXPECT_NO_THROW(protocol_->CheckTimeouts());
+
+    // Subsequent CheckTimeouts is a no-op — no crash
+    EXPECT_NO_THROW(protocol_->CheckTimeouts());
+}
+
+TEST_F(PingPongProtocolTest, CheckTimeoutsMultipleSeqNumsSameDestSomeExpire) {
+    ASSERT_TRUE(InitProtocol());
+    ASSERT_TRUE(protocol_->Start());
+
+    int expired_count = 0;
+    int long_timeout_count = 0;
+
+    auto cb_short = [&](AddressType, uint32_t, bool ok) {
+        if (!ok) {
+            expired_count++;
+        }
+    };
+    auto cb_long = [&](AddressType, uint32_t, bool) {
+        long_timeout_count++;
+    };
+
+    // Send 3 pings to the same destination
+    // First two with very short timeouts (will expire)
+    protocol_->SendPing(kRemoteAddress, kNodeAddress, 1, cb_short);
+    protocol_->SendPing(kRemoteAddress, kNodeAddress, 1, cb_short);
+    // Third with long timeout (will NOT expire)
+    protocol_->SendPing(kRemoteAddress, kNodeAddress, 60000, cb_long);
+
+    // Wait for first two to expire but not the third
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    protocol_->CheckTimeouts();
+
+    // First two should have timed out
+    EXPECT_EQ(expired_count, 2);
+    // The long-timeout ping must still be pending (callback not called yet)
+    EXPECT_EQ(long_timeout_count, 0);
+}
+
 }  // namespace test
 }  // namespace protocols
 }  // namespace loramesher

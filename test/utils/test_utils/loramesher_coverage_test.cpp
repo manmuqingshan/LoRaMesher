@@ -2231,5 +2231,170 @@ TEST_F(LoraMesherCoverageTest, NativeHalGetHardwareUniqueIdCached) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// GetRoutingTable() loop body — loramesher.cpp lines 311-322
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief GetRoutingTable() returns entries when routes are injected via the
+ * network service.
+ *
+ * Exercises the for-loop body at loramesher.cpp lines 311-322 that copies
+ * fields from NetworkNodeRoute into RouteEntry.
+ */
+TEST_F(LoraMesherCoverageTest, GetRoutingTableWithNodes) {
+    auto mesher = CreateMeshMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    // Wait for the protocol task to initialise before accessing internal state.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto protocol = mesher->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+
+    auto* ns = protocol->GetNetworkServiceForTest();
+    ASSERT_NE(ns, nullptr);
+
+    constexpr AddressType kNode1 = 0x2001;
+    constexpr AddressType kNode2 = 0x2002;
+
+    // Inject two direct-neighbor routes (hop_count=1, source==destination).
+    ns->UpdateRouteEntry(kNode1, kNode1, 1, 200, 1, NodeCapabilities::NONE);
+    ns->UpdateRouteEntry(kNode2, kNode2, 1, 180, 1, NodeCapabilities::GATEWAY);
+
+    auto table = mesher->GetRoutingTable();
+
+    EXPECT_FALSE(table.empty());
+
+    bool found_node1 = false;
+    bool found_node2 = false;
+    for (const auto& entry : table) {
+        if (entry.destination == kNode1) {
+            found_node1 = true;
+            // UpdateRouteEntry adds 1 to hop_count, so stored value is 2.
+            EXPECT_EQ(entry.hop_count, 2u);
+            EXPECT_TRUE(entry.is_valid);
+        }
+        if (entry.destination == kNode2) {
+            found_node2 = true;
+            EXPECT_EQ(entry.hop_count, 2u);
+            EXPECT_TRUE(entry.is_valid);
+            EXPECT_EQ(entry.capabilities,
+                      static_cast<uint8_t>(NodeCapabilities::GATEWAY));
+        }
+    }
+    EXPECT_TRUE(found_node1);
+    EXPECT_TRUE(found_node2);
+
+    StopAndReset(mesher);
+}
+
+// ---------------------------------------------------------------------------
+// GetClosestNodeByCapability() loop body — loramesher.cpp lines 237-262
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief GetClosestNodeByCapability() returns the injected gateway node.
+ *
+ * Exercises the inner loop body (lines 237-262) on an active node that has
+ * the queried capability bit set.
+ */
+TEST_F(LoraMesherCoverageTest, GetClosestNodeByCapabilityWithGateway) {
+    auto mesher = CreateMeshMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto protocol = mesher->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+
+    auto* ns = protocol->GetNetworkServiceForTest();
+    ASSERT_NE(ns, nullptr);
+
+    constexpr AddressType kNode = 0x2001;
+    ns->UpdateRouteEntry(kNode, kNode, 1, 200, 1, NodeCapabilities::GATEWAY);
+
+    auto result = mesher->GetClosestNodeByCapability(NodeCapabilities::GATEWAY);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->destination, kNode);
+    // UpdateRouteEntry increments hop_count by 1, so stored value is 2.
+    EXPECT_EQ(result->hop_count, 2u);
+    EXPECT_TRUE(result->is_valid);
+
+    StopAndReset(mesher);
+}
+
+/**
+ * @brief GetClosestNodeByCapability() returns nullopt when node has a
+ * different capability than the one queried.
+ *
+ * Exercises the capability-bitmask check at loramesher.cpp line 241.
+ */
+TEST_F(LoraMesherCoverageTest, GetClosestNodeByCapabilityNoMatchingCapability) {
+    auto mesher = CreateMeshMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto protocol = mesher->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+
+    auto* ns = protocol->GetNetworkServiceForTest();
+    ASSERT_NE(ns, nullptr);
+
+    // Inject a node with GATEWAY capability (0x01).
+    constexpr AddressType kNode = 0x2001;
+    ns->UpdateRouteEntry(kNode, kNode, 1, 200, 1, NodeCapabilities::GATEWAY);
+
+    // Query with a bit that the node does not have (RESERVED = 0x40).
+    auto result =
+        mesher->GetClosestNodeByCapability(NodeCapabilities::RESERVED);
+
+    EXPECT_FALSE(result.has_value());
+
+    StopAndReset(mesher);
+}
+
+/**
+ * @brief GetClosestNodeByCapability() skips inactive nodes.
+ *
+ * Exercises the `!node.is_active` early-continue at loramesher.cpp line 238.
+ */
+TEST_F(LoraMesherCoverageTest, GetClosestNodeByCapabilityInactiveNodesSkipped) {
+    auto mesher = CreateMeshMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto protocol = mesher->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+
+    auto* ns = protocol->GetNetworkServiceForTest();
+    ASSERT_NE(ns, nullptr);
+
+    // Build an inactive node entry with GATEWAY capability and add it directly
+    // to the routing table, bypassing UpdateRouteEntry which always sets
+    // is_active=true on new nodes.
+    auto* rt = ns->GetRoutingTable();
+    ASSERT_NE(rt, nullptr);
+
+    constexpr AddressType kNode = 0x2001;
+    types::protocols::lora_mesh::NetworkNodeRoute inactive_node;
+    inactive_node.routing_entry.destination = kNode;
+    inactive_node.routing_entry.hop_count = 2;
+    inactive_node.routing_entry.capabilities = NodeCapabilities::GATEWAY;
+    inactive_node.next_hop = kNode;
+    inactive_node.is_active = false;
+
+    rt->AddNode(inactive_node);
+
+    auto result = mesher->GetClosestNodeByCapability(NodeCapabilities::GATEWAY);
+
+    EXPECT_FALSE(result.has_value());
+
+    StopAndReset(mesher);
+}
+
 }  // namespace test
 }  // namespace loramesher

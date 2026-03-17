@@ -204,14 +204,20 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Get all network nodes with their routing information
-     * 
+     *
      * Note: Caller must be careful with concurrent access as this returns
      * a reference to the internal vector.
-     * 
+     *
      * @return const std::vector<NetworkNodeRoute>& Reference to all nodes
      */
     const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
     GetNetworkNodes() const;
+
+#ifdef DEBUG
+    lora_mesh::NetworkService* GetNetworkServiceForTest() {
+        return network_service_.get();
+    }
+#endif
 
     /**
      * @brief Get Service Configuration

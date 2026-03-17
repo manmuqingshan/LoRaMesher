@@ -18,6 +18,40 @@ namespace loramesher {
 namespace protocols {
 namespace test {
 
+// ---------------------------------------------------------------------------
+// Minimal IHardwareManager that always fails Initialize()
+// ---------------------------------------------------------------------------
+
+class FailingHardwareManager : public hardware::IHardwareManager {
+   public:
+    Result Initialize() override {
+        return Result(LoraMesherErrorCode::kHardwareError,
+                      "Simulated hardware init failure");
+    }
+
+    Result Start() override { return Result::Success(); }
+
+    Result Stop() override { return Result::Success(); }
+
+    Result setActionReceive(EventCallback /*cb*/) override {
+        return Result::Success();
+    }
+
+    Result SendMessage(const BaseMessage& /*message*/) override {
+        return Result::Success();
+    }
+
+    uint32_t getTimeOnAir(uint8_t /*length*/) override { return 10; }
+
+    Result setState(radio::RadioState /*state*/) override {
+        return Result::Success();
+    }
+
+    hal::IHal* getHal() override { return nullptr; }
+
+    void SetLocalAddress(AddressType /*address*/) override {}
+};
+
 class ProtocolManagerTest : public ::testing::Test {
    protected:
     static constexpr AddressType kNodeAddress = 0x1234;
@@ -383,6 +417,48 @@ TEST_F(ProtocolManagerTest, StartStopAllProtocolsBoth) {
 
     Result stop_result = manager_->StopAllProtocols();
     EXPECT_TRUE(stop_result) << stop_result.GetErrorMessage();
+}
+
+// ---- Init failure paths ----
+
+TEST_F(ProtocolManagerTest, CreateProtocolPingPongInitFailure) {
+    auto failing_hw = std::make_shared<FailingHardwareManager>();
+
+    auto protocol = manager_->CreateProtocol(ProtocolType::kPingPong,
+                                             failing_hw, kNodeAddress);
+    EXPECT_EQ(protocol, nullptr);
+}
+
+TEST_F(ProtocolManagerTest, CreateProtocolLoraMeshInitFailure) {
+    auto failing_hw = std::make_shared<FailingHardwareManager>();
+
+    auto protocol = manager_->CreateProtocol(ProtocolType::kLoraMesh,
+                                             failing_hw, kNodeAddress);
+    EXPECT_EQ(protocol, nullptr);
+}
+
+TEST_F(ProtocolManagerTest, CreateProtocolWithConfigPingPongInitFailure) {
+    auto failing_hw = std::make_shared<FailingHardwareManager>();
+
+    PingPongProtocolConfig pp_cfg(kNodeAddress, 3000, 2);
+    ProtocolConfig cfg;
+    cfg.setPingPongConfig(pp_cfg);
+
+    auto protocol = manager_->CreateProtocolWithConfig(cfg, failing_hw);
+    EXPECT_EQ(protocol, nullptr);
+}
+
+TEST_F(ProtocolManagerTest, InitAllProtocolsWithFailingHardware) {
+    // Create a PingPong protocol with working hardware so it gets stored
+    manager_->CreateProtocol(ProtocolType::kPingPong, hardware_manager_,
+                             kNodeAddress);
+
+    // Re-initialize all protocols with hardware that fails Initialize()
+    auto failing_hw = std::make_shared<FailingHardwareManager>();
+    Result result = manager_->InitAllProtocols(failing_hw, kNodeAddress);
+
+    // InitAllProtocols accumulates errors; at least one error expected
+    EXPECT_FALSE(result);
 }
 
 }  // namespace test
