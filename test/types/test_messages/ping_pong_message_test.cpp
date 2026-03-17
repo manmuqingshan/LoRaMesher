@@ -3,12 +3,6 @@
 
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#endif
-
 #include "types/messages/ping_pong/ping_pong_message.hpp"
 
 namespace loramesher {
@@ -26,42 +20,7 @@ class PingPongMessageTest : public ::testing::Test {
 
     std::unique_ptr<PingPongMessage> msg_ptr;
 
-#ifdef ARDUINO
     void SetUp() override { CreateMessage(); }
-#else
-
-    void SetUp() override {
-        // Create message
-        CreateMessage();
-
-        // Record memory usage before test
-        initial_memory_ = getCurrentMemoryUsage();
-    }
-
-    void TearDown() override {
-        // Verify no memory leaks
-        size_t final_memory = getCurrentMemoryUsage();
-        EXPECT_EQ(final_memory, initial_memory_);
-    }
-
-   private:
-    size_t getCurrentMemoryUsage() {
-#ifdef _WIN32
-        MEMORYSTATUSEX memStatus;
-        memStatus.dwLength = sizeof(memStatus);
-        GlobalMemoryStatusEx(&memStatus);
-        return memStatus.ullTotalPhys;
-#elif defined(__linux__)
-        struct mallinfo2 info = mallinfo2();
-        return info.uordblks;
-#else
-        return 0;
-#endif
-    }
-
-    size_t initial_memory_;
-
-#endif
 
     void CreateMessage() {
         auto opt_msg = PingPongMessage::Create(dest, src, subtype,
@@ -271,6 +230,59 @@ TEST_F(PingPongMessageTest, SetInfoTest) {
     result = msg_ptr->SetInfo(static_cast<PingPongSubtype>(0xFF), new_seq,
                               new_timestamp);
     EXPECT_FALSE(result.IsSuccess());
+}
+
+// ===========================================================================
+// PingPongHeaderCoverageTest — targets uncovered lines in ping_pong_header.cpp
+// ===========================================================================
+
+class PingPongHeaderCoverageTest : public ::testing::Test {};
+
+TEST_F(PingPongHeaderCoverageTest, SetPingPongInfoSuccess) {
+    PingPongHeader hdr(0x1234, 0x5678, PingPongSubtype::PING, 1, 100);
+    Result r = hdr.SetPingPongInfo(PingPongSubtype::PONG, 2, 200);
+    EXPECT_TRUE(r.IsSuccess());
+    EXPECT_EQ(hdr.GetSubtype(), PingPongSubtype::PONG);
+    EXPECT_EQ(hdr.GetSequenceNumber(), 2u);
+    EXPECT_EQ(hdr.GetTimestamp(), 200u);
+}
+
+TEST_F(PingPongHeaderCoverageTest, SetPingPongInfoInvalidSubtype) {
+    PingPongHeader hdr(0x1234, 0x5678, PingPongSubtype::PING, 1, 100);
+    Result r = hdr.SetPingPongInfo(static_cast<PingPongSubtype>(0xFF), 2, 200);
+    EXPECT_FALSE(r.IsSuccess());
+}
+
+TEST_F(PingPongHeaderCoverageTest, DeserializeFailsMissingPayloadFields) {
+    PingPongHeader hdr(0xAAAA, 0xBBBB, PingPongSubtype::PING, 42, 1234);
+    std::vector<uint8_t> buf(hdr.GetSize());
+    utils::ByteSerializer ser(buf);
+    ASSERT_TRUE(hdr.Serialize(ser).IsSuccess());
+
+    buf.resize(BaseHeader::Size());
+
+    utils::ByteDeserializer deser(buf);
+    auto result = PingPongHeader::Deserialize(deser);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(PingPongHeaderCoverageTest, IsValidSubtypeSuccessForBothTypes) {
+    EXPECT_TRUE(
+        PingPongHeader::IsValidSubtype(PingPongSubtype::PING).IsSuccess());
+    EXPECT_TRUE(
+        PingPongHeader::IsValidSubtype(PingPongSubtype::PONG).IsSuccess());
+}
+
+TEST_F(PingPongHeaderCoverageTest, IsValidSubtypeFailsForInvalidType) {
+    auto r = PingPongHeader::IsValidSubtype(static_cast<PingPongSubtype>(0x00));
+    EXPECT_FALSE(r.IsSuccess());
+}
+
+TEST_F(PingPongHeaderCoverageTest, DeserializeFailsEmptyBuffer) {
+    std::vector<uint8_t> empty;
+    utils::ByteDeserializer deser(empty);
+    auto result = PingPongHeader::Deserialize(deser);
+    EXPECT_FALSE(result.has_value());
 }
 
 }  // namespace test

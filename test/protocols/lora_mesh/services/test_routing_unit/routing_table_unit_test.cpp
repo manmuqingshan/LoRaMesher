@@ -682,5 +682,676 @@ TEST_F(RoutingTableUnitTest, FindNextHopForSelfReturnsLocalAddress) {
     EXPECT_EQ(routing_table_->FindNextHop(kLocalAddress), kLocalAddress);
 }
 
+// =============================================================================
+// UpdateRoute: Inactive Route Re-activation Tests (Fix F2)
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest,
+       UpdateRouteInactiveWorseHopsReActivatesPreservingRoute) {
+    // Add a 2-hop route via Neighbor1
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    // Mark as inactive: time_diff=5000 > route_timeout=1000, < node_timeout=100000
+    size_t removed =
+        routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+    EXPECT_EQ(removed, 0);  // Not removed, just marked inactive
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_FALSE(it->is_active);
+    EXPECT_EQ(it->routing_entry.hop_count, 2);
+
+    // UpdateRoute with WORSE hops (4 > 2) → re-activate preserving hop_count=2
+    bool changed = routing_table_->UpdateRoute(
+        kNeighbor2, kRemoteNode, 4, kGoodQuality, 0, 0, kCurrentTime + 5001);
+    EXPECT_TRUE(changed);  // routing changed (re-activated)
+
+    const auto& nodes2 = routing_table_->GetNodes();
+    auto it2 = std::find_if(
+        nodes2.begin(), nodes2.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it2, nodes2.end());
+    EXPECT_TRUE(it2->is_active);
+    EXPECT_EQ(it2->routing_entry.hop_count, 2);  // preserved
+    EXPECT_EQ(it2->next_hop, kNeighbor1);        // preserved
+}
+
+TEST_F(RoutingTableUnitTest, UpdateRouteInactiveBetterHopsUpdatesRoute) {
+    // Add a 3-hop route via Neighbor1
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 3, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    // Mark inactive
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    // UpdateRoute with BETTER hops (1 < 3) → should update
+    bool changed = routing_table_->UpdateRoute(
+        kNeighbor2, kRemoteNode, 1, kGoodQuality, 0, 0, kCurrentTime + 5001);
+    EXPECT_TRUE(changed);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_TRUE(it->is_active);
+    EXPECT_EQ(it->routing_entry.hop_count, 1);  // updated
+    EXPECT_EQ(it->next_hop, kNeighbor2);        // new next hop
+}
+
+TEST_F(RoutingTableUnitTest, UpdateRouteExceedingMaxHopsReturnsFalse) {
+    // hop_count > 10 (MAX_HOPS) → rejected
+    bool changed = routing_table_->UpdateRoute(
+        kNeighbor1, kRemoteNode, 11, kGoodQuality, 0, 0, kCurrentTime);
+    EXPECT_FALSE(changed);
+    EXPECT_FALSE(routing_table_->IsNodePresent(kRemoteNode));
+}
+
+TEST_F(RoutingTableUnitTest, UpdateRouteNewNodeWithCapabilities) {
+    bool changed = routing_table_->UpdateRoute(
+        kNeighbor1, kRemoteNode, 2, kGoodQuality, 1, 0x05, kCurrentTime);
+    EXPECT_TRUE(changed);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.capabilities, 0x05);
+    EXPECT_EQ(it->routing_entry.allocated_data_slots, 1);
+}
+
+// =============================================================================
+// ProcessRoutingTableMessage: Inactive Re-activation Tests (Fix F)
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest,
+       ProcessRoutingMessageInactiveEntryWorseHopsReActivates) {
+    // Add kRemoteNode via kNeighbor1 with 2 hops total
+    std::vector<RoutingTableEntry> entries1;
+    entries1.push_back(CreateEntry(kRemoteNode, 1, kGoodQuality));
+    ReceiveRoutingMessage(kNeighbor1, entries1);
+
+    EXPECT_TRUE(routing_table_->IsNodePresent(kRemoteNode));
+
+    // Mark kRemoteNode inactive
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    const auto& nodes_before = routing_table_->GetNodes();
+    auto it_before =
+        std::find_if(nodes_before.begin(), nodes_before.end(),
+                     [](const NetworkNodeRoute& n) {
+                         return n.routing_entry.destination == kRemoteNode;
+                     });
+    ASSERT_NE(it_before, nodes_before.end());
+    EXPECT_FALSE(it_before->is_active);
+    EXPECT_EQ(it_before->routing_entry.hop_count, 2);
+
+    // Process with WORSE hops (3+1=4 > 2) → re-activate preserving hop_count=2
+    std::vector<RoutingTableEntry> entries2;
+    entries2.push_back(CreateEntry(kRemoteNode, 3, kGoodQuality));
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor2, entries2, kCurrentTime + 5001, kGoodQuality, kMaxHops);
+
+    const auto& nodes_after = routing_table_->GetNodes();
+    auto it_after = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it_after, nodes_after.end());
+    EXPECT_TRUE(it_after->is_active);
+    EXPECT_EQ(it_after->routing_entry.hop_count, 2);  // preserved
+    EXPECT_EQ(it_after->next_hop, kNeighbor1);        // preserved
+}
+
+TEST_F(RoutingTableUnitTest,
+       ProcessRoutingMessageInactiveEntryBetterHopsUpdates) {
+    // Add kRemoteNode via kNeighbor1 with 3 hops total
+    std::vector<RoutingTableEntry> entries1;
+    entries1.push_back(CreateEntry(kRemoteNode, 2, kGoodQuality));
+    ReceiveRoutingMessage(kNeighbor1, entries1);
+
+    // Mark inactive
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    // Process with BETTER hops (0+1=1 < 3) → update
+    std::vector<RoutingTableEntry> entries2;
+    entries2.push_back(CreateEntry(kRemoteNode, 0, kGoodQuality));
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor2, entries2, kCurrentTime + 5001, kGoodQuality, kMaxHops);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_TRUE(it->is_active);
+    EXPECT_EQ(it->routing_entry.hop_count, 1);  // updated
+    EXPECT_EQ(it->next_hop, kNeighbor2);        // new next hop
+}
+
+TEST_F(RoutingTableUnitTest,
+       ProcessRoutingMessageReActivatesSourceNodeIfInactive) {
+    // Add source as direct neighbor, then mark inactive
+    std::vector<RoutingTableEntry> empty;
+    ReceiveRoutingMessage(kNeighbor1, empty);
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    const auto& nodes_before = routing_table_->GetNodes();
+    auto it_before =
+        std::find_if(nodes_before.begin(), nodes_before.end(),
+                     [](const NetworkNodeRoute& n) {
+                         return n.routing_entry.destination == kNeighbor1;
+                     });
+    ASSERT_NE(it_before, nodes_before.end());
+    EXPECT_FALSE(it_before->is_active);
+
+    // Receive new routing message from the inactive source → should re-activate
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor1, empty, kCurrentTime + 5001, kGoodQuality, kMaxHops);
+
+    const auto& nodes_after = routing_table_->GetNodes();
+    auto it_after = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it_after, nodes_after.end());
+    EXPECT_TRUE(it_after->is_active);  // re-activated
+}
+
+// =============================================================================
+// SetRouteUpdateCallback Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, SetRouteUpdateCallbackFiredOnRouteAdd) {
+    bool callback_called = false;
+    bool was_added = false;
+    AddressType cb_dest = 0;
+
+    routing_table_->SetRouteUpdateCallback([&](bool added, AddressType dest,
+                                               AddressType /*next_hop*/,
+                                               uint8_t /*hops*/) {
+        callback_called = true;
+        was_added = added;
+        cb_dest = dest;
+    });
+
+    std::vector<RoutingTableEntry> empty;
+    ReceiveRoutingMessage(kNeighbor1, empty);
+
+    EXPECT_TRUE(callback_called);
+    EXPECT_TRUE(was_added);
+    EXPECT_EQ(cb_dest, kNeighbor1);
+}
+
+TEST_F(RoutingTableUnitTest, SetRouteUpdateCallbackFiredOnRouteRemoval) {
+    int removal_count = 0;
+    routing_table_->SetRouteUpdateCallback(
+        [&](bool added, AddressType /*dest*/, AddressType /*next*/, uint8_t) {
+            if (!added)
+                removal_count++;
+        });
+
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+
+    // RemoveInactiveNodes with very short timeout removes both and fires callbacks
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 200000, 1000, 1000);
+
+    EXPECT_GE(removal_count, 2);
+}
+
+// =============================================================================
+// AddNode / UpdateNode Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, AddNodeAddsNewNode) {
+    NetworkNodeRoute new_node(kRemoteNode, kNeighbor1, 2, kGoodQuality,
+                              kCurrentTime);
+    new_node.is_active = true;
+
+    bool result = routing_table_->AddNode(new_node);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(routing_table_->IsNodePresent(kRemoteNode));
+    EXPECT_EQ(routing_table_->GetSize(), 1);
+}
+
+TEST_F(RoutingTableUnitTest, AddNodeUpdatesExistingNode) {
+    NetworkNodeRoute original(kRemoteNode, kNeighbor1, 3, kGoodQuality,
+                              kCurrentTime);
+    original.is_active = true;
+    routing_table_->AddNode(original);
+
+    NetworkNodeRoute updated(kRemoteNode, kNeighbor2, 1, kGoodQuality,
+                             kCurrentTime);
+    updated.is_active = true;
+    bool result = routing_table_->AddNode(updated);
+    EXPECT_TRUE(result);
+    EXPECT_EQ(routing_table_->GetSize(), 1);  // still 1 node
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.hop_count, 1);  // updated
+    EXPECT_EQ(it->next_hop, kNeighbor2);
+}
+
+TEST_F(RoutingTableUnitTest, UpdateNodeSelfAddressReturnsFalse) {
+    bool result = routing_table_->UpdateNode(kLocalAddress, 100, false, 0, 0,
+                                             kCurrentTime);
+    EXPECT_FALSE(result);
+    EXPECT_FALSE(routing_table_->IsNodePresent(kLocalAddress));
+}
+
+TEST_F(RoutingTableUnitTest, UpdateNodeExistingNode) {
+    AddDirectNeighbor(kNeighbor1);
+
+    bool result =
+        routing_table_->UpdateNode(kNeighbor1, 80, true, 2, 0x05, kCurrentTime);
+    EXPECT_TRUE(result);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.capabilities, 0x05);
+}
+
+TEST_F(RoutingTableUnitTest, UpdateNodeNewNodeAddsAsDirectNeighbor) {
+    bool result = routing_table_->UpdateNode(kRemoteNode, 100, false, 1, 0x03,
+                                             kCurrentTime);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(routing_table_->IsNodePresent(kRemoteNode));
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.hop_count, 1);
+    EXPECT_TRUE(it->is_active);
+}
+
+// =============================================================================
+// SetControlSlotIndex Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, SetControlSlotIndexFound) {
+    AddDirectNeighbor(kNeighbor1);
+    EXPECT_TRUE(routing_table_->SetControlSlotIndex(kNeighbor1, 3));
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->control_slot_index, 3);
+}
+
+TEST_F(RoutingTableUnitTest, SetControlSlotIndexNotFound) {
+    EXPECT_FALSE(routing_table_->SetControlSlotIndex(kRemoteNode, 5));
+}
+
+// =============================================================================
+// GetStatistics / GetLinkQuality / SetMaxNodes Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, GetStatisticsNonEmpty) {
+    AddDirectNeighbor(kNeighbor1);
+    std::string stats = routing_table_->GetStatistics();
+    EXPECT_FALSE(stats.empty());
+    // Should contain node count info
+    EXPECT_NE(stats.find("Nodes:"), std::string::npos);
+}
+
+TEST_F(RoutingTableUnitTest, GetLinkQualityUnknownNodeReturnsZero) {
+    EXPECT_EQ(routing_table_->GetLinkQuality(kRemoteNode), 0);
+}
+
+TEST_F(RoutingTableUnitTest, GetLinkQualityKnownNodeReturnsValue) {
+    AddDirectNeighbor(kNeighbor1);
+    uint8_t quality = routing_table_->GetLinkQuality(kNeighbor1);
+    // Known direct neighbor — should have some quality value
+    EXPECT_GE(quality, 0);
+}
+
+TEST_F(RoutingTableUnitTest, SetMaxNodesTrimming) {
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    AddDirectNeighbor(kNeighbor3);
+    EXPECT_EQ(routing_table_->GetSize(), 3);
+
+    // Shrink to 1 — should trim 2 oldest
+    routing_table_->SetMaxNodes(1);
+    EXPECT_EQ(routing_table_->GetSize(), 1);
+}
+
+// =============================================================================
+// RemoveInactiveNodes Two-Stage Test
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, RemoveInactiveNodesTwoStageBehavior) {
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    EXPECT_EQ(routing_table_->GetSize(), 2);
+
+    // Stage 1: mark inactive (time_diff=5000 > route_timeout=1000, but < node_timeout=100000)
+    size_t removed =
+        routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+    EXPECT_EQ(removed, 0);                    // not removed yet
+    EXPECT_EQ(routing_table_->GetSize(), 2);  // still in table
+
+    // Verify both are now inactive
+    for (const auto& n : routing_table_->GetNodes()) {
+        EXPECT_FALSE(n.is_active)
+            << "Node 0x" << std::hex << n.routing_entry.destination
+            << " should be inactive";
+    }
+
+    // Stage 2: remove (time_diff=5000 > node_timeout=1)
+    removed = routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 1);
+    EXPECT_EQ(removed, 2);
+    EXPECT_EQ(routing_table_->GetSize(), 0);
+}
+
+// =============================================================================
+// UpdateLinkStatistics Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest,
+       UpdateLinkStatisticsIncrementsExpectedForDirectNeighbor) {
+    AddDirectNeighbor(kNeighbor1);  // hop_count=1, is_active=true
+
+    const auto& nodes_before = routing_table_->GetNodes();
+    auto it_before =
+        std::find_if(nodes_before.begin(), nodes_before.end(),
+                     [](const NetworkNodeRoute& n) {
+                         return n.routing_entry.destination == kNeighbor1;
+                     });
+    ASSERT_NE(it_before, nodes_before.end());
+    uint32_t expected_before = it_before->link_stats.messages_expected;
+
+    routing_table_->UpdateLinkStatistics();
+
+    const auto& nodes_after = routing_table_->GetNodes();
+    auto it_after = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it_after, nodes_after.end());
+    EXPECT_GT(it_after->link_stats.messages_expected, expected_before);
+}
+
+TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsMultiHopNode) {
+    // Multi-hop node (hop_count=2) — should be skipped by UpdateLinkStatistics
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    const auto& nodes_before = routing_table_->GetNodes();
+    auto it_before =
+        std::find_if(nodes_before.begin(), nodes_before.end(),
+                     [](const NetworkNodeRoute& n) {
+                         return n.routing_entry.destination == kRemoteNode;
+                     });
+    ASSERT_NE(it_before, nodes_before.end());
+    uint32_t expected_before = it_before->link_stats.messages_expected;
+
+    routing_table_->UpdateLinkStatistics();
+
+    const auto& nodes_after = routing_table_->GetNodes();
+    auto it_after = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it_after, nodes_after.end());
+    // Multi-hop node should NOT have expected incremented
+    EXPECT_EQ(it_after->link_stats.messages_expected, expected_before);
+}
+
+TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
+    AddDirectNeighbor(kNeighbor1);
+
+    // Mark inactive
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    const auto& nodes_before = routing_table_->GetNodes();
+    auto it_before =
+        std::find_if(nodes_before.begin(), nodes_before.end(),
+                     [](const NetworkNodeRoute& n) {
+                         return n.routing_entry.destination == kNeighbor1;
+                     });
+    ASSERT_NE(it_before, nodes_before.end());
+    uint32_t expected_before = it_before->link_stats.messages_expected;
+
+    routing_table_->UpdateLinkStatistics();
+
+    const auto& nodes_after = routing_table_->GetNodes();
+    auto it_after = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it_after, nodes_after.end());
+    // Inactive neighbor should NOT have expected incremented
+    EXPECT_EQ(it_after->link_stats.messages_expected, expected_before);
+}
+
+// =============================================================================
+// GetRoutingEntries: inactive nodes excluded
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, GetRoutingEntriesExcludesInactiveNodes) {
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+
+    // Mark all inactive
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    // GetRoutingEntries should exclude inactive entries
+    auto entries = routing_table_->GetRoutingEntries(0);
+    EXPECT_EQ(entries.size(), 0);  // all inactive
+}
+
+// =============================================================================
+// ProcessRoutingTableMessage: capabilities update
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, ProcessRoutingMessageUpdatesSourceCapabilities) {
+    // Process a routing message with source_capabilities set
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
+                                               kGoodQuality, kMaxHops,
+                                               /*source_capabilities=*/0x07);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.capabilities, 0x07);
+}
+
+// =============================================================================
+// GetLinkQuality: returned value reflects quality stored in the node
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, GetLinkQualityReturnsStoredQualityForKnownNode) {
+    // Use UpdateRoute to add a node with a specific link quality
+    routing_table_->UpdateRoute(kNeighbor1, kNeighbor1, 1, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    // GetLinkQuality must return the stored quality (non-zero for a known node)
+    uint8_t quality = routing_table_->GetLinkQuality(kNeighbor1);
+    EXPECT_GT(quality, 0u) << "Known node should have non-zero link quality";
+}
+
+TEST_F(RoutingTableUnitTest, GetLinkQualityAfterProcessRoutingMessage) {
+    // ProcessRoutingTableMessage records a received routing message, which
+    // seeds the link quality stats.
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
+                                               kGoodQuality, kMaxHops);
+
+    // The source node was recorded as a direct neighbor with link quality
+    uint8_t quality = routing_table_->GetLinkQuality(kNeighbor1);
+    EXPECT_GT(quality, 0u)
+        << "Direct neighbor added via ProcessRoutingTableMessage "
+           "should have non-zero link quality";
+}
+
+// =============================================================================
+// RemoveInactiveNodes: simultaneous mark-and-remove (route_timeout == node_timeout)
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, RemoveInactiveNodesSimultaneousMarkAndRemove) {
+    AddDirectNeighbor(kNeighbor1);
+    EXPECT_EQ(routing_table_->GetSize(), 1);
+
+    // Both timeouts are very short — node is both marked inactive and removed
+    // in the same call.
+    uint32_t future_time = kCurrentTime + 50000;
+    size_t removed = routing_table_->RemoveInactiveNodes(future_time, 100, 100);
+
+    EXPECT_EQ(removed, 1);
+    EXPECT_EQ(routing_table_->GetSize(), 0);
+    EXPECT_FALSE(routing_table_->IsNodePresent(kNeighbor1));
+}
+
+// =============================================================================
+// ProcessRoutingTableMessage: zero-address entry is skipped
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, ProcessRoutingMessageSkipsZeroAddressEntry) {
+    RoutingTableEntry zero_entry;
+    zero_entry.destination = 0;  // invalid / zero address
+    zero_entry.hop_count = 1;
+    zero_entry.link_quality = kGoodQuality;
+    zero_entry.allocated_data_slots = 0;
+    zero_entry.capabilities = 0;
+
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(zero_entry);
+    entries.push_back(CreateEntry(kRemoteNode, 1, kGoodQuality));
+
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor1, entries, kCurrentTime, kGoodQuality, kMaxHops);
+
+    // Zero-address entry must NOT be added
+    EXPECT_FALSE(routing_table_->IsNodePresent(0))
+        << "Zero-address entry should be skipped";
+    // Valid entry should still be added
+    EXPECT_TRUE(routing_table_->IsNodePresent(kRemoteNode));
+}
+
+// =============================================================================
+// UpdateLinkStatistics: fast invalidation after consecutive missed messages
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest,
+       UpdateLinkStatisticsInvalidatesAfterConsecutiveMisses) {
+    // kMaxConsecutiveMissed = 3, kMinMessagesBeforeInvalidation = 1
+    // To trigger fast invalidation we need:
+    //   consecutive_missed >= 3  AND  messages_received >= 1
+    // Calling ProcessRoutingTableMessage registers a received message and seeds
+    // the node as a direct neighbor (hop_count=1, is_active=true).
+
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
+                                               kGoodQuality, kMaxHops);
+
+    // Verify node is active before the test loop
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        ASSERT_TRUE(it->is_active);
+    }
+
+    // Call UpdateLinkStatistics repeatedly without any new ReceivedRoutingMessage.
+    // Each call increments consecutive_missed (via ExpectRoutingMessage inside
+    // UpdateLinkStatistics).  After kMaxConsecutiveMissed (3) misses the node
+    // should be marked inactive.
+    bool became_inactive = false;
+    for (int i = 0; i < 10; ++i) {
+        routing_table_->UpdateLinkStatistics();
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        if (it != nodes.end() && !it->is_active) {
+            became_inactive = true;
+            break;
+        }
+    }
+
+    EXPECT_TRUE(became_inactive) << "Node should become inactive after "
+                                    "consecutive missed routing messages";
+}
+
+// =============================================================================
+// GetRoutingEntries: verifies capabilities are included in advertised entries
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, GetRoutingEntriesIncludesCapabilities) {
+    // Add a node with specific capabilities
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kGoodQuality,
+                                /*allocated_data_slots=*/1,
+                                /*capabilities=*/0x0F, kCurrentTime);
+
+    auto entries = routing_table_->GetRoutingEntries(0);
+    ASSERT_FALSE(entries.empty());
+
+    auto it = std::find_if(entries.begin(), entries.end(),
+                           [](const RoutingTableEntry& e) {
+                               return e.destination == kRemoteNode;
+                           });
+    ASSERT_NE(it, entries.end());
+    EXPECT_EQ(it->capabilities, 0x0F);
+    EXPECT_EQ(it->allocated_data_slots, 1);
+}
+
+// =============================================================================
+// GetMaxHopsFromRoutingTable equivalent: all inactive nodes → effective max is 0
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, GetRoutingEntriesEmptyWhenAllInactive) {
+    // Add nodes with various hop counts
+    routing_table_->UpdateRoute(kNeighbor1, kNeighbor1, 1, kGoodQuality, 0, 0,
+                                kCurrentTime);
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    EXPECT_EQ(routing_table_->GetSize(), 2);
+
+    // Mark all routes inactive (route_timeout small, node_timeout large)
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 100, 100000);
+
+    // GetRoutingEntries excludes inactive nodes — so 0 entries even though
+    // nodes are still in the table (not yet fully removed)
+    auto entries = routing_table_->GetRoutingEntries(0);
+    EXPECT_EQ(entries.size(), 0u)
+        << "Inactive nodes must not be advertised in routing entries";
+}
+
 }  // namespace test
 }  // namespace loramesher

@@ -313,6 +313,17 @@ class SuperframeService : public ISuperframeService {
      */
     uint32_t GetDiscoveryJitter() const { return discovery_jitter_max_ms_; }
 
+#ifdef LORAMESHER_BUILD_NATIVE
+    // Test-only helpers — available only in native (desktop) builds
+    bool TestCheckForNewSuperframe() { return CheckForNewSuperframe(); }
+
+    void TestSetSuperframeStartTime(uint32_t t) { superframe_start_time_ = t; }
+
+    void TestSetAutoAdvance(bool v) { auto_advance_ = v; }
+
+    void TestSetSyncInProgress(bool v) { sync_in_progress_ = v; }
+#endif  // LORAMESHER_BUILD_NATIVE
+
    private:
     /**
       * @brief Create RTOS task for automatic updates

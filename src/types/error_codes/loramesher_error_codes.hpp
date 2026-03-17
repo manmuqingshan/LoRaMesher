@@ -110,7 +110,14 @@ class LoraMesherErrorCategory : public std::error_category {
                 return "Interrupt handling error";
             case LoraMesherErrorCode::kModulationError:
                 return "Modulation parameter error";
-            // TODO: Add more here.
+            case LoraMesherErrorCode::kInvalidArgument:
+                return "Invalid argument provided";
+            case LoraMesherErrorCode::kNotImplemented:
+                return "Feature not implemented";
+            case LoraMesherErrorCode::kSerializationError:
+                return "Message serialization failed";
+            case LoraMesherErrorCode::kNoRoute:
+                return "No route to destination";
             default:
                 return "Unknown error";
         }

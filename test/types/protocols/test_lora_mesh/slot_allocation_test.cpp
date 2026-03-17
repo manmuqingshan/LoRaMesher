@@ -241,6 +241,156 @@ TEST_F(SlotAllocationTest, SerializedSize) {
     EXPECT_EQ(SlotAllocation::SerializedSize(), actual_size);
 }
 
+/**
+ * @brief Test IsSyncBeaconSlot method
+ */
+TEST_F(SlotAllocationTest, IsSyncBeaconSlot) {
+    SlotAllocation sync_tx(20, SlotAllocation::SlotType::SYNC_BEACON_TX);
+    SlotAllocation sync_rx(21, SlotAllocation::SlotType::SYNC_BEACON_RX);
+
+    EXPECT_TRUE(sync_tx.IsSyncBeaconSlot());
+    EXPECT_TRUE(sync_rx.IsSyncBeaconSlot());
+
+    EXPECT_FALSE(tx_slot_.IsSyncBeaconSlot());
+    EXPECT_FALSE(rx_slot_.IsSyncBeaconSlot());
+    EXPECT_FALSE(discovery_tx_slot_.IsSyncBeaconSlot());
+    EXPECT_FALSE(control_rx_slot_.IsSyncBeaconSlot());
+    EXPECT_FALSE(sleep_slot_.IsSyncBeaconSlot());
+}
+
+/**
+ * @brief Test IsTxSlot for ALL tx slot types
+ */
+TEST_F(SlotAllocationTest, IsTxSlotAllTypes) {
+    SlotAllocation control_tx(20, SlotAllocation::SlotType::CONTROL_TX);
+    SlotAllocation sync_tx(21, SlotAllocation::SlotType::SYNC_BEACON_TX);
+
+    EXPECT_TRUE(control_tx.IsTxSlot());
+    EXPECT_TRUE(sync_tx.IsTxSlot());
+
+    // Also verify non-tx types
+    SlotAllocation discovery_rx(22, SlotAllocation::SlotType::DISCOVERY_RX);
+    SlotAllocation sync_rx(23, SlotAllocation::SlotType::SYNC_BEACON_RX);
+    EXPECT_FALSE(discovery_rx.IsTxSlot());
+    EXPECT_FALSE(sync_rx.IsTxSlot());
+}
+
+/**
+ * @brief Test IsRxSlot for ALL rx slot types
+ */
+TEST_F(SlotAllocationTest, IsRxSlotAllTypes) {
+    SlotAllocation discovery_rx(20, SlotAllocation::SlotType::DISCOVERY_RX);
+    SlotAllocation sync_rx(21, SlotAllocation::SlotType::SYNC_BEACON_RX);
+
+    EXPECT_TRUE(discovery_rx.IsRxSlot());
+    EXPECT_TRUE(sync_rx.IsRxSlot());
+}
+
+/**
+ * @brief Test GetTypeString for all remaining slot types
+ */
+TEST_F(SlotAllocationTest, GetTypeStringAllTypes) {
+    SlotAllocation control_tx(20, SlotAllocation::SlotType::CONTROL_TX);
+    SlotAllocation discovery_rx(21, SlotAllocation::SlotType::DISCOVERY_RX);
+    SlotAllocation sync_tx(22, SlotAllocation::SlotType::SYNC_BEACON_TX);
+    SlotAllocation sync_rx(23, SlotAllocation::SlotType::SYNC_BEACON_RX);
+
+    EXPECT_EQ(control_tx.GetTypeString(), "CONTROL_TX");
+    EXPECT_EQ(discovery_rx.GetTypeString(), "DISCOVERY_RX");
+    EXPECT_EQ(sync_tx.GetTypeString(), "SYNC_BEACON_TX");
+    EXPECT_EQ(sync_rx.GetTypeString(), "SYNC_BEACON_RX");
+}
+
+/**
+ * @brief Test StringToSlotType for all valid type strings
+ */
+TEST_F(SlotAllocationTest, StringToSlotTypeAllValid) {
+    struct TestCase {
+        std::string str;
+        SlotAllocation::SlotType expected;
+    };
+
+    TestCase cases[] = {
+        {"TX", SlotAllocation::SlotType::TX},
+        {"RX", SlotAllocation::SlotType::RX},
+        {"SLEEP", SlotAllocation::SlotType::SLEEP},
+        {"DISCOVERY_RX", SlotAllocation::SlotType::DISCOVERY_RX},
+        {"DISCOVERY_TX", SlotAllocation::SlotType::DISCOVERY_TX},
+        {"CONTROL_RX", SlotAllocation::SlotType::CONTROL_RX},
+        {"CONTROL_TX", SlotAllocation::SlotType::CONTROL_TX},
+        {"SYNC_BEACON_TX", SlotAllocation::SlotType::SYNC_BEACON_TX},
+        {"SYNC_BEACON_RX", SlotAllocation::SlotType::SYNC_BEACON_RX},
+    };
+
+    for (const auto& tc : cases) {
+        auto result = slot_utils::StringToSlotType(tc.str);
+        ASSERT_TRUE(result.has_value()) << "Failed for: " << tc.str;
+        EXPECT_EQ(*result, tc.expected) << "Wrong result for: " << tc.str;
+    }
+}
+
+/**
+ * @brief Test IsValidSlotType for all valid types
+ */
+TEST_F(SlotAllocationTest, IsValidSlotTypeAllTypes) {
+    using ST = SlotAllocation::SlotType;
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::TX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::RX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::SLEEP));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::DISCOVERY_RX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::DISCOVERY_TX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::CONTROL_RX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::CONTROL_TX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::SYNC_BEACON_TX));
+    EXPECT_TRUE(slot_utils::IsValidSlotType(ST::SYNC_BEACON_RX));
+    EXPECT_FALSE(slot_utils::IsValidSlotType(static_cast<ST>(0x00)));
+    EXPECT_FALSE(slot_utils::IsValidSlotType(static_cast<ST>(0xAA)));
+}
+
+/**
+ * @brief Test SerializeDeserialize round-trip for all slot types
+ */
+TEST_F(SlotAllocationTest, SerializeAllSlotTypes) {
+    using ST = SlotAllocation::SlotType;
+    ST types[] = {ST::TX,
+                  ST::RX,
+                  ST::SLEEP,
+                  ST::DISCOVERY_RX,
+                  ST::DISCOVERY_TX,
+                  ST::CONTROL_RX,
+                  ST::CONTROL_TX,
+                  ST::SYNC_BEACON_TX,
+                  ST::SYNC_BEACON_RX};
+
+    for (auto t : types) {
+        SlotAllocation original(7, t, 0x5678);
+        std::vector<uint8_t> buf(SlotAllocation::SerializedSize());
+        utils::ByteSerializer ser(buf);
+        ASSERT_TRUE(original.Serialize(ser).IsSuccess());
+
+        utils::ByteDeserializer deser(buf);
+        auto result = SlotAllocation::Deserialize(deser);
+        ASSERT_TRUE(result.has_value())
+            << "Failed for type " << static_cast<int>(t);
+        EXPECT_EQ(result->type, t);
+        EXPECT_EQ(result->slot_number, 7u);
+        EXPECT_EQ(result->target_address, 0x5678u);
+    }
+}
+
+/**
+ * @brief Test SlotTypeToString for all types
+ */
+TEST_F(SlotAllocationTest, SlotTypeToStringAllTypes) {
+    using ST = SlotAllocation::SlotType;
+    EXPECT_EQ(slot_utils::SlotTypeToString(ST::CONTROL_TX), "CONTROL_TX");
+    EXPECT_EQ(slot_utils::SlotTypeToString(ST::DISCOVERY_RX), "DISCOVERY_RX");
+    EXPECT_EQ(slot_utils::SlotTypeToString(ST::SYNC_BEACON_TX),
+              "SYNC_BEACON_TX");
+    EXPECT_EQ(slot_utils::SlotTypeToString(ST::SYNC_BEACON_RX),
+              "SYNC_BEACON_RX");
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

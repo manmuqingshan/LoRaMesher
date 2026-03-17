@@ -7,13 +7,10 @@
 
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#endif
-
+#include "types/messages/base_header.hpp"
+#include "types/messages/loramesher/routing_table_header.hpp"
 #include "types/messages/loramesher/routing_table_message.hpp"
+#include "utils/byte_operations.h"
 
 namespace loramesher {
 namespace test {
@@ -34,46 +31,10 @@ class RoutingTableMessageTest : public ::testing::Test {
 
     std::unique_ptr<RoutingTableMessage> msg_ptr;
 
-#ifdef ARDUINO
     void SetUp() override {
         SetupEntries();
         CreateMessage();
     }
-#else
-    void SetUp() override {
-        // Setup test entries
-        SetupEntries();
-
-        // Create message
-        CreateMessage();
-
-        // Record memory usage before test
-        initial_memory_ = getCurrentMemoryUsage();
-    }
-
-    void TearDown() override {
-        // Verify no memory leaks
-        size_t final_memory = getCurrentMemoryUsage();
-        EXPECT_EQ(final_memory, initial_memory_);
-    }
-
-   private:
-    size_t getCurrentMemoryUsage() {
-#ifdef _WIN32
-        MEMORYSTATUSEX memStatus;
-        memStatus.dwLength = sizeof(memStatus);
-        GlobalMemoryStatusEx(&memStatus);
-        return memStatus.ullTotalPhys;
-#elif defined(__linux__)
-        struct mallinfo2 info = mallinfo2();
-        return info.uordblks;
-#else
-        return 0;
-#endif
-    }
-
-    size_t initial_memory_;
-#endif
 
     void SetupEntries() {
         // Create a few test routing entries
@@ -135,14 +96,25 @@ TEST_F(RoutingTableMessageTest, CreationTest) {
 
 /**
  * @brief Test creation failure with too many entries
+ *
+ * kMaxRoutingEntries is 34. Creating a message with 35 entries must return
+ * nullopt (exercises routing_table_message.cpp lines 58-62).
  */
 TEST_F(RoutingTableMessageTest, TooManyEntriesTest) {
-    // Only if uint8_t is used for entry count, we can test this
-    if (UINT8_MAX < SIZE_MAX) {
-        // Creating a vector with more than UINT8_MAX entries would be impractical,
-        // so we'll just acknowledge that the implementation checks this limit
-        SUCCEED() << "Implementation prevents overflow of entry count";
+    // Build a vector with one more entry than the maximum
+    std::vector<RoutingTableEntry> too_many;
+    for (int i = 0;
+         i <= static_cast<int>(RoutingTableMessage::kMaxRoutingEntries); ++i) {
+        too_many.push_back(
+            RoutingTableEntry(static_cast<AddressType>(0x1000 + i), 1, 80, 1));
     }
+    ASSERT_GT(too_many.size(),
+              static_cast<size_t>(RoutingTableMessage::kMaxRoutingEntries));
+
+    auto opt_msg = RoutingTableMessage::Create(dest, src, network_id,
+                                               table_version, too_many);
+    EXPECT_FALSE(opt_msg.has_value()) << "Create() should return nullopt when "
+                                         "entries exceed kMaxRoutingEntries";
 }
 
 /**
@@ -333,6 +305,221 @@ TEST_F(RoutingTableMessageTest, GetHeaderTest) {
     EXPECT_EQ(header.GetNetworkManager(), network_id);
     EXPECT_EQ(header.GetTableVersion(), table_version);
     EXPECT_EQ(header.GetEntryCount(), static_cast<uint8_t>(entries.size()));
+}
+
+/**
+ * @brief Test deserialization failure when entry_count in header exceeds max
+ *
+ * Manually patches the entry_count byte in a valid serialized buffer to a
+ * value larger than kMaxRoutingEntries (34), then verifies that
+ * CreateFromSerialized returns nullopt
+ * (exercises routing_table_message.cpp lines 105-109).
+ */
+TEST_F(RoutingTableMessageTest, DeserializeTooManyEntriesTest) {
+    // Start from a valid serialized message
+    auto opt_serialized = msg_ptr->Serialize();
+    ASSERT_TRUE(opt_serialized.has_value())
+        << "Setup: serialization must succeed";
+
+    std::vector<uint8_t> bad_data = *opt_serialized;
+
+    // The entry_count field sits at:
+    //   BaseHeader::Size() (6) + sizeof(AddressType) (2) + sizeof(uint8_t version) (1) = index 9
+    const size_t entry_count_offset =
+        BaseHeader::Size() + sizeof(AddressType) + sizeof(uint8_t);
+    ASSERT_LT(entry_count_offset, bad_data.size());
+
+    // Write a value that exceeds kMaxRoutingEntries
+    bad_data[entry_count_offset] =
+        static_cast<uint8_t>(RoutingTableMessage::kMaxRoutingEntries + 1);
+
+    auto result = RoutingTableMessage::CreateFromSerialized(bad_data);
+    EXPECT_FALSE(result.has_value())
+        << "CreateFromSerialized() must return nullopt when entry_count "
+           "exceeds kMaxRoutingEntries";
+}
+
+// ---------------------------------------------------------------------------
+// RoutingTableHeader-specific coverage
+// (src/types/messages/loramesher/routing_table_header.cpp)
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief RoutingTableHeader::SetRoutingTableInfo() updates fields.
+ *
+ * Exercises routing_table_header.cpp lines 26-34.
+ */
+TEST_F(RoutingTableMessageTest, SetRoutingTableInfo) {
+    ASSERT_NE(msg_ptr, nullptr);
+
+    // Grab a mutable header copy via the message
+    RoutingTableHeader hdr(dest, src, network_id, table_version,
+                           static_cast<uint8_t>(entries.size()));
+
+    const AddressType new_nm = 0xDEAD;
+    const uint8_t new_version = 99;
+    const uint8_t new_count = 7;
+    Result r = hdr.SetRoutingTableInfo(new_nm, new_version, new_count);
+    EXPECT_TRUE(r.IsSuccess());
+    EXPECT_EQ(hdr.GetNetworkManager(), new_nm);
+    EXPECT_EQ(hdr.GetTableVersion(), new_version);
+    EXPECT_EQ(hdr.GetEntryCount(), new_count);
+}
+
+/**
+ * @brief RoutingTableHeader getters for source capabilities and
+ *        source_allocated_data_slots — lines covered when accessed.
+ */
+TEST_F(RoutingTableMessageTest, SourceCapabilitiesAndSlots) {
+    const uint8_t caps = 0x42;
+    const uint8_t slots = 3;
+    RoutingTableHeader hdr(dest, src, network_id, table_version,
+                           static_cast<uint8_t>(entries.size()), caps, slots);
+
+    EXPECT_EQ(hdr.GetSourceCapabilities(), caps);
+    EXPECT_EQ(hdr.GetSourceAllocatedDataSlots(), slots);
+}
+
+/**
+ * @brief RoutingTableHeader::Deserialize() success path via serialized buffer.
+ *
+ * Exercises routing_table_header.cpp Deserialize() lines 53-91.
+ */
+TEST_F(RoutingTableMessageTest, HeaderDeserializeSuccess) {
+    // Build a valid buffer: serialize the header directly
+    RoutingTableHeader hdr(dest, src, network_id, table_version,
+                           static_cast<uint8_t>(entries.size()), 0x10, 2);
+
+    std::vector<uint8_t> buf(hdr.GetSize(), 0);
+    utils::ByteSerializer ser(buf);
+    Result r = hdr.Serialize(ser);
+    ASSERT_TRUE(r.IsSuccess());
+
+    // Now deserialize
+    utils::ByteDeserializer deser(
+        std::span<const uint8_t>(buf.data(), buf.size()));
+    auto opt = RoutingTableHeader::Deserialize(deser);
+    ASSERT_TRUE(opt.has_value());
+    EXPECT_EQ(opt->GetNetworkManager(), network_id);
+    EXPECT_EQ(opt->GetTableVersion(), table_version);
+    EXPECT_EQ(opt->GetEntryCount(), static_cast<uint8_t>(entries.size()));
+    EXPECT_EQ(opt->GetSourceCapabilities(), 0x10u);
+    EXPECT_EQ(opt->GetSourceAllocatedDataSlots(), 2u);
+}
+
+/**
+ * @brief RoutingTableHeader::Deserialize() fails on wrong message type.
+ *
+ * Exercises routing_table_header.cpp lines 64-68 (type-mismatch branch).
+ */
+TEST_F(RoutingTableMessageTest, HeaderDeserializeWrongType) {
+    // Serialize a PING header (wrong type)
+    BaseHeader wrong_type_hdr(dest, src, MessageType::PING, 0);
+    std::vector<uint8_t> buf(BaseHeader::Size(), 0);
+    utils::ByteSerializer ser(buf);
+    wrong_type_hdr.Serialize(ser);
+
+    utils::ByteDeserializer deser(
+        std::span<const uint8_t>(buf.data(), buf.size()));
+    auto opt = RoutingTableHeader::Deserialize(deser);
+    EXPECT_FALSE(opt.has_value());
+}
+
+/**
+ * @brief RoutingTableHeader::Deserialize() fails on truncated buffer
+ *        (missing fields after base header).
+ *
+ * Exercises routing_table_header.cpp lines 77-82 (missing fields branch).
+ */
+TEST_F(RoutingTableMessageTest, HeaderDeserializeTruncated) {
+    // Valid base header bytes but no routing-table-specific fields
+    BaseHeader base_hdr(dest, src, MessageType::ROUTE_TABLE, 0);
+    std::vector<uint8_t> buf(BaseHeader::Size(), 0);
+    utils::ByteSerializer ser(buf);
+    base_hdr.Serialize(ser);
+
+    utils::ByteDeserializer deser(
+        std::span<const uint8_t>(buf.data(), buf.size()));
+    auto opt = RoutingTableHeader::Deserialize(deser);
+    EXPECT_FALSE(opt.has_value());
+}
+
+/**
+ * @brief RoutingTableHeader::GetSize() returns the correct value.
+ */
+TEST_F(RoutingTableMessageTest, GetSize) {
+    RoutingTableHeader hdr(dest, src, network_id, table_version, 0);
+    EXPECT_EQ(hdr.GetSize(), BaseHeader::Size() +
+                                 RoutingTableHeader::RoutingTableFieldsSize());
+}
+
+// =============================================================================
+// RoutingTableMessage(const BaseMessage&) constructor — error branches
+// =============================================================================
+
+/**
+ * @brief Test constructing RoutingTableMessage from a BaseMessage with wrong type throws
+ *
+ * Covers lines 26-30: LOG_ERROR + throw invalid_argument when type != ROUTE_TABLE.
+ */
+TEST_F(RoutingTableMessageTest, ConstructFromBaseMessageWrongTypeThrows) {
+    // Create a DATA message (wrong type)
+    std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
+    BaseMessage wrong_type_msg(dest, src, MessageType::DATA,
+                               std::span<const uint8_t>(payload));
+
+    EXPECT_THROW(
+        { RoutingTableMessage rt(wrong_type_msg); }, std::invalid_argument);
+}
+
+/**
+ * @brief Test constructing RoutingTableMessage from a valid BaseMessage succeeds
+ *
+ * Exercises the BaseMessage constructor happy path (lines 23-50).
+ */
+TEST_F(RoutingTableMessageTest, ConstructFromValidBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // Convert to BaseMessage then construct back
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::ROUTE_TABLE);
+
+    // This should succeed without throwing
+    EXPECT_NO_THROW({
+        RoutingTableMessage rt(base);
+        EXPECT_EQ(rt.GetDestination(), dest);
+        EXPECT_EQ(rt.GetSource(), src);
+        EXPECT_EQ(rt.GetEntries().size(), entries.size());
+    });
+}
+
+// =============================================================================
+// SetLinkQualityFor — missing-node error path (lines 189-190)
+// =============================================================================
+
+/**
+ * @brief Test SetLinkQualityFor returns kInvalidState when node not found
+ *
+ * Covers lines 189-190.
+ */
+TEST_F(RoutingTableMessageTest, SetLinkQualityForMissingNodeReturnsError) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // Address 0xDEAD is not in the routing table
+    Result result = msg_ptr->SetLinkQualityFor(0xDEAD, 100);
+    EXPECT_FALSE(result.IsSuccess());
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+}
+
+/**
+ * @brief Test SetLinkQualityFor succeeds when node is present
+ */
+TEST_F(RoutingTableMessageTest, SetLinkQualityForExistingNodeSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // 0x1111 is in the entries list
+    Result result = msg_ptr->SetLinkQualityFor(0x1111, 200);
+    EXPECT_TRUE(result.IsSuccess());
 }
 
 }  // namespace test

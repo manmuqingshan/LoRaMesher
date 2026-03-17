@@ -19,6 +19,8 @@ PingPongProtocol::PingPongProtocol()
     : Protocol(ProtocolType::kPingPong),
       current_sequence_number_(0),
       timeout_task_handle_(nullptr),
+      message_queue_(nullptr),
+      process_task_handle_(nullptr),
       stop_tasks_(false) {}
 
 PingPongProtocol::~PingPongProtocol() {

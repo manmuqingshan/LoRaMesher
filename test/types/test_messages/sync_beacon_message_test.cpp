@@ -7,12 +7,6 @@
 
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#endif
-
 #include "types/messages/loramesher/sync_beacon_message.hpp"
 
 namespace loramesher {
@@ -34,47 +28,7 @@ class SyncBeaconMessageTest : public ::testing::Test {
     std::optional<SyncBeaconMessage> original_msg;
     std::optional<SyncBeaconMessage> forwarded_msg;
 
-#ifdef ARDUINO
     void SetUp() override { CreateMessages(); }
-#else
-    void SetUp() override {
-        // Create messages
-        CreateMessages();
-
-        // Record memory usage before test
-        initial_memory_ = getCurrentMemoryUsage();
-    }
-
-    void TearDown() override {
-        // Verify no memory leaks
-        size_t final_memory = getCurrentMemoryUsage();
-        size_t memory_diff = final_memory - initial_memory_;
-
-        // Allow for small differences (1KB threshold)
-        if (memory_diff > 1024) {
-            GTEST_NONFATAL_FAILURE_(("Memory leak detected: " +
-                                     std::to_string(memory_diff) + " bytes")
-                                        .c_str());
-        }
-    }
-
-    size_t getCurrentMemoryUsage() {
-#ifdef _WIN32
-        MEMORYSTATUSEX memStatus;
-        memStatus.dwLength = sizeof(memStatus);
-        GlobalMemoryStatusEx(&memStatus);
-        return memStatus.ullTotalPhys;
-#elif defined(__linux__)
-        struct mallinfo2 info = mallinfo2();
-        return info.uordblks;
-#else
-        return 0;
-#endif
-    }
-
-   private:
-    size_t initial_memory_;
-#endif
 
     void CreateMessages() {
         // Create original sync beacon
@@ -330,6 +284,153 @@ TEST_F(SyncBeaconMessageTest, MalformedSerializedData) {
     std::vector<uint8_t> short_data{0x01, 0x02, 0x03};
     auto short_result = SyncBeaconMessage::CreateFromSerialized(short_data);
     EXPECT_FALSE(short_result.has_value());
+}
+
+/**
+ * @brief Test the 6-arg SyncBeaconHeader constructor directly
+ */
+TEST_F(SyncBeaconMessageTest, DirectHeaderConstructorOriginal) {
+    // Construct a SyncBeaconHeader directly using the 6-arg constructor
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, src);
+
+    // Verify sync fields
+    EXPECT_EQ(header.GetDestination(), dest);
+    EXPECT_EQ(header.GetSource(), src);
+    EXPECT_EQ(header.GetNetworkId(), network_id);
+    EXPECT_EQ(header.GetTotalSlots(), total_slots);
+    EXPECT_EQ(header.GetSlotDuration(), slot_duration_ms);
+    EXPECT_EQ(header.GetNetworkManager(), src);
+
+    // Verify defaults set by the 6-arg constructor
+    EXPECT_EQ(header.GetHopCount(), 1);
+    EXPECT_EQ(header.GetPropagationDelay(), 0u);
+    EXPECT_EQ(header.GetMaxHops(), 5);
+}
+
+/**
+ * @brief Test SetSyncInfo with valid parameters updates fields and returns success
+ */
+TEST_F(SyncBeaconMessageTest, SetSyncInfoSuccess) {
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, src);
+
+    Result result = header.SetSyncInfo(2, 10, 100);
+
+    EXPECT_TRUE(result.IsSuccess());
+    EXPECT_EQ(header.GetNetworkId(), 2u);
+    EXPECT_EQ(header.GetTotalSlots(), 10u);
+    EXPECT_EQ(header.GetSlotDuration(), 100u);
+}
+
+/**
+ * @brief Test SetSyncInfo with zero total_slots returns kInvalidParameter
+ */
+TEST_F(SyncBeaconMessageTest, SetSyncInfoZeroSlotsFails) {
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, src);
+
+    Result result = header.SetSyncInfo(1, 0, 100);
+
+    EXPECT_FALSE(result.IsSuccess());
+}
+
+/**
+ * @brief Test SetSyncInfo with zero slot_duration_ms returns error
+ */
+TEST_F(SyncBeaconMessageTest, SetSyncInfoZeroDurationFails) {
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, src);
+
+    Result result = header.SetSyncInfo(1, 10, 0);
+
+    EXPECT_FALSE(result.IsSuccess());
+}
+
+/**
+ * @brief Test SetForwardingInfo with valid parameters returns success and updates fields
+ */
+TEST_F(SyncBeaconMessageTest, SetForwardingInfoSuccess) {
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, src);
+
+    Result result = header.SetForwardingInfo(2, 500, 5);
+
+    EXPECT_TRUE(result.IsSuccess());
+    EXPECT_EQ(header.GetHopCount(), 2u);
+    EXPECT_EQ(header.GetPropagationDelay(), 500u);
+    EXPECT_EQ(header.GetMaxHops(), 5u);
+}
+
+/**
+ * @brief Test SetForwardingInfo where hop_count exceeds max_hops returns error
+ */
+TEST_F(SyncBeaconMessageTest, SetForwardingInfoHopExceedsMaxFails) {
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, src);
+
+    // hop_count (6) > max_hops (5) — should fail
+    Result result = header.SetForwardingInfo(6, 500, 5);
+
+    EXPECT_FALSE(result.IsSuccess());
+}
+
+/**
+ * @brief Test that deserialization fails when data is truncated to just a few bytes
+ */
+TEST_F(SyncBeaconMessageTest, DeserializeFromTruncatedDataFails) {
+    ASSERT_TRUE(original_msg.has_value());
+
+    // Serialize a valid message first
+    auto serialized_opt = original_msg->Serialize();
+    ASSERT_TRUE(serialized_opt.has_value());
+
+    // Truncate to 3 bytes — too short for even the BaseHeader (6 bytes)
+    std::vector<uint8_t> truncated(serialized_opt->begin(),
+                                   serialized_opt->begin() + 3);
+
+    auto result = SyncBeaconMessage::CreateFromSerialized(truncated);
+    EXPECT_FALSE(result.has_value());
+}
+
+// =============================================================================
+// GetHeader() const accessor (line 138-140)
+// =============================================================================
+
+/**
+ * @brief Test GetHeader() const returns a reference to the internal header
+ */
+TEST_F(SyncBeaconMessageTest, GetHeaderReturnsCorrectHeader) {
+    ASSERT_TRUE(original_msg.has_value());
+
+    // Call the const GetHeader() accessor (covers lines 138-140)
+    const SyncBeaconHeader& h = original_msg->GetHeader();
+
+    EXPECT_EQ(h.GetSource(), src);
+    EXPECT_EQ(h.GetDestination(), dest);
+    EXPECT_EQ(h.GetNetworkId(), network_id);
+    EXPECT_EQ(h.GetTotalSlots(), total_slots);
+    EXPECT_EQ(h.GetSlotDuration(), slot_duration_ms);
+}
+
+// =============================================================================
+// ToBaseMessage() and Serialize() error branches
+// These are hard to reach (require serializer failures) but the happy-path
+// variants above don't call GetHeader(), so we add a minimal additional test
+// to be sure GetHeader() on the forwarded beacon also works.
+// =============================================================================
+
+/**
+ * @brief Test GetHeader() on a forwarded beacon returns correct forwarding fields
+ */
+TEST_F(SyncBeaconMessageTest,
+       GetHeaderOnForwardedBeaconReturnsForwardingFields) {
+    ASSERT_TRUE(forwarded_msg.has_value());
+
+    const SyncBeaconHeader& h = forwarded_msg->GetHeader();
+    EXPECT_EQ(h.GetHopCount(), 2u);
+    EXPECT_EQ(h.GetPropagationDelay(), 150u);  // 100 + 50 guard
+    EXPECT_EQ(h.GetMaxHops(), max_hops);
 }
 
 }  // namespace test

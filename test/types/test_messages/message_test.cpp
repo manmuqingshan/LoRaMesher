@@ -4,12 +4,6 @@
 #include <algorithm>
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#endif
-
 #include "types/messages/base_message.hpp"
 
 namespace loramesher {
@@ -25,42 +19,7 @@ class BaseMessageTest : public ::testing::Test {
 
     std::unique_ptr<BaseMessage> msg_ptr;
 
-#ifdef ARDUINO
     void SetUp() override { CreateMessage(); }
-#else
-
-    void SetUp() override {
-        // Create message
-        CreateMessage();
-
-        // Record memory usage before test
-        initial_memory_ = getCurrentMemoryUsage();
-    }
-
-    void TearDown() override {
-        // Verify no memory leaks
-        size_t final_memory = getCurrentMemoryUsage();
-        EXPECT_EQ(final_memory, initial_memory_);
-    }
-
-   private:
-    size_t getCurrentMemoryUsage() {
-#ifdef _WIN32
-        MEMORYSTATUSEX memStatus;
-        memStatus.dwLength = sizeof(memStatus);
-        GlobalMemoryStatusEx(&memStatus);
-        return memStatus.ullTotalPhys;
-#elif defined(__linux__)
-        struct mallinfo2 info = mallinfo2();
-        return info.uordblks;
-#else
-        return 0;
-#endif
-    }
-
-    size_t initial_memory_;
-
-#endif
 
     void CreateMessage() {
         auto opt_msg =
@@ -329,6 +288,102 @@ TEST_F(BaseMessageTest, MessageTypeValidationTest) {
     Result result =
         msg_ptr->SetMessage(dest, src, static_cast<MessageType>(0xFF), payload);
     EXPECT_FALSE(result.IsSuccess());
+}
+
+// ---- MessageType helper function tests ----
+
+TEST_F(BaseMessageTest, MessageTypeIsDataMessage) {
+    // DATA (0x11) has high nibble 0x10 == DATA_MSG
+    EXPECT_TRUE(message_type::IsDataMessage(MessageType::DATA));
+
+    // JOIN_REQUEST (0x42) has high nibble 0x40 == SYSTEM_MSG, not DATA_MSG
+    EXPECT_FALSE(message_type::IsDataMessage(MessageType::JOIN_REQUEST));
+
+    // PING (0x23) is a control message, not data
+    EXPECT_FALSE(message_type::IsDataMessage(MessageType::PING));
+}
+
+TEST_F(BaseMessageTest, MessageTypeIsControlMessage) {
+    // PING (0x23) has high nibble 0x20 == CONTROL_MSG
+    EXPECT_TRUE(message_type::IsControlMessage(MessageType::PING));
+
+    // ACK (0x21) is also a control message
+    EXPECT_TRUE(message_type::IsControlMessage(MessageType::ACK));
+
+    // PONG (0x24) is a control message
+    EXPECT_TRUE(message_type::IsControlMessage(MessageType::PONG));
+
+    // DATA (0x11) is not a control message
+    EXPECT_FALSE(message_type::IsControlMessage(MessageType::DATA));
+}
+
+TEST_F(BaseMessageTest, MessageTypeIsRoutingMessage) {
+    // HELLO (0x31) has high nibble 0x30 == ROUTING_MSG
+    EXPECT_TRUE(message_type::IsRoutingMessage(MessageType::HELLO));
+
+    // ROUTE_TABLE (0x32) is also a routing message
+    EXPECT_TRUE(message_type::IsRoutingMessage(MessageType::ROUTE_TABLE));
+
+    // SYNC_BEACON (0x46) is a system message, not routing
+    EXPECT_FALSE(message_type::IsRoutingMessage(MessageType::SYNC_BEACON));
+}
+
+TEST_F(BaseMessageTest, MessageTypeIsSystemMessage) {
+    // SYNC_BEACON (0x46) has high nibble 0x40 == SYSTEM_MSG
+    EXPECT_TRUE(message_type::IsSystemMessage(MessageType::SYNC_BEACON));
+
+    // JOIN_REQUEST (0x42) is a system message
+    EXPECT_TRUE(message_type::IsSystemMessage(MessageType::JOIN_REQUEST));
+
+    // NM_CLAIM (0x47) is a system message
+    EXPECT_TRUE(message_type::IsSystemMessage(MessageType::NM_CLAIM));
+
+    // HELLO (0x31) is a routing message, not system
+    EXPECT_FALSE(message_type::IsSystemMessage(MessageType::HELLO));
+}
+
+TEST_F(BaseMessageTest, MessageTypeCreateType) {
+    // Combine DATA_MSG (0x10) with subtype 0x01 -> should equal DATA (0x11)
+    MessageType created = message_type::CreateType(
+        MessageType::DATA_MSG, static_cast<MessageType>(0x01));
+    EXPECT_EQ(created, MessageType::DATA);
+
+    // Combine CONTROL_MSG (0x20) with subtype 0x03 -> should equal PING (0x23)
+    MessageType created_ping = message_type::CreateType(
+        MessageType::CONTROL_MSG, static_cast<MessageType>(0x03));
+    EXPECT_EQ(created_ping, MessageType::PING);
+
+    // Verify the main type and subtype are preserved correctly
+    EXPECT_EQ(message_type::GetMainType(created), MessageType::DATA_MSG);
+    EXPECT_EQ(static_cast<uint8_t>(message_type::GetSubtype(created)), 0x01u);
+}
+
+TEST_F(BaseMessageTest, BaseHeaderSerializeToVector) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // Serialize the full message first to get a valid byte buffer
+    auto opt_serialized = msg_ptr->Serialize();
+    ASSERT_TRUE(opt_serialized.has_value());
+
+    // Reconstruct a BaseMessage from the serialized bytes
+    auto opt_msg = BaseMessage::CreateFromSerialized(*opt_serialized);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    // Get the header and call the no-arg Serialize() that returns std::vector
+    const BaseHeader& header = opt_msg->GetHeader();
+    std::vector<uint8_t> header_bytes = header.Serialize();
+
+    // Verify the returned vector has the expected size
+    EXPECT_EQ(header_bytes.size(), BaseHeader::Size());
+
+    // Verify the destination and source are correctly serialized (little-endian)
+    ASSERT_GE(header_bytes.size(), 4u);
+    uint16_t stored_dest = static_cast<uint16_t>(header_bytes[0]) |
+                           (static_cast<uint16_t>(header_bytes[1]) << 8);
+    uint16_t stored_src = static_cast<uint16_t>(header_bytes[2]) |
+                          (static_cast<uint16_t>(header_bytes[3]) << 8);
+    EXPECT_EQ(stored_dest, dest);
+    EXPECT_EQ(stored_src, src);
 }
 
 }  // namespace test

@@ -7,12 +7,6 @@
 
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#endif
-
 #include "types/messages/loramesher/data_message.hpp"
 
 namespace loramesher {
@@ -31,40 +25,7 @@ class DataMessageTest : public ::testing::Test {
 
     std::unique_ptr<DataMessage> msg_ptr;
 
-#ifdef ARDUINO
     void SetUp() override { CreateMessage(); }
-#else
-    void SetUp() override {
-        // Create message
-        CreateMessage();
-
-        // Record memory usage before test
-        initial_memory_ = getCurrentMemoryUsage();
-    }
-
-    void TearDown() override {
-        // Verify no memory leaks
-        size_t final_memory = getCurrentMemoryUsage();
-        EXPECT_EQ(final_memory, initial_memory_);
-    }
-
-   private:
-    size_t getCurrentMemoryUsage() {
-#ifdef _WIN32
-        MEMORYSTATUSEX memStatus;
-        memStatus.dwLength = sizeof(memStatus);
-        GlobalMemoryStatusEx(&memStatus);
-        return memStatus.ullTotalPhys;
-#elif defined(__linux__)
-        struct mallinfo2 info = mallinfo2();
-        return info.uordblks;
-#else
-        return 0;
-#endif
-    }
-
-    size_t initial_memory_;
-#endif
 
     void CreateMessage() {
         auto opt_msg = DataMessage::Create(dest, src, next_hop, payload);

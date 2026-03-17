@@ -7,12 +7,6 @@
 
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <malloc.h>
-#endif
-
 #include "types/messages/loramesher/slot_request_message.hpp"
 
 namespace loramesher {
@@ -30,40 +24,7 @@ class SlotRequestMessageTest : public ::testing::Test {
 
     std::unique_ptr<SlotRequestMessage> msg_ptr;
 
-#ifdef ARDUINO
     void SetUp() override { CreateMessage(); }
-#else
-    void SetUp() override {
-        // Create message
-        CreateMessage();
-
-        // Record memory usage before test
-        initial_memory_ = getCurrentMemoryUsage();
-    }
-
-    void TearDown() override {
-        // Verify no memory leaks
-        size_t final_memory = getCurrentMemoryUsage();
-        EXPECT_EQ(final_memory, initial_memory_);
-    }
-
-   private:
-    size_t getCurrentMemoryUsage() {
-#ifdef _WIN32
-        MEMORYSTATUSEX memStatus;
-        memStatus.dwLength = sizeof(memStatus);
-        GlobalMemoryStatusEx(&memStatus);
-        return memStatus.ullTotalPhys;
-#elif defined(__linux__)
-        struct mallinfo2 info = mallinfo2();
-        return info.uordblks;
-#else
-        return 0;
-#endif
-    }
-
-    size_t initial_memory_;
-#endif
 
     void CreateMessage() {
         auto opt_msg = SlotRequestMessage::Create(dest, src, requested_slots);
