@@ -79,6 +79,8 @@ Follows Google C++ Style Guide with specific conventions:
 - **Doxygen comments** for public APIs
 - **RAII principles** with smart pointers
 
+When adding or modifying comments in code, keep them generic and describe *what* the code does, not *why* a specific change was made. Do not reference bug fixes, issues, or past problems in comments. Only add comments where the logic is not self-evident; do not comment self-explanatory code.
+
 ## Platform Differences
 
 The codebase conditionally compiles for different platforms:
