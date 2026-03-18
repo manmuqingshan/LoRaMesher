@@ -65,6 +65,14 @@ struct SubslotTiming {
 class SubslotScheduler {
    public:
     /**
+     * @brief Trailing guard margin reserved at the end of the last subslot's TX window.
+     *
+     * Ensures the last-subslot TX completes before the slot boundary, leaving
+     * the superframe task enough time to re-schedule the next slot without
+     * missing it.
+     */
+    static constexpr uint32_t kTrailingGuardMs = 30;
+    /**
      * @brief Compute timing for a node's subslot within a slot
      *
      * @param slot_duration_ms Total slot duration in milliseconds

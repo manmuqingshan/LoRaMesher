@@ -46,13 +46,14 @@ TEST(SubslotSchedulerTest, ComputeTimingHopBasedSubslot1) {
     EXPECT_EQ(timing.assigned_subslot, 1);
     // Each subslot = guard(10) + tx_window
     // Total guard = 5 * 10 = 50 ms
-    // Available TX = 1000 - 50 = 950 ms
-    // tx_window = 950 / 5 = 190 ms
-    // subslot_duration = 10 + 190 = 200 ms
-    // tx_start = 1 * 200 + 10 = 210 ms
-    EXPECT_EQ(timing.tx_window_ms, 190u);
-    EXPECT_EQ(timing.subslot_duration_ms, 200u);
-    EXPECT_EQ(timing.tx_start_offset_ms, 210u);
+    // Trailing guard = min(30, 1000/10) = 30 ms
+    // Available TX = 1000 - 50 - 30 = 920 ms
+    // tx_window = 920 / 5 = 184 ms
+    // subslot_duration = 10 + 184 = 194 ms
+    // tx_start = 1 * 194 + 10 = 204 ms
+    EXPECT_EQ(timing.tx_window_ms, 184u);
+    EXPECT_EQ(timing.subslot_duration_ms, 194u);
+    EXPECT_EQ(timing.tx_start_offset_ms, 204u);
 }
 
 TEST(SubslotSchedulerTest, ComputeTimingAddressModulo) {
@@ -174,7 +175,8 @@ TEST(SubslotSchedulerTest, ComputeTimingSingleSubslot) {
     EXPECT_TRUE(timing.is_valid);
     EXPECT_EQ(timing.assigned_subslot, 0);
     EXPECT_EQ(timing.tx_start_offset_ms, 10u);
-    EXPECT_EQ(timing.tx_window_ms, 990u);
+    // Trailing guard = min(30, 1000/10) = 30 ms; available = 1000 - 10 - 30 = 960 ms
+    EXPECT_EQ(timing.tx_window_ms, 960u);
 }
 
 TEST(SubslotSchedulerTest, ComputeTimingLargeSlotDuration) {
@@ -187,11 +189,12 @@ TEST(SubslotSchedulerTest, ComputeTimingLargeSlotDuration) {
 
     EXPECT_TRUE(timing.is_valid);
     EXPECT_EQ(timing.assigned_subslot, 2);
-    // Total guard = 250 ms, available TX = 4750 ms, tx_window = 950 ms
-    // subslot_duration = 50 + 950 = 1000 ms
-    // tx_start = 2 * 1000 + 50 = 2050 ms
-    EXPECT_EQ(timing.tx_window_ms, 950u);
-    EXPECT_EQ(timing.tx_start_offset_ms, 2050u);
+    // Total guard = 250 ms, trailing guard = min(30, 500) = 30 ms
+    // Available TX = 5000 - 250 - 30 = 4720 ms, tx_window = 4720 / 5 = 944 ms
+    // subslot_duration = 50 + 944 = 994 ms
+    // tx_start = 2 * 994 + 50 = 2038 ms
+    EXPECT_EQ(timing.tx_window_ms, 944u);
+    EXPECT_EQ(timing.tx_start_offset_ms, 2038u);
 }
 
 // ============================================================================
@@ -237,8 +240,8 @@ TEST(SubslotSchedulerTest, ValidateConfigToaExceedsTxWindow) {
     config.num_subslots = 5;
     config.guard_time_ms = 10;
 
-    // tx_window = (1000 - 50) / 5 = 190 ms
-    // ToA = 200 ms > 190 ms
+    // tx_window = (1000 - 50 - 30) / 5 = 184 ms
+    // ToA = 200 ms > 184 ms
     auto result = SubslotScheduler::ValidateConfig(1000, config, 200);
     EXPECT_FALSE(result.IsSuccess());
 }
@@ -248,9 +251,9 @@ TEST(SubslotSchedulerTest, ValidateConfigToaFitsExactly) {
     config.num_subslots = 5;
     config.guard_time_ms = 10;
 
-    // tx_window = (1000 - 50) / 5 = 190 ms
-    // ToA = 190 ms <= 190 ms
-    auto result = SubslotScheduler::ValidateConfig(1000, config, 190);
+    // Trailing guard = 30 ms; tx_window = (1000 - 50 - 30) / 5 = 184 ms
+    // ToA = 184 ms <= 184 ms
+    auto result = SubslotScheduler::ValidateConfig(1000, config, 184);
     EXPECT_TRUE(result.IsSuccess());
 }
 

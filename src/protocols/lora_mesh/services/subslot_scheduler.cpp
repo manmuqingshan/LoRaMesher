@@ -5,6 +5,8 @@
 
 #include "subslot_scheduler.hpp"
 
+#include <algorithm>
+
 #include "utils/logger.hpp"
 
 namespace loramesher {
@@ -50,7 +52,15 @@ SubslotTiming SubslotScheduler::ComputeTiming(uint32_t slot_duration_ms,
         return timing;  // is_valid = false
     }
 
-    uint32_t available_tx_time = slot_duration_ms - total_guard_time;
+    // Reserve a trailing guard so the last subslot's TX completes before the
+    // slot boundary, leaving the superframe task time to re-schedule.
+    uint32_t trailing_guard =
+        std::min(kTrailingGuardMs, slot_duration_ms / 10u);
+    if (total_guard_time + trailing_guard >= slot_duration_ms) {
+        trailing_guard = 0;  // degrade gracefully for very short slots
+    }
+    uint32_t available_tx_time =
+        slot_duration_ms - total_guard_time - trailing_guard;
     timing.tx_window_ms = available_tx_time / config.num_subslots;
     timing.subslot_duration_ms = config.guard_time_ms + timing.tx_window_ms;
 
@@ -98,6 +108,11 @@ Result SubslotScheduler::ValidateConfig(uint32_t slot_duration_ms,
     }
 
     uint32_t available_tx_time = slot_duration_ms - total_guard_time;
+    uint32_t trailing_guard =
+        std::min(kTrailingGuardMs, slot_duration_ms / 10u);
+    if (total_guard_time + trailing_guard < slot_duration_ms) {
+        available_tx_time -= trailing_guard;
+    }
     uint32_t tx_window_ms = available_tx_time / config.num_subslots;
 
     if (tx_window_ms == 0) {
