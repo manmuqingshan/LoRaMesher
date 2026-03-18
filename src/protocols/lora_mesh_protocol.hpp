@@ -46,7 +46,16 @@ class LoRaMeshProtocol : public Protocol {
         RADIO_EVENT = 1,  ///< Radio event received, process radio queue
         STATE_TIMEOUT,    ///< State timeout occurred, check state transitions
         STATE_CHANGE,     ///< Protocol state changed, update behavior
-        SHUTDOWN          ///< Protocol shutdown requested
+        SHUTDOWN,         ///< Protocol shutdown requested
+        SLOT_TRANSITION  ///< Superframe slot boundary reached; drain slot_transition_queue_
+    };
+
+    /**
+     * @brief Payload carried by SLOT_TRANSITION notifications
+     */
+    struct SlotTransitionData {
+        uint16_t slot;
+        bool new_superframe;
     };
 
     /**
@@ -411,6 +420,8 @@ class LoRaMeshProtocol : public Protocol {
     os::QueueHandle_t radio_event_queue_;
     os::QueueHandle_t
         protocol_notification_queue_;  ///< Queue for protocol event notifications
+    os::QueueHandle_t
+        slot_transition_queue_;  ///< Queue carrying SlotTransitionData for SLOT_TRANSITION events
 
     // Configuration
     LoRaMeshProtocolConfig config_;

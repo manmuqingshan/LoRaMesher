@@ -17,11 +17,17 @@ using namespace loramesher::types::protocols::lora_mesh;
 namespace loramesher {
 namespace protocols {
 
+/// Minimum time remaining in a slot (ms) needed to attempt a TX.
+/// Covers worst-case LoRa ToA (~150ms) so a late-arriving handler does not
+/// attempt a transmission that would overflow into the next slot.
+static constexpr uint32_t kLateArrivalMarginMs = 150;
+
 LoRaMeshProtocol::LoRaMeshProtocol()
     : Protocol(ProtocolType::kLoraMesh),
       protocol_task_handle_(nullptr),
       radio_event_queue_(nullptr),
-      protocol_notification_queue_(nullptr) {}
+      protocol_notification_queue_(nullptr),
+      slot_transition_queue_(nullptr) {}
 
 LoRaMeshProtocol::~LoRaMeshProtocol() {
     LOG_DEBUG("LoRaMeshProtocol destructor called");
@@ -55,6 +61,12 @@ LoRaMeshProtocol::~LoRaMeshProtocol() {
     if (protocol_notification_queue_) {
         GetRTOS().DeleteQueue(protocol_notification_queue_);
         protocol_notification_queue_ = nullptr;
+    }
+
+    // Clean up slot transition queue
+    if (slot_transition_queue_) {
+        GetRTOS().DeleteQueue(slot_transition_queue_);
+        slot_transition_queue_ = nullptr;
     }
 
     // Clear hardware reference
@@ -116,9 +128,16 @@ Result LoRaMeshProtocol::Init(
     protocol_notification_queue_ = GetRTOS().CreateQueue(
         PROTOCOL_NOTIFICATION_QUEUE_SIZE, sizeof(ProtocolNotificationType));
     if (!protocol_notification_queue_) {
-        GetRTOS().DeleteQueue(radio_event_queue_);
         return Result(LoraMesherErrorCode::kConfigurationError,
                       "Failed to create protocol notification queue");
+    }
+
+    // Initialize slot transition data queue (decouples superframe task from protocol task)
+    slot_transition_queue_ =
+        GetRTOS().CreateQueue(4, sizeof(SlotTransitionData));
+    if (!slot_transition_queue_) {
+        return Result(LoraMesherErrorCode::kConfigurationError,
+                      "Failed to create slot transition queue");
     }
 
     // Set up hardware radio callback to send events to NetworkService
@@ -152,17 +171,19 @@ Result LoRaMeshProtocol::Init(
         });
 
     if (!hw_result) {
-        GetRTOS().DeleteQueue(radio_event_queue_);
-        radio_event_queue_ = nullptr;
         return hw_result;
     }
 
     // Set up callbacks from services
 
-    // Superframe callback for slot transitions
+    // Superframe callback: post slot data to the queue and notify the protocol
+    // task. Non-blocking so the superframe timing task is never stalled by
+    // protocol processing (e.g. subslot delay + radio TX ~900ms).
     superframe_service_->SetSuperframeCallback(
         [this](uint16_t slot, bool new_superframe) {
-            OnSlotTransition(slot, new_superframe);
+            SlotTransitionData data{slot, new_superframe};
+            GetRTOS().SendToQueue(slot_transition_queue_, &data, 0);
+            NotifyProtocolTask(ProtocolNotificationType::SLOT_TRANSITION);
         });
 
     // Network service route update callback
@@ -186,7 +207,6 @@ Result LoRaMeshProtocol::Init(
         TASK_PRIORITY, &protocol_task_handle_);
 
     if (!task_created) {
-        GetRTOS().DeleteQueue(radio_event_queue_);
         return Result(LoraMesherErrorCode::kConfigurationError,
                       "Failed to create protocol task");
     }
@@ -275,6 +295,26 @@ Result LoRaMeshProtocol::Start() {
         }
     }
 
+    if (!protocol_notification_queue_) {
+        protocol_notification_queue_ = GetRTOS().CreateQueue(
+            PROTOCOL_NOTIFICATION_QUEUE_SIZE, sizeof(ProtocolNotificationType));
+        if (!protocol_notification_queue_) {
+            LOG_ERROR("Failed to create protocol notification queue");
+            return Result(LoraMesherErrorCode::kConfigurationError,
+                          "Failed to create protocol notification queue");
+        }
+    }
+
+    if (!slot_transition_queue_) {
+        slot_transition_queue_ =
+            GetRTOS().CreateQueue(4, sizeof(SlotTransitionData));
+        if (!slot_transition_queue_) {
+            LOG_ERROR("Failed to create slot transition queue");
+            return Result(LoraMesherErrorCode::kConfigurationError,
+                          "Failed to create slot transition queue");
+        }
+    }
+
     LOG_DEBUG("Starting LoRaMesh protocol... for node 0x%04X", node_address_);
 
     // Start hardware
@@ -340,11 +380,21 @@ Result LoRaMeshProtocol::Stop() {
         superframe_service_->SetSuperframeCallback(nullptr);
     }
 
-    // Clean up queue
+    // Clean up queues
     if (radio_event_queue_) {
         DrainRadioEventQueue();
         GetRTOS().DeleteQueue(radio_event_queue_);
         radio_event_queue_ = nullptr;
+    }
+
+    if (protocol_notification_queue_) {
+        GetRTOS().DeleteQueue(protocol_notification_queue_);
+        protocol_notification_queue_ = nullptr;
+    }
+
+    if (slot_transition_queue_) {
+        GetRTOS().DeleteQueue(slot_transition_queue_);
+        slot_transition_queue_ = nullptr;
     }
 
     LOG_INFO("LoRaMesh protocol stopped");
@@ -644,6 +694,19 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     // State changed, continue processing with new state
                     LOG_DEBUG("Protocol state changed, continuing processing");
                     break;
+
+                case ProtocolNotificationType::SLOT_TRANSITION: {
+                    // Drain all pending slot transitions (multiple may have queued
+                    // while the protocol task was busy processing a previous slot).
+                    SlotTransitionData data;
+                    while (rtos.ReceiveFromQueue(
+                               protocol->slot_transition_queue_, &data, 0) ==
+                           os::QueueResult::kOk) {
+                        protocol->OnSlotTransition(data.slot,
+                                                   data.new_superframe);
+                    }
+                    break;
+                }
 
                 case ProtocolNotificationType::SHUTDOWN:
                     LOG_INFO("Protocol shutdown requested");
@@ -948,6 +1011,23 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             auto message =
                 message_queue_service_->ExtractMessageOfType(slot_type);
             if (message) {
+                // Skip TX if the slot callback arrived too late to complete
+                // transmission before the slot boundary.
+                {
+                    uint32_t time_in_slot =
+                        superframe_service_->GetTimeInSlot();
+                    uint32_t slot_duration =
+                        superframe_service_->GetSlotDuration();
+                    if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
+                        LOG_WARNING(
+                            "DISCOVERY_TX: arrived too late (%u ms), skipping "
+                            "TX",
+                            time_in_slot);
+                        hardware_->setState(radio::RadioState::kReceive);
+                        break;
+                    }
+                }
+
                 // Compute subslot timing; use random identifier for RANDOM strategy
                 uint16_t identifier = node_address_;
                 if (config_.getDiscoverySubslotConfig().strategy ==
@@ -1028,6 +1108,23 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             auto message =
                 message_queue_service_->ExtractMessageOfType(slot_type);
             if (message) {
+                // Skip TX if the slot callback arrived too late to complete
+                // transmission before the slot boundary. Radio is already in
+                // kReceive from above, so it is safe to bail out here.
+                {
+                    uint32_t time_in_slot =
+                        superframe_service_->GetTimeInSlot();
+                    uint32_t slot_duration =
+                        superframe_service_->GetSlotDuration();
+                    if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
+                        LOG_WARNING(
+                            "SYNC_BEACON_TX: arrived too late (%u ms), "
+                            "skipping TX",
+                            time_in_slot);
+                        break;
+                    }
+                }
+
                 // Wait until our subslot TX offset
                 if (subslot_timing.is_valid) {
                     uint32_t time_in_slot =
@@ -1078,6 +1175,23 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 message_queue_service_->ExtractMessageOfType(
                     SlotAllocation::SlotType::DISCOVERY_TX);
             if (discovery_message) {
+                // Skip TX if the slot callback arrived too late to complete
+                // transmission before the slot boundary.
+                {
+                    uint32_t time_in_slot =
+                        superframe_service_->GetTimeInSlot();
+                    uint32_t slot_duration =
+                        superframe_service_->GetSlotDuration();
+                    if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
+                        LOG_WARNING(
+                            "DISCOVERY_RX fallback TX: arrived too late (%u "
+                            "ms), skipping TX",
+                            time_in_slot);
+                        hardware_->setState(radio::RadioState::kReceive);
+                        break;
+                    }
+                }
+
                 // Compute subslot timing; use random identifier for RANDOM strategy
                 uint16_t disc_identifier = node_address_;
                 if (config_.getDiscoverySubslotConfig().strategy ==
