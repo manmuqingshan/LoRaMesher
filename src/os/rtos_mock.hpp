@@ -381,6 +381,25 @@ class RTOSMock : public RTOS {
 
         // Notify the task to wake up - do this outside the tasksMutex_ lock to prevent deadlock
         if (task_info) {
+            // Update stop_requested and suspended under task_info->mutex so that
+            // ShouldStopOrPause's re-check (also under task_info->mutex) sees
+            // the updated state before we call notify_all().  This closes the
+            // missed-notification race where notify fires before the waiter
+            // enters cv.wait_for.
+            {
+                std::lock_guard<std::mutex> lock(task_info->mutex);
+                task_info->stop_requested.store(true,
+                                                std::memory_order_release);
+                task_info->suspended.store(false, std::memory_order_release);
+
+                // CRITICAL: Notify all queue condition variables the task is waiting on
+                for (auto* queue_cv : task_info->waiting_on_queue_cvs) {
+                    if (queue_cv) {
+                        queue_cv->notify_all();  // For ReceiveFromQueue calls
+                    }
+                }
+            }
+
             // CRITICAL: Notify ALL condition variables the task might be waiting on
             task_info->cv.notify_all();         // For ShouldStopOrPause
             task_info->notify_cv.notify_all();  // For WaitForNotify
@@ -388,16 +407,6 @@ class RTOSMock : public RTOS {
                 .notify_all();  // For suspend acknowledgment
             task_info->resume_ack_cv.notify_all();  // For resume acknowledgment
             task_info->delay_cv.notify_all();       // For delay() calls
-
-            // CRITICAL: Notify all queue condition variables the task is waiting on
-            {
-                std::lock_guard<std::mutex> lock(task_info->mutex);
-                for (auto* queue_cv : task_info->waiting_on_queue_cvs) {
-                    if (queue_cv) {
-                        queue_cv->notify_all();  // For ReceiveFromQueue calls
-                    }
-                }
-            }
 
             // LOG_DEBUG(
             //     "MOCK: Notified all condition variables for task '%s' deletion",
@@ -732,6 +741,19 @@ class RTOSMock : public RTOS {
             //     task_name.c_str());
 
             std::unique_lock<std::mutex> lock(task_info->mutex);
+
+            // Re-check under task_info->mutex to close the missed-notification
+            // window: DeleteTask may have set stop_requested=true after we
+            // released tasksMutex_ and before we acquired task_info->mutex.
+            if (task_info->stop_requested.load(std::memory_order_acquire)) {
+                return true;
+            }
+            if (!task_info->suspended) {
+                // Already resumed between the two locks.
+                task_info->resume_acknowledged = true;
+                task_info->resume_ack_cv.notify_all();
+                return false;
+            }
 
             // Before waiting, acknowledge that we're now suspended
             task_info->suspension_acknowledged = true;
