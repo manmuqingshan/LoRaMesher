@@ -226,9 +226,13 @@ class RTOSMock : public RTOS {
 
         // Wait for woken tasks to process and re-block before returning
         // This ensures deterministic behavior in tests by preventing the test
-        // from advancing virtual time before tasks have processed their wake-up
-        if (!tasksToWake.empty()) {
-            waitForTasksToReblock();
+        // from advancing virtual time before tasks have processed their wake-up.
+        // Also wait when timers fired: timer callbacks send to queues which wake
+        // protocol tasks asynchronously (not via tasksToWake), so we must wait
+        // for those tasks to finish processing and re-block as well.
+        if (!tasksToWake.empty() || !timersToTrigger.empty()) {
+            waitForTasksToReblock(
+                50);  // 50ms covers async slot-transition processing
         }
 
         return virtualTimeMs_;
