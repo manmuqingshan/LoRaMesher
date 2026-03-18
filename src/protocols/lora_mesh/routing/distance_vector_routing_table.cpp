@@ -469,6 +469,19 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                 node.is_active = false;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
                 LogRouteEntry(node);
+
+                // Cascade invalidation: mark all multi-hop routes via this
+                // failed neighbor as inactive immediately.
+                AddressType lost_hop = node.routing_entry.destination;
+                for (auto& other : nodes_) {
+                    if (other.next_hop == lost_hop && other.is_active &&
+                        other.routing_entry.hop_count > 1) {
+                        other.is_active = false;
+                        NotifyRouteUpdate(
+                            false, other.routing_entry.destination, 0, 0);
+                        LogRouteEntry(other);
+                    }
+                }
             }
 
             // Step 3: THEN expect a new message for this superframe

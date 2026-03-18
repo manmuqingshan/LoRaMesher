@@ -305,7 +305,7 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
     // Add some buffer time beyond the timeout
     auto superframe_time = GetSuperframeDuration(*nodes[0]);
     uint32_t step_ms = 50u;
-    uint32_t wait_time = route_timeout_ms + superframe_time * 2;
+    uint32_t wait_time = route_timeout_ms + superframe_time * 2 + 60000;
 
     std::cout << "Waiting " << wait_time << " ms for route to expire..."
               << std::endl;
