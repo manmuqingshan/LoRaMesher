@@ -56,6 +56,8 @@ class LoRaMeshProtocol : public Protocol {
     struct SlotTransitionData {
         uint16_t slot;
         bool new_superframe;
+        uint32_t
+            arrival_time_ms;  ///< GetTimeInSlot() captured when the superframe callback fired
     };
 
     /**
@@ -435,6 +437,8 @@ class LoRaMeshProtocol : public Protocol {
     // Subslot scheduling state
     bool in_subslotted_slot_ =
         false;  ///< True during subslotted slots (radio stays in RX)
+    uint32_t current_slot_arrival_time_ms_ =
+        0;  ///< GetTimeInSlot() at slot boundary (from SlotTransitionData)
 
     // Constants
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 8192;
