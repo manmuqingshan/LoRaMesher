@@ -1054,6 +1054,9 @@ class NetworkService : public INetworkService {
     std::optional<JoinRequestMessage>
         pending_join_data_;  ///< Buffered join request data
 
+    bool pending_slot_table_rebuild_ =
+        false;  ///< Flag indicating slot table rebuild is deferred to next superframe boundary
+
     // Control slot assignment
     uint8_t my_control_slot_index_ =
         0;  ///< This node's assigned control slot index (NM=0, others assigned at join)

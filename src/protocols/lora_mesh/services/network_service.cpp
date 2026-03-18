@@ -1530,15 +1530,15 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
         // Update node with new allocation
         UpdateNetworkNode(source, 100, false, 0, allocated_slots);
 
-        // Update network allocation
-        // TODO: This should be handled in the next superframe. FIX THIS ------------
-        Result result = UpdateSlotTable();
-        if (!result) {
-            return result;
-        }
-        BroadcastSlotAllocation();
+        // Defer slot table rebuild to next superframe boundary.
+        // Non-NM nodes learn the new table only via the next SyncBeacon anyway,
+        // so rebuilding mid-superframe would cause TX slot collisions.
+        pending_slot_table_rebuild_ = true;
 
-        LOG_INFO("Allocated %d slots to node 0x%04X", allocated_slots, source);
+        LOG_INFO(
+            "Allocated %d slots to node 0x%04X, slot reallocation deferred to "
+            "next superframe",
+            allocated_slots, source);
     } else {
         LOG_WARNING("No slots available for node 0x%04X", source);
     }
@@ -2638,6 +2638,17 @@ Result NetworkService::HandleSuperframeStart() {
             return result;
         }
 
+        // Flush any deferred slot table rebuild (e.g., from mid-superframe slot requests).
+        // This runs independently of ApplyPendingJoin; if both were pending simultaneously,
+        // ApplyPendingJoin already cleared the flag and called UpdateSlotTable().
+        if (pending_slot_table_rebuild_) {
+            pending_slot_table_rebuild_ = false;
+            Result rebuild_result = UpdateSlotTable();
+            if (!rebuild_result) {
+                return rebuild_result;
+            }
+        }
+
         // TODO: This should be used like the applypendingjoin but with a routing table
         // When a change has happened in the routing table, change the slot table when
         // starting a new superframe
@@ -2760,6 +2771,10 @@ Result NetworkService::ApplyPendingJoin() {
             "Re-established route to joining node 0x%04X via 0x%04X (hops=%d)",
             source, route_next_hop, routing_hop_count);
     }
+
+    // ApplyPendingJoin calls UpdateSlotTable() below; clear deferred flag to prevent a
+    // redundant rebuild in HandleSuperframeStart() when both are pending simultaneously.
+    pending_slot_table_rebuild_ = false;
 
     // Update slot allocation (this will be reflected in the sync beacon total_slots field)
     Result result = UpdateSlotTable();
