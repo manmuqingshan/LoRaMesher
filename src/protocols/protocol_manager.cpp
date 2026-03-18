@@ -215,6 +215,7 @@ Result ProtocolManager::InitAllProtocols(
     Result result = Result::Success();
 
     for (auto& [type, protocol] : protocols_) {
+        protocol->Stop();
         Result init_result = protocol->Init(hardware, node_address);
         if (!init_result) {
             // Add error information with protocol type
