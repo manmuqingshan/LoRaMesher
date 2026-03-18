@@ -1,386 +1,253 @@
-# LoRaMesher 1.0.0
+# LoRaMesher
 
-## ⛔⛔ Work in progress, do not try to run this ⛔⛔
+[![CI](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/test.yml/badge.svg)](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/test.yml)
+[![Format](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/format-check.yml/badge.svg)](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/format-check.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/jaimi5/b11f5ac09eb514904c15bbc9db6004b7/raw/loramesher_coverage.json)](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+[![ESP32](https://img.shields.io/badge/Platform-ESP32-green.svg)](https://www.espressif.com/en/products/socs/esp32)
+[![Native](https://img.shields.io/badge/Platform-Native%20(Linux%2FmacOS)-blue.svg)](#testing--analysis)
+[![RadioLib](https://img.shields.io/badge/RadioLib-7.x-orange.svg)](https://github.com/jgromes/RadioLib)
 
-## See the [GitHub Pages](https://jaimi5.github.io/LoRaMesher) for more information
+A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-vector routing protocol. Uses [RadioLib](https://github.com/jgromes/RadioLib) for radio communication and FreeRTOS for task scheduling.
 
-## Introduction
+---
 
-The LoRaMesher library implements a distance-vector routing protocol for communicating messages among LoRa nodes. For the interaction with the LoRa radio chip, we leverage RadioLib, a versatile communication library which supports different LoRa series modules.
-LoRaMesher library uses C++20.
+## Table of Contents
 
-### Compatibility
-At this moment, LoRaMesher has been tested within the following modules:
-- SX1262
-- SX1268
-- SX1276
-- SX1278
-- SX1280
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [API Usage](#api-usage)
+  - [Initialization](#initialization)
+  - [Receiving Packets](#receiving-packets)
+  - [Sending Packets](#sending-packets)
+  - [Timing-Aware Sending (TDMA)](#timing-aware-sending-tdma)
+- [Configuration](#configuration)
+- [Testing & Analysis](#testing--analysis)
+  - [PlatformIO (recommended)](#platformio-recommended)
+  - [CMake](#cmake)
+  - [ASAN / UBSAN](#addresssanitizer--undefinedbehaviorsanitizer)
+  - [TSAN](#threadsanitizer)
+  - [Coverage](#profiling--code-coverage-llvm)
+  - [Static Analysis](#static-analysis-clang-tidy)
+- [Protocol Design](#protocol-design)
+- [Citation](#citation)
+- [License](#license)
 
-You can request another module to be added to the library by opening an issue.
+---
 
-## Dependencies
+## Features
 
-You can check `library.json` for more details. Basically, we use [Radiolib](https://github.com/jgromes/RadioLib) that implements the low level communication to the different LoRa modules and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks.
+- **Mesh routing** — distance-vector protocol with automatic route discovery and maintenance
+- **TDMA superframe** — deterministic slot scheduling; nodes sleep when not transmitting
+- **Auto join / network formation** — nodes discover nearby networks or create a new one
+- **Network manager election** — distributed NM election with configurable priority
+- **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
+- **Desktop simulation** — full native test environment with hardware mocks, no hardware required
+- **Memory-safe** — tested under ASAN, UBSAN, and TSAN; no heap allocations per packet on ESP32
+- **LLVM coverage** — instrumented test environment with `llvm-cov` HTML/text reports
 
-## Configure LoRaMesher with PlatformIO and Visual Studio Code
+---
 
-1. Download Visual Studio Code.
-2. Download PlatformIO inside Visual Studio Code.
-3. Clone the LoraMesher repository.
-4. Go to PlatformIO Home, click on the Projects button, then on "Add Existing", and find the examples/beta-sample source in the files.
-5. Select the examples/beta-example project.
-6. Build the project with PlatformIO.
-7. Upload the project to the specified LoRa microcontroller. In our case, we use the TTGO T-Beam module.
+## Quick Start
 
-## LoRaMesher Example
+1. Install [Visual Studio Code](https://code.visualstudio.com/) and the [PlatformIO extension](https://platformio.org/install/ide?install=vscode).
+2. Clone this repository.
+3. Open PlatformIO Home → **Projects** → **Add Existing** → select `examples/counter-example`.
+4. Build with PlatformIO (⌘/Ctrl+Alt+B).
+5. Upload to your LoRa board (tested on TTGO T-Beam v1.1).
 
-There is, in the source files of this first implementation, an example to test the new functionalities. This example is an implementation of a counter, sending a broadcast message every 10 seconds. To make it easier to understand, we will remove additional functions that are not necessary to make the microcontroller work with the LoRaMesher library.
+> See `examples/` for additional examples including a queued-receive and a ping-pong mode.
 
-### Defining the data type and the data counter
+---
 
-As a proof of concept, we will be sending a numeric counter over LoRa. Its value will be incremented every 10 seconds, then te packet will be transmitted. To start, we need to implement the type of data we will use.
+## API Usage
 
-In this case, we will only send a `uint32_t`, which is the counter itself.
+### Initialization
 
+```cpp
+#include "loramesher.h"
+
+// Build configuration
+LoraMesherConfig config;
+config.loraCS  = 18;   // TTGO T-Beam v1.1 pins
+config.loraRst = 23;
+config.loraIrq = 26;
+config.loraIo1 = 33;
+config.module  = LoraMesher::LoraModules::SX1276_MOD;
+
+// Start the mesh
+LoraMesher& mesh = LoraMesher::getInstance();
+mesh.begin(config);
+mesh.start();
+
+// Pause / resume at any time
+mesh.standby();
+mesh.start();
 ```
-uint32_t dataCounter = 0;
-struct dataPacket {
-  uint32_t counter = 0;
+
+> *Be aware of the radio frequency regulations in your region.*
+
+---
+
+### Receiving Packets
+
+Register a FreeRTOS task that blocks until the library signals a new packet:
+
+```cpp
+struct SensorData {
+    uint32_t counter = 0;
 };
 
-dataPacket* helloPacket = new dataPacket;
-```
-
-### LoRaMesh Initialization
-
-#### Default Configuration
-
-To initialize the new implementation, you can configure the LoRa parameters that the library will use. If your node needs to receive messages to the application, see Received packets function section.
-
-You can configure different parameters for LoRa configuration. 
-Using the ```LoRaMesherConfig``` you can configure the following parameters (Mandatory*):
-- LoRaCS*
-- LoRaIRQ*
-- LoRaRST*
-- LoRaI01*
-- LoRa Module (See Compatibility)*
-- Frequency
-- Band
-- Spreading Factor
-- Synchronization Word
-- Power
-- Preamble Length
-- SPI Class.
-
-Here is an example on how to configure LoRaMesher using this configuration:
-
-```
-//Get the LoraMesher instance
-LoraMesher& radio = LoraMesher::getInstance();
-
-//Get the default configuration
-LoraMesher::LoraMesherConfig config = LoraMesher::LoraMesherConfig();
-
-//Change some parameters to the configuration
-//(TTGO T-Beam v1.1 pins)
-config.loraCS = 18
-config.loraRst = 23
-config.loraIrq = 26
-config.loraIo1 = 33
-
-config.module = LoraMesher::LoraModules::SX1276_MOD;
-
-//Initialize the LoraMesher. You can specify the LoRa parameters here or later with their respective functions
-radio.begin(config);
-
-//After initializing you need to start the radio with
-radio.start();
-
-//You can pause and resume at any moment with
-radio.standby();
-//And then
-radio.start();
-```
-
-*Be aware of the local laws that apply to radio frequencies*
-
-### Received packets function
-
-If your node needs to receive packets from other nodes you should follow the next steps:
-
-1. Create a function that will receive the packets:
-
-The function that gets a notification each time the library receives a packet for the app looks like this one:
-
-```
-/**
- * @brief Function that process the received packets
- *
- */
-void processReceivedPackets(void*) {
+void onReceive(void*) {
     for (;;) {
-        /* Wait for the notification of processReceivedPackets and enter blocking */
-        ulTaskNotifyTake(pdPASS, portMAX_DELAY);
+        ulTaskNotifyTake(pdPASS, portMAX_DELAY); // block until packet arrives
 
-        //Iterate through all the packets inside the Received User Packets FiFo
-        while (radio.getReceivedQueueSize() > 0) {
-            Serial.println("ReceivedUserData_TaskHandle notify received");
-            Serial.printf("Queue receiveUserData size: %d\n", radio.getReceivedQueueSize());
+        while (mesh.getReceivedQueueSize() > 0) {
+            AppPacket<SensorData>* pkt = mesh.getNextAppPacket<SensorData>();
 
-            //Get the first element inside the Received User Packets FiFo
-            AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
+            SensorData* data = pkt->payload;
+            size_t count = pkt->getPayloadLength(); // number of SensorData elements
+            for (size_t i = 0; i < count; i++) {
+                Serial.printf("Counter: %u\n", data[i].counter);
+            }
 
-            //Print the data packet
-            printDataPacket(packet);
-
-            //Delete the packet when used. It is very important to call this function to release the memory of the packet.
-            radio.deletePacket(packet);
-
+            mesh.deletePacket(pkt); // always free the packet
         }
     }
 }
+
+// Register the task
+TaskHandle_t rxTask = nullptr;
+xTaskCreate(onReceive, "RX", 4096, nullptr, 2, &rxTask);
+mesh.setReceiveAppDataTaskHandle(rxTask);
 ```
 
-There are some important things we need to be aware of:
+**AppPacket fields:**
 
-- This function should have a `void*` in the parameters.
-- The function should contain an endless loop.
-- Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
-- All the packets are stored inside a private queue.
-- There is a function to get the size of the queue `radio.getReceivedQueueSize()`.
-- You can get the first element with `radio.getNextAppPacket<T>()` where T is the type of your data. 
-- IMPORTANT!!! Every time you call Pop, you need to be sure to call `radio.deletePacket(packet)`. It will free the memory that has been allocated for the packet. If not executed it can cause memory leaks and out of memory errors.
+| Field | Type | Description |
+|---|---|---|
+| `src` | `uint16_t` | Source node address |
+| `dst` | `uint16_t` | Destination address (local or `BROADCAST_ADDR`) |
+| `payloadSize` | `uint32_t` | Payload size in bytes |
+| `payload` | `T[]` | Typed payload array |
 
-2. Create a task containing this function:
-```
-TaskHandle_t receiveLoRaMessage_Handle = NULL;
+---
 
-/**
- * @brief Create a Receive Messages Task and add it to the LoRaMesher
- *
- */
-void createReceiveMessages() {
-    int res = xTaskCreate(
-        processReceivedPackets,
-        "Receive App Task",
-        4096,
-        (void*) 1,
-        2,
-        &receiveLoRaMessage_Handle);
-    if (res != pdPASS) {
-        Serial.printf("Error: Receive App Task creation gave error: %d\n", res);
-    }
-}
-
-```
-
-2. Add the receiveLoRaMessage_Handle to the LoRaMesher
-
-```
-radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
-```
-
-### User data packet
-
-In this section we will show you what there are inside a `AppPacket`.
-```
-class AppPacket {
-    uint16_t dst; //Destination address, normally it will be local address or BROADCAST_ADDR
-    uint16_t src; //Source address
-    uint32_t payloadSize = 0; //Payload size in bytes
-    T payload[]; //Payload
-
-    size_t getPayloadLength() { return this->payloadSize / sizeof(T); }
-};
-```
-
-Functionalities to use after getting the packet with `AppPacket<T>* packet = radio.getNextAppPacket<T>()`:
-1. `packet->getPayloadLength()` it will get you the payload size in number of T
-2. `radio.deletePacket(packet)` it will release the memory allocated for this packet.
-
-### Send data packet function
-
-In this section we will present how you can create and send packets. in this example we will use the `AppPacket` data structure.
-
-```
-  void loop() {
-        helloPacket->counter = dataCounter++;
-
-        //Create packet and send it.
-         radio.createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
-         
-         //Or if you want to send large and reliable payloads you can call this function too.
-         radio.sendReliable(dstAddr, helloPacket, 1);
-
-        //Wait 10 seconds to send the next packet
-        vTaskDelay(10000 / portTICK_PERIOD_MS);
-  }
-```
-
-In the previous figure we can see that we are using the helloPacket, we add the counter inside it, and we create and send the packet using the LoRaMesher.
-
-The most important part of this piece of code is the function that we call in the `radio.createPacketAndSend()`:
-
-1. The first parameter is the destination, in this case the broadcast address.
-2. And finally, the helloPacket (the packet we created) and the number of elements we are sending, in this case only 1 dataPacket.
-
-## Timing-Aware Data Sending
-
-LoRaMesher is TDMA-based — each node has specific TX data slot(s) within each
-superframe where it can transmit user data. Calling `Send()` at the right moment
-ensures the message goes out in the very next available TX slot rather than waiting
-an extra superframe.
-
-### Query the next TX opportunity
+### Sending Packets
 
 ```cpp
-// Sleep until just before the next TX data slot, then send
-uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot(); // default 200ms guard time
-vTaskDelay(pdMS_TO_TICKS(wait_ms));
-mesh.Send(destination_address, payload_bytes);
+SensorData reading { .counter = 42 };
+
+// Unicast
+mesh.createPacketAndSend(destinationAddress, &reading, /*count=*/1);
+
+// Broadcast
+mesh.createPacketAndSend(BROADCAST_ADDR, &reading, 1);
+
+// Reliable (acknowledged, larger payloads)
+mesh.sendReliable(destinationAddress, &reading, 1);
 ```
 
-The guard time (default: 200 ms) is subtracted from the raw slot start time so
-your code has enough time to wake up, prepare data, and call `Send()` before the
-slot begins. You can pass a custom guard time if needed:
+---
+
+### Timing-Aware Sending (TDMA)
+
+LoRaMesher is TDMA-based — each node has assigned TX slots within each superframe. Sending just before your slot avoids waiting an extra superframe:
+
+```cpp
+// Wait until just before the next TX slot (default 200 ms guard time)
+uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot();
+vTaskDelay(pdMS_TO_TICKS(wait_ms));
+mesh.createPacketAndSend(dst, &reading, 1);
+```
+
+Custom guard time:
 
 ```cpp
 uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot(/*guard_time_ms=*/100);
 ```
 
-### Multiple TX slots per superframe
-
-If the network manager allocates more than one TX slot to your node, you can fill
-all of them each cycle:
+Multiple TX slots per superframe:
 
 ```cpp
-uint8_t tx_slots = mesh.GetDataSlotsPerSuperframe(); // e.g. 2
-for (uint8_t i = 0; i < tx_slots; i++) {
-    uint32_t wait_ms = mesh.GetTimeUntilNextDataSlot();
-    vTaskDelay(pdMS_TO_TICKS(wait_ms));
-    mesh.Send(destination, readings[i]);
+uint8_t slots = mesh.GetDataSlotsPerSuperframe();
+for (uint8_t i = 0; i < slots; i++) {
+    vTaskDelay(pdMS_TO_TICKS(mesh.GetTimeUntilNextDataSlot()));
+    mesh.createPacketAndSend(dst, &readings[i], 1);
 }
 ```
 
-Both functions return `0` if the node has not yet joined a network.
+Both functions return `0` when the node has not yet joined a network.
 
-### Print packet example
+---
 
-When receiving the packet, we need to understand what the Queue will return us. For this reason, in the next subsection, we will explain how to implement a simple packet processing.
+## Configuration
 
-```
-/**
- * @brief Print the counter of the packet
- *
- * @param data
- */
-void printPacket(dataPacket data) {
-  Serial.printf("Hello Counter received n %d\n", data.counter);
-}
+Add these defines before including `loramesher.h` (or in `platformio.ini` as `build_flags`):
 
-/**
- * @brief Iterate through the payload of the packet and print the counter of the packet
- *
- * @param packet
- */
-void printDataPacket(AppPacket<dataPacket>* packet) {
-    //Get the payload to iterate through it
-    dataPacket* dPacket = packet->payload;
-    size_t payloadLength = packet->getPayloadLength();
+```cpp
+// Log level: 0=DEBUG  1=INFO  2=WARNING  3=ERROR  4=NO_LOG (default)
+#define LORAMESHER_LOG_LEVEL 1
 
-    for (size_t i = 0; i < payloadLength; i++) {
-        //Print the packet
-        printPacket(dPacket[i]);
-    }
-}
+// Enable extra internal debug logs (task monitoring, state transitions)
+// #define DEBUG
+
+// Disable ANSI color codes in log output (useful when saving to flash)
+// #define LOGGER_DISABLE_COLORS
+
+// Adjust the log message buffer size (default: 128)
+#define LOGGER_BUFFER_SIZE 256
 ```
 
-1. After receiving the packet in the `processReceivedPackets()` function, we call the `printDataPacket()` function.
-2. We need to get the payload of the packet using `packet->payload`.
-3. We iterate through the `packet->getPayloadLength()`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
-4. Get the payload and call the `printPacket(dPacket[i])` function, that will print the counter received.
+---
 
-## More information on the design and evaluation of LoRaMesher
-Please see our open access paper ["Implementation of a LoRa Mesh Library"](https://ieeexplore.ieee.org/document/9930341) for a detailed description. If you use the LoRaMesher library, in academic work, please cite the following:
-```
-@ARTICLE{9930341,
-  author={Solé, Joan Miquel and Centelles, Roger Pueyo and Freitag, Felix and Meseguer, Roc},
-  journal={IEEE Access}, 
-  title={Implementation of a LoRa Mesh Library}, 
-  year={2022},
-  volume={10},
-  number={},
-  pages={113158-113171},
-  doi={10.1109/ACCESS.2022.3217215}}
-```
+## Testing & Analysis
 
-## Additional configurations
+### PlatformIO (recommended)
 
-### Debug
-
-If you want to additional logs you can use the flag DEBUG. It will set the library for testing and it will add additional logs that monitors tasks.
-
-```// #define DEBUG  // Uncomment to enable debug functionality```
-
-### Log configuration
-#### Log Level
-
-There is 5 different log levels
-- 0 = DEBUG
-- 1 = INFO
-- 2 = WARNING
-- 3 = ERROR
-- 4 = NO_LOG
-
-```#define LORAMESHER_LOG_LEVEL 4  // 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR, 4=NO_LOG```
-
-#### Disable colors output
-
-You can disable color for your serial monitor if needed. This can be usefull if you want to store logs in a local storage and optimize memory.
-
-```//#define LOGGER_DISABLE_COLORS   // Disable color output```
-
-#### Log buffer size
-
-You can change buffer size of the log.
-
-```#define LOGGER_BUFFER_SIZE 128  // Adjust buffer size for your needs```
-
-## Cmake building
-
-```
-mkdir build && cd build
-cmake .. -DBUILD_DESKTOP=ON
-cmake --build . --target loramesher_lib
-```
-
-### Targets
-- `loramesher_lib` -> To build the library.
-- `build_all_tests` -> To build the tests.
-- `run_all_tests` -> To build and run the tests.
-
-Or insted use `cTest`
-
-## Analysis Tools
-
-### AddressSanitizer + UndefinedBehaviorSanitizer (default test env)
-
-The `test_native` environment runs with ASAN and UBSAN enabled. LSAN suppressions for
-intentional leaks (Logger semaphore) are loaded automatically.
+All tests run on the host — no hardware required.
 
 ```bash
-# Run all tests
+# Run all tests (ASAN + UBSAN enabled)
 pio test -e test_native -v
 
-# Run a specific test suite
+# Filter to a specific suite
 pio test -e test_native -v -f "protocols/lora_mesh/services/test_routing"
+
+# List available test names
+pio test -e test_native --list-tests
+```
+
+> Run as a background task — integration tests take several minutes.
+
+### CMake
+
+```bash
+mkdir build && cd build
+cmake .. -DBUILD_DESKTOP=ON
+cmake --build . --target loramesher_lib   # library only
+cmake --build . --target build_all_tests  # build tests
+cmake --build . --target run_all_tests    # build + run
+ctest                                     # alternative runner
+```
+
+---
+
+### AddressSanitizer + UndefinedBehaviorSanitizer
+
+The `test_native` environment enables ASAN and UBSAN automatically.
+
+```bash
+pio test -e test_native -v
 ```
 
 What to look for:
 - `ERROR: AddressSanitizer:` — heap/stack corruption, use-after-free
 - `runtime error:` — undefined behavior (signed overflow, null deref, etc.)
 - `ERROR: LeakSanitizer:` — unexpected memory leaks (intentional ones are suppressed)
+
+---
 
 ### ThreadSanitizer
 
@@ -392,199 +259,115 @@ pio test -e test_native_tsan -v
 
 What to look for: `WARNING: ThreadSanitizer: data race`
 
-### Static Analysis (clang-tidy)
+---
 
-Requires a CMake build with `compile_commands.json`:
+### Profiling / Code Coverage (LLVM)
+
+The `test_native_profile` environment compiles with `-fprofile-instr-generate -fcoverage-mapping`. A convenience script is provided:
+
+```bash
+bash scripts/run_coverage.sh
+# Opens coverage/index.html when done
+```
+
+Or run steps manually:
+
+#### 1. Run instrumented tests
+
+```bash
+LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
+    pio test -e test_native_profile -v
+```
+
+#### 2. Merge raw profiles
+
+```bash
+llvm-profdata-18 merge -sparse .pio/coverage/*.profraw \
+    -o .pio/coverage/loramesher.profdata
+```
+
+#### 3. Text summary
+
+```bash
+llvm-cov-18 report .pio/build/test_native_profile/program \
+    -instr-profile=.pio/coverage/loramesher.profdata \
+    --ignore-filename-regex='(test/|googletest|\.pio)'
+```
+
+#### 4. HTML report
+
+```bash
+llvm-cov-18 show .pio/build/test_native_profile/program \
+    -instr-profile=.pio/coverage/loramesher.profdata \
+    -format=html -output-dir=coverage/ \
+    --ignore-filename-regex='(test/|googletest|\.pio)'
+# Open coverage/index.html
+```
+
+> Coverage % is also visible in the **GitHub Actions run summary** for every CI push.
+
+---
+
+### Static Analysis (clang-tidy)
 
 ```bash
 mkdir -p build && cd build
 cmake .. -DBUILD_DESKTOP=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cd ..
 
-# Analyse all sources
-run-clang-tidy -p build/ src/
-
-# Analyse a single file
-clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp
+run-clang-tidy -p build/ src/          # all sources
+clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp  # single file
 ```
 
-Checks enabled: `clang-analyzer-*`, `bugprone-*` (UAF, dangling handles, infinite loops),
-`cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others. See `.clang-tidy`
-at the repo root for the full list.
+Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others (see `.clang-tidy`).
 
-### Profiling / Code Coverage (LLVM instrumentation)
+---
 
-The `test_native_profile` environment compiles and links with
-`-fprofile-instr-generate -fcoverage-mapping` plus the clang profiling runtime
-(`libclang_rt.profile-x86_64.a`), wired in automatically by `extra_script.py`.
+## Protocol Design
 
-> **Important:** PlatformIO runs the test binary in a subprocess that does not
-> inherit environment changes made inside the build script. You must prefix the
-> `pio test` command with `LLVM_PROFILE_FILE` in the shell so the raw profile
-> data lands in `.pio/coverage/` instead of `default.profraw` in the project root.
+### State Machine
 
-#### 1. Run the instrumented tests (background task — takes several minutes)
+| State | Description |
+|---|---|
+| **Initialization** | System startup and configuration |
+| **Discovery** | Listen for a full superframe; join if a network is heard, else create one |
+| **Joining** | Send routing table during the discovery slot |
+| **Normal Operation** | TDMA TX/RX/sleep based on assigned slots |
+| **Network Manager** | Distribute routing updates and link quality; set next superframe schedule |
+| **Fault Recovery** | Re-join or re-create network after connection loss |
 
-```bash
-LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
-    pio test -e test_native_profile -v \
-    --filter "protocols/lora_mesh/services/test_routing"
+### Superframe Structure
+
+- **Control slots** — sync beacon, routing updates, slot allocation (all nodes listen)
+- **Data slots** — ordered TX/RX per routing table; sleeping nodes stay off-air
+- **Discovery slots** — CSMA/CA slots for new nodes to announce themselves
+
+### Packet Types
+
+`SYNC_BEACON` · `ROUTING_TABLE` · `NM_CLAIM` · `JOIN_REQUEST` · `JOIN_RESPONSE` · `SLOT_ALLOCATION` · `DATA` · `KEEP_ALIVE` · `FAULT_RECOVERY`
+
+---
+
+## Citation
+
+If you use LoRaMesher in academic work, please cite:
+
+```bibtex
+@ARTICLE{9930341,
+  author={Solé, Joan Miquel and Centelles, Roger Pueyo and Freitag, Felix and Meseguer, Roc},
+  journal={IEEE Access},
+  title={Implementation of a LoRa Mesh Library},
+  year={2022},
+  volume={10},
+  pages={113158-113171},
+  doi={10.1109/ACCESS.2022.3217215}
+}
 ```
 
-The `.pio/coverage/` directory is created automatically by `extra_script.py`.
+Open access paper: [IEEE Access — Implementation of a LoRa Mesh Library](https://ieeexplore.ieee.org/document/9930341)
 
-#### 2. Merge raw profile data
+---
 
-```bash
-llvm-profdata merge -sparse .pio/coverage/*.profraw \
-    -o .pio/coverage/loramesher.profdata
-```
+## License
 
-If `llvm-profdata` is not in PATH, try the versioned binary
-(e.g. `llvm-profdata-18`).
-
-#### 3. Locate the test binary
-
-```bash
-find .pio/build/test_native_profile -name "program" 2>/dev/null
-```
-
-Typically: `.pio/build/test_native_profile/program`
-
-#### 4. Generate coverage report
-
-**Text summary (per-file line / function / region coverage):**
-
-```bash
-llvm-cov report .pio/build/test_native_profile/program \
-    -instr-profile=.pio/coverage/loramesher.profdata \
-    --ignore-filename-regex='(test/|googletest|\.pio)'
-```
-
-**HTML report (line-by-line, browsable):**
-
-```bash
-llvm-cov show .pio/build/test_native_profile/program \
-    -instr-profile=.pio/coverage/loramesher.profdata \
-    -format=html \
-    -output-dir=coverage/ \
-    --ignore-filename-regex='(test/|googletest|\.pio)'
-# Open coverage/index.html in a browser
-```
-
-Replace `llvm-cov` / `llvm-profdata` with the versioned binary if needed
-(e.g. `llvm-cov-18`, `llvm-profdata-18`).
-
-
-# Building the new Protocol using BMX6 and node syncrhonization
-
-## States
-
-The nodes have 6 protocol states:
-
-1. Initialization: System startup and initial configuration
-
-2. Discovery: Searching for or establishing a network.
-    - Discovery will set the radio to listening and will wait to a full default super frame to see if it listens a loramesher packet.
-        - If it discovers a packet it will pass to next joining state.
-        - If no packet is being detectet, start a new network.
-
-3. Joining: Process of connecting to an existing network
-    - It will wait until the discovery slot, then it will send the actual routing table.
-
-4. Normal Operation: Regular network activity (sending/receiving data)
-    - After defining the routing table order, it will define the TX and RX slots. 
-        - RX slots will be defined by the order of the routing table. If the node is slot 2, it will capable of sending when slot time is 2.
-        - TX slots will be defined by the RX nodes of the neighbour nodes.
-        - If neither RX/TX slot in the frame, it will set the radio sleep and do a light sleep if possible.
-
-5. Network Manager: Special state when acting as network manager
-    - In this state the the node will send routing table updates and link quality. The order of RX/TX will be accordingly to the previous slots.
-    - After finishing this state, the RX/TX will define the next super frame order.
-
-6. Fault Recovery: Handling connection issues and recovering.
-    - If a node has lost their conection to all the nodes, it will start a fault recovery. If after a time it does not capable of reconnect it will start again, creating or joining a network.
-
-## Super fram structure
-
-### Data Transmission Phase
-
-- Ordered transmission/reception based on routing table
-- Nodes follow a predetermined schedule for TX/RX/sleep
-- Schedule follows prioritization that changes each superframe
-- Only active nodes during their assigned slots need to be awake
-
-### Discovery Slots
-
-- All nodes must listen during these slots
-- Limited number of slots for new nodes to join
-- Uses CSMA/CA to minimize collision during join requests
-- All nodes retransmit the message to all the network.
-- The slots are defined by:
-    - #Devices + 1
-
-
-### Control Slots
-
-- All nodes must listen during these slots
-- Used for slot allocation requests
-- Synchronization information distribution
-- Network manager role assignment
-- Routing table updates 
-
-## Packet types
-
-- DISCOVERY (new node announcement)
-- JOIN_REQUEST (request to join network)
-- JOIN_RESPONSE (acceptance into network)
-- ROUTING_UPDATE (routing table information)
-- SLOT_REQUEST (request for transmission slots)
-- SLOT_ALLOCATION (slot assignments)
-- SYNC (time synchronization)
-- DATA (application payload)
-- KEEP_ALIVE (link maintenance)
-- FAULT_RECOVERY (reconnection attempt)
-
-## Tasks
-
-- Protocol Logic Task: Makes decisions about messages, manages routing, and interfaces with applications
-- Slot Manager Task: Handles timing and synchronization, determines when actions should occur
-- Radio Event Handler Task: Interfaces with the physical radio, processes radio events
-
-# Known Issues and Future Work
-
-## Network Synchronization
-- **Network merge handling**: What happens when two independent networks discover each other? Need a process to decide which network is primary and which should merge.
-- **Concurrent discovery**: What happens if two devices start their discovery process simultaneously?
-
-## Routing Table
-- **Update validation**: Currently, routing table updates from devices outside the network are not accepted. This behavior should be documented and verified.
-- **Table order verification**: The order of the routing table entries should be carefully verified to prevent potential synchronization issues.
-- **Distributed message routing**: Consider implementing an inverse routing table order to better distribute messages up and down the network hierarchy. This requires careful implementation to avoid complete desynchronization.
-- **Route uptade callback**: Should be a class with types, easy to modify, not only parameters.
-
-## Sync Beacon Management
-- **Multi-device sync beacons**: How to manage sync beacons across multiple devices? Consider implementing a dedicated sync beacon TX slot for each device.
-- **Network manager synchronization**: Clarify the sync beacon transmission responsibilities when nodes are in Network Manager state.
-
-## Future Enhancements
-- **Message types**: Define comprehensive set of message types and their required fields, particularly for routing table updates.
-- **Load balancing**: Implement better distribution of network traffic across nodes.
-- **Discovery time**: Discovery Time should be calculated depending on the superframe duration of the devices. Maybe it should be an option to not stop the discovery until finding a network if known that an existing network exists. Then a Create network straight forward should be added.
-- **Fix function**: CreateRoutingTableMessage() in networ_service.cpp there is 3 loops there, you can do better.
-
-
-- Be aware if slot time is changed, discovery and join timeouts should be carefully changed too.
-- When receiving control packets, if they change the topology, we could change the slot table acordingly without changing the length of it. It happens that the RX/TX slots needs >+1 superframe to align to other slots when joining a new network. 
-
-**IMPORTANT**
-- When reasingin a a join request do not reassing a CTR Slot. We need to get track of these CTR SLOTS
-- Each node currently computes the number of control slots independently using max(routing_table.size(), my_control_slot_index_ + 1). This leads to inconsistencies when nodes have different routing table views (e.g., 0x1003 computed 5 control slots for a 4-node network because its assigned index was inflated by re-join). The NM is the authoritative source for network topology — adding node_count to the sync beacon ensures all nodes agree on the slot frame structure.
-
-- Loop message prevention for all the messages.
-- Sync beacon should be optimized.
-
-## Ideas
-
-- Delta scripting
-- Rateless Coding
+MIT — see [LICENSE](LICENSE).
