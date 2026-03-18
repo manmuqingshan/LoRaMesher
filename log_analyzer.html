@@ -439,6 +439,10 @@
         .file-list {
             margin: 15px 0;
         }
+        #nodeFilterList {
+            max-height: 200px;
+            overflow-y: auto;
+        }
         .file-item {
             display: flex;
             align-items: center;
@@ -1507,8 +1511,8 @@
                     fileData.messages.map(m => m.timestamp)
                 );
                 if (allTimestamps.length > 0) {
-                    fileData.timeRange.start = Math.min(...allTimestamps);
-                    fileData.timeRange.end = Math.max(...allTimestamps);
+                    fileData.timeRange.start = allTimestamps.reduce((a, b) => a < b ? a : b);
+                    fileData.timeRange.end   = allTimestamps.reduce((a, b) => a > b ? a : b);
                 }
             }
 
@@ -1867,8 +1871,8 @@
 
                 // Calculate global time range
                 if (allTimestamps.length > 0) {
-                    this.timeRange.start = Math.min(...allTimestamps);
-                    this.timeRange.end = Math.max(...allTimestamps);
+                    this.timeRange.start = allTimestamps.reduce((a, b) => a < b ? a : b);
+                    this.timeRange.end   = allTimestamps.reduce((a, b) => a > b ? a : b);
 
                     // Set base timestamp for readable format
                     if (this.baseTimestamp === 0) {
@@ -1881,10 +1885,8 @@
                 this.events.sort((a, b) => a.timestamp - b.timestamp);
                 this.routingEntries.sort((a, b) => a.timestamp - b.timestamp);
 
-                // Remove stale hidden node entries for nodes that no longer exist
-                this.hiddenNodes.forEach(id => {
-                    if (!this.nodes.has(id)) this.hiddenNodes.delete(id);
-                });
+                // Reset visibility on every fresh aggregation so all nodes start visible
+                this.hiddenNodes.clear();
 
                 // Build per-node indexed slot/message arrays for fast canvas rendering
                 this.nodes.forEach((node, nodeId) => {
