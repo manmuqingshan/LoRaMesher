@@ -116,5 +116,54 @@ TEST_F(RadioConfigCoverageTest, ValidateMultipleErrors) {
     }
 }
 
+TEST_F(RadioConfigCoverageTest, GetRadioTypeReturnsConfiguredType) {
+    RadioConfig sx1276 = RadioConfig::CreateDefaultSx1276();
+    EXPECT_EQ(sx1276.getRadioType(), RadioType::kSx1276);
+
+    RadioConfig sx1278 = RadioConfig::CreateDefaultSx1278();
+    EXPECT_EQ(sx1278.getRadioType(), RadioType::kSx1278);
+
+    RadioConfig sx1262 = RadioConfig::CreateDefaultSx1262();
+    EXPECT_EQ(sx1262.getRadioType(), RadioType::kSx1262);
+
+    RadioConfig mock(RadioType::kMockRadio, 869.9f, 7, 125.0f, 5, 17);
+    EXPECT_EQ(mock.getRadioType(), RadioType::kMockRadio);
+}
+
+TEST_F(RadioConfigCoverageTest, GetSyncWordReturnsConfiguredValue) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_EQ(c.getSyncWord(), 20U);
+
+    c.setSyncWord(0x34);
+    EXPECT_EQ(c.getSyncWord(), 0x34);
+}
+
+TEST_F(RadioConfigCoverageTest, GetCRCReturnsConfiguredValue) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_TRUE(c.getCRC());
+
+    c.setCRC(false);
+    EXPECT_FALSE(c.getCRC());
+
+    c.setCRC(true);
+    EXPECT_TRUE(c.getCRC());
+}
+
+TEST_F(RadioConfigCoverageTest, GetPreambleLengthReturnsConfiguredValue) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_EQ(c.getPreambleLength(), 8U);
+
+    c.setPreambleLength(16);
+    EXPECT_EQ(c.getPreambleLength(), 16U);
+}
+
+TEST_F(RadioConfigCoverageTest, SetRadioTypeChangesType) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_EQ(c.getRadioType(), RadioType::kSx1276);
+
+    c.setRadioType(RadioType::kSx1262);
+    EXPECT_EQ(c.getRadioType(), RadioType::kSx1262);
+}
+
 }  // namespace test
 }  // namespace loramesher

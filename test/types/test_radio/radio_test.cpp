@@ -93,6 +93,15 @@ TEST_F(RadioTest, StartReceiveSuccess) {
 //     EXPECT_TRUE(callback_called);
 // }
 
+TEST_F(RadioTest, SetLocalAddressDefaultImplementation) {
+    // IRadio::SetLocalAddress has a default no-op implementation.
+    // Call it through the mock (which inherits the default) to cover the line.
+    mock_radio_->IRadio::SetLocalAddress(0x1234);
+    mock_radio_->IRadio::SetLocalAddress(0x0000);
+    mock_radio_->IRadio::SetLocalAddress(0xFFFF);
+    // No crash or side effects expected
+}
+
 }  // namespace test
 }  // namespace radio
 }  // namespace loramesher

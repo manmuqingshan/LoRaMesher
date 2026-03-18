@@ -699,6 +699,21 @@ TEST_F(NetworkNodeRouteTest, UpdateCapabilitiesChangedReturnsTrue) {
     EXPECT_EQ(node_.routing_entry.capabilities, 0x0Fu);
 }
 
+// ---- GetCapabilities ----
+
+TEST_F(NetworkNodeRouteTest, GetCapabilities) {
+    // node_ was constructed with capabilities = 0x05
+    EXPECT_EQ(node_.GetCapabilities(), 0x05);
+
+    // Update and re-check
+    node_.UpdateCapabilities(0xFF, 10000);
+    EXPECT_EQ(node_.GetCapabilities(), 0xFF);
+
+    // Zero capabilities
+    node_.UpdateCapabilities(0x00, 10001);
+    EXPECT_EQ(node_.GetCapabilities(), 0x00);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols
