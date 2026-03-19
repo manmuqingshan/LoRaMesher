@@ -73,7 +73,7 @@ class NMElectionTests : public RoutingTestFixture {
         uint32_t superframe_ms = GetSuperframeDuration(*candidates.front());
         uint32_t timeout_ms = ElectionBudgetMs(superframe_ms);
         uint32_t slot_ms = GetSlotDuration(*candidates.front());
-        uint32_t step_ms = 50u;
+        uint32_t step_ms = 15u;
 
         uint32_t elapsed = 0;
         uint32_t print_every = superframe_ms * 2;  // Print every 2 superframes
@@ -234,7 +234,7 @@ TEST_F(NMElectionTests, NodeOnly_NeverElects) {
     uint32_t superframe_ms = GetSuperframeDuration(node2);
     uint32_t budget_ms = ElectionBudgetMs(superframe_ms);
     uint32_t slot_ms = GetSlotDuration(node2);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     AdvanceTime(budget_ms, 0, step_ms, 0);
 

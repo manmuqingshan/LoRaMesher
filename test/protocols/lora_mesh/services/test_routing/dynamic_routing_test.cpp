@@ -68,7 +68,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
     SetLinkStatus(*nodes[0], *nodes[2], false);
 
     auto superframe_time = GetSuperframeDuration(*nodes.front());
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     // Wait for routing tables to update
     // The route from N1 to N3 should now go through N2 or N4
@@ -155,7 +155,7 @@ TEST_F(DynamicRoutingTests, RouteRecoveryAfterNodeReconnect) {
     SimulateNodeFailure(*nodes[1]);
 
     auto superframe_time = GetSuperframeDuration(*nodes.front());
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     // Wait for route to be marked inactive or removed
     // Note: This may take up to route_timeout_ms
@@ -346,7 +346,7 @@ TEST_F(DynamicRoutingTests, BroadcastToAllNodes) {
         << "Failed to send broadcast message";
 
     // Wait for broadcast to propagate
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
     bool all_received = AdvanceTime(10000, 15000, step_ms, 0, [&]() {
         for (size_t i = 1; i < nodes.size(); i++) {
             if (!HasReceivedMessageFrom(*nodes[i], nodes[0]->address,

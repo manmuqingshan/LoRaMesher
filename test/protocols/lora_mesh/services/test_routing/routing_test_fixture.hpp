@@ -37,7 +37,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
         uint32_t timeout_ms =
             GetDiscoveryTimeout(*nodes.front()) * (nodes.size() + 5);
 
-        uint32_t step_ms = 50u;
+        uint32_t step_ms = 15u;
         uint32_t end_superframe_time = 0;
         return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             // Check if all nodes have discovered all other nodes
@@ -80,7 +80,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
         uint32_t timeout_ms =
             GetDiscoveryTimeout(*nodes.front()) * (nodes.size() + 5);
 
-        uint32_t step_ms = 50u;
+        uint32_t step_ms = 15u;
         uint32_t end_superframe_time = 0;
         return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             for (auto* node : nodes) {
@@ -129,7 +129,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
             GetDiscoveryTimeout(*nodes.front()) * (nodes.size() + 5);
         AddressType center_addr = nodes[center_index]->address;
 
-        uint32_t step_ms = 50u;
+        uint32_t step_ms = 15u;
         uint32_t end_superframe_time = 0;
         return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             for (size_t i = 0; i < nodes.size(); i++) {

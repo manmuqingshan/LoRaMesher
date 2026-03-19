@@ -94,7 +94,7 @@ class NMMergeTests : public RoutingTestFixture {
         uint32_t discovery_ms = GetDiscoveryTimeout(ref);
         uint32_t budget_ms = MergeBudgetMs(superframe_ms, discovery_ms);
         uint32_t slot_ms = GetSlotDuration(ref);
-        uint32_t step_ms = 50u;
+        uint32_t step_ms = 15u;
 
         int expected_normal = static_cast<int>(nodes.size()) - 1;
 

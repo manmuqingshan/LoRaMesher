@@ -48,7 +48,7 @@ TEST_F(RoutingLimitsTests, MaxHopCountEnforcement) {
     // Wait for routing tables to propagate
     // This may take longer due to the chain length
     auto superframe_time = GetSuperframeDuration(*nodes.front());
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     // Wait for routing tables to fill up
     AdvanceTime(superframe_time * 2, superframe_time * 2, step_ms, 0,
@@ -163,7 +163,7 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
         << "Routing stabilization failed for " << num_nodes << " nodes";
 
     auto superframe_time = GetSuperframeDuration(*nodes.front());
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     // Wait for routing tables to fill up
     AdvanceTime(superframe_time * 2, superframe_time * 2, step_ms, 0,
@@ -304,7 +304,7 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
     // Wait for route to expire
     // Add some buffer time beyond the timeout
     auto superframe_time = GetSuperframeDuration(*nodes[0]);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
     uint32_t wait_time = route_timeout_ms + superframe_time * 2 + 60000;
 
     std::cout << "Waiting " << wait_time << " ms for route to expire..."

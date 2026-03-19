@@ -67,7 +67,7 @@ TEST_F(BasicRoutingTests, DirectNeighborRouting) {
     ASSERT_TRUE(SendMessage(node1, node2, payload)) << "Failed to send message";
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     // Wait for message to be received
     bool received =
@@ -155,7 +155,7 @@ TEST_F(BasicRoutingTests, ThreeNodeChain) {
         << "Failed to send message";
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
 
     // Wait for message to be received
     bool received =

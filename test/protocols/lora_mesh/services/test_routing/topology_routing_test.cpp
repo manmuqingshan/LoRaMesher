@@ -85,7 +85,7 @@ TEST_F(TopologyRoutingTests, FourNodeLineTopology) {
                            << error_msg.GetErrorMessage();
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
     // Wait for message to be routed
     bool received =
         AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
@@ -164,7 +164,7 @@ TEST_F(TopologyRoutingTests, FullMeshFourNodes) {
     ASSERT_TRUE(SendMessage(*nodes[0], *nodes[3], payload));
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
     // Wait for message to be routed
     bool received =
         AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
@@ -254,7 +254,7 @@ TEST_F(TopologyRoutingTests, StarTopologyFiveNodes) {
     ASSERT_TRUE(SendMessage(*nodes[1], *nodes[4], payload));
 
     auto superframe_duration = GetSuperframeDuration(*nodes[0]);
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
     // Wait for message to be routed
     bool received =
         AdvanceTime(5000, superframe_duration * 5, step_ms, 0, [&]() {
@@ -304,7 +304,7 @@ TEST_F(TopologyRoutingTests, RingTopologyFiveNodes) {
     // Distance-vector needs additional rounds to converge to shorter paths.
     // With min_sleep_fraction each superframe is longer, so allow 2 extra.
     auto superframe_ms = GetSuperframeDuration(*nodes.front());
-    uint32_t step_ms = 50u;
+    uint32_t step_ms = 15u;
     AdvanceTime(superframe_ms * 2, superframe_ms * 2, step_ms, 0,
                 [&]() { return false; });
 
