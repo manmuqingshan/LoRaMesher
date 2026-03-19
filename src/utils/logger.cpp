@@ -40,10 +40,6 @@ void Logger::EnsureSemaphoreInitialized() {
         // Use SYSTEM semaphore - logging is infrastructure, not part of simulation
         // System semaphores always use real-time and bypass virtual time mode
         logger_semaphore_ = GetRTOS().CreateSystemSemaphore();
-        if (logger_semaphore_) {
-            // Initialize semaphore as "given" so it can be taken for first use
-            GetRTOS().GiveSystemSemaphore(logger_semaphore_);
-        }
     }
 }
 

@@ -330,7 +330,10 @@ class RTOSFreeRTOS : public RTOS {
      * @return Handle to the created system semaphore
      */
     SemaphoreHandle_t CreateSystemSemaphore() override {
-        return CreateBinarySemaphore();
+        SemaphoreHandle_t semaphore = CreateBinarySemaphore();
+
+        GiveSystemSemaphore(semaphore);
+        return semaphore;
     }
 
     /**
