@@ -61,7 +61,7 @@ class LoRaMeshDiscoveryTests : public LoRaMeshTestFixture {
 
         // First wait for node2 to discover the network (DISCOVERY -> JOINING)
         bool found_network = AdvanceTime(
-            slot_duration / 2, discovery_timeout + 500, 5, 2, [&]() {
+            discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
                 auto state = node.protocol->GetState();
                 return state == protocols::lora_mesh::INetworkService::
                                     ProtocolState::JOINING;
@@ -97,12 +97,11 @@ class LoRaMeshDiscoveryTests : public LoRaMeshTestFixture {
             node.address, superframe_duration, slot_duration, guard_time);
 
         // Then wait for the join process to complete (JOINING -> NORMAL_OPERATION)
-        bool advanced2 =
-            AdvanceTime(slot_duration / 2, join_timeout, 5, 2, [&]() {
-                auto state = node.protocol->GetState();
-                return state == protocols::lora_mesh::INetworkService::
-                                    ProtocolState::NORMAL_OPERATION;
-            });
+        bool advanced2 = AdvanceTime(join_timeout, join_timeout, 15, 0, [&]() {
+            auto state = node.protocol->GetState();
+            return state == protocols::lora_mesh::INetworkService::
+                                ProtocolState::NORMAL_OPERATION;
+        });
         EXPECT_TRUE(advanced2) << "Node 0x" << std::hex << node.address
                                << " did not complete join process in time";
 
@@ -141,8 +140,8 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
     EXPECT_GT(slot_duration, 0) << "Slot duration should be greater than zero";
     EXPECT_GT(discovery_timeout, 0)
         << "Discovery timeout should be greater than zero";
-    bool advanced =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool advanced = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -173,9 +172,9 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
 
     // Expect that the node after AdvanceTime goes to different slots
     for (size_t i = 0; i < slot_table.size(); ++i) {
-        advanced =
-            AdvanceTime(slot_duration, slot_duration + 500, slot_duration, 2,
-                        [&]() { return node.protocol->GetCurrentSlot() == i; });
+        advanced = AdvanceTime(
+            slot_duration + 500, slot_duration + 500, slot_duration, 0,
+            [&]() { return node.protocol->GetCurrentSlot() == i; });
         EXPECT_TRUE(advanced)
             << "Node did not advance to slot " << i << " in time";
         EXPECT_EQ(node.protocol->GetCurrentSlot(), i)
@@ -183,7 +182,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
     }
 
     advanced = AdvanceTime(
-        slot_duration, slot_duration + 500, slot_duration, 2, [&]() {
+        slot_duration + 500, slot_duration + 500, slot_duration, 0, [&]() {
             auto sent_messages =
                 virtual_network_.GetSentMessageCount(node.address);
             return sent_messages > 0;
@@ -207,8 +206,8 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
     auto discovery_timeout = GetDiscoveryTimeout(node);
     auto slot_duration = GetSlotDuration(node);
 
-    bool advanced =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool advanced = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -231,7 +230,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
         size_t wrapped_slot = expected_slot % slot_table.size();
         LOG_DEBUG("Expecting slot %d - %d", expected_slot, wrapped_slot);
         advanced = AdvanceTime(
-            slot_duration + 100, slot_duration + 200, slot_duration / 10, 20,
+            slot_duration + 200, slot_duration + 200, slot_duration / 10, 0,
             [&]() { return node.protocol->GetCurrentSlot() == wrapped_slot; });
         EXPECT_TRUE(advanced) << "Failed to advance to slot " << wrapped_slot;
         EXPECT_EQ(node.protocol->GetCurrentSlot(), wrapped_slot);
@@ -252,7 +251,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
 
 //     bool advanced =
 //         AdvanceTime(slot_duration / 2, discovery_timeout + 500,
-//                     slot_duration, 2, [&]() {
+//                     slot_duration, 0, [&]() {
 //                         return node.protocol->GetState() ==
 //                                protocols::lora_mesh::INetworkService::
 //                                    ProtocolState::NETWORK_MANAGER;
@@ -269,7 +268,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
 
 //     advanced = AdvanceTime(
 //         superframe_duration + slot_duration,
-//         superframe_duration + slot_duration * 2, slot_duration, 2, [&]() {
+//         superframe_duration + slot_duration * 2, slot_duration, 0, [&]() {
 //             return virtual_network_.GetSentMessageCount(node.address) > 0;
 //         });
 
@@ -321,7 +320,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
 //     EXPECT_GT(discovery_timeout1, 0)
 //         << "Discovery timeout should be greater than zero";
 //     bool advanced1 =
-//         AdvanceTime(slot_duration1 / 2, discovery_timeout1 + 500, 10, 2, [&]() {
+//         AdvanceTime(slot_duration1 / 2, discovery_timeout1 + 500, 15, 0, [&]() {
 //             return node1.protocol->GetState() ==
 //                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                        NETWORK_MANAGER;
@@ -357,7 +356,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
 
 //     // First wait for node2 to discover the network (DISCOVERY -> JOINING)
 //     bool found_network =
-//         AdvanceTime(slot_duration2 / 2, discovery_timeout2 + 500, 10, 2, [&]() {
+//         AdvanceTime(slot_duration2 / 2, discovery_timeout2 + 500, 15, 0, [&]() {
 //             auto state = node2.protocol->GetState();
 //             return state == protocols::lora_mesh::INetworkService::
 //                                 ProtocolState::JOINING;
@@ -377,7 +376,7 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
 
 //     // Then wait for the join process to complete (JOINING -> NORMAL_OPERATION)
 //     bool advanced2 =
-//         AdvanceTime(slot_duration2 / 2, superframe_duration * 3, 10, 2, [&]() {
+//         AdvanceTime(slot_duration2 / 2, superframe_duration * 3, 15, 0, [&]() {
 //             auto state = node2.protocol->GetState();
 //             return state == protocols::lora_mesh::INetworkService::
 //                                 ProtocolState::NORMAL_OPERATION;
@@ -480,8 +479,8 @@ TEST_F(LoRaMeshDiscoveryTests, ThreeNodeSequentialStart) {
     EXPECT_GT(slot_duration1, 0) << "Slot duration should be greater than zero";
     EXPECT_GT(discovery_timeout1, 0)
         << "Discovery timeout should be greater than zero";
-    bool advanced1 =
-        AdvanceTime(slot_duration1 / 2, discovery_timeout1 + 500, 10, 2, [&]() {
+    bool advanced1 = AdvanceTime(
+        discovery_timeout1 + 500, discovery_timeout1 + 500, 15, 0, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;

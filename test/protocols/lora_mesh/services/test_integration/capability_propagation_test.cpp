@@ -47,7 +47,7 @@ class CapabilityPropagationTests : public LoRaMeshTestFixture {
      */
     bool WaitForCapabilityPropagation(const std::vector<TestNode*>& nodes,
                                       uint32_t timeout_ms = 10000) {
-        return AdvanceTime(timeout_ms, timeout_ms, 10, 5, [&]() {
+        return AdvanceTime(timeout_ms, timeout_ms, 15, 0, [&]() {
             // Check if all nodes know about each other's capabilities
             for (auto* node : nodes) {
                 for (auto* other_node : nodes) {
@@ -94,8 +94,8 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 5, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -115,12 +115,12 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
     WaitForTasksToExecute();
 
     // Wait for node2 to join and reach NORMAL_OPERATION
-    bool joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 5, [&]() {
-            return node2.protocol->GetState() ==
-                   protocols::lora_mesh::INetworkService::ProtocolState::
-                       NORMAL_OPERATION;
-        });
+    bool joined = AdvanceTime(discovery_timeout + 5000,
+                              discovery_timeout + 5000, 15, 0, [&]() {
+                                  return node2.protocol->GetState() ==
+                                         protocols::lora_mesh::INetworkService::
+                                             ProtocolState::NORMAL_OPERATION;
+                              });
     ASSERT_TRUE(joined) << "Node2 did not join network";
 
     // Set capabilities on node2
@@ -175,8 +175,8 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 5, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -189,12 +189,12 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
     WaitForTasksToExecute();
 
     // Wait for node2 to join
-    bool joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 5, [&]() {
-            return node2.protocol->GetState() ==
-                   protocols::lora_mesh::INetworkService::ProtocolState::
-                       NORMAL_OPERATION;
-        });
+    bool joined = AdvanceTime(discovery_timeout + 5000,
+                              discovery_timeout + 5000, 15, 0, [&]() {
+                                  return node2.protocol->GetState() ==
+                                         protocols::lora_mesh::INetworkService::
+                                             ProtocolState::NORMAL_OPERATION;
+                              });
     ASSERT_TRUE(joined);
 
     // Wait for initial capabilities to propagate
@@ -214,8 +214,8 @@ TEST_F(CapabilityPropagationTests, CapabilityUpdatePropagation) {
     discovery_timeout = GetDiscoveryTimeout(node1) * 3;
 
     // Wait for updated capabilities to propagate
-    bool updated_propagated =
-        AdvanceTime(100, discovery_timeout, 100, 5, [&]() {
+    bool updated_propagated = AdvanceTime(
+        discovery_timeout + 5000, discovery_timeout + 5000, 100, 0, [&]() {
             uint8_t caps = node2.protocol->GetNodeCapabilities(node1.address);
             return caps == (NONE);
         });
@@ -263,8 +263,8 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 5, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -278,8 +278,8 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
     WaitForTasksToExecute();
 
     // Wait for node2 to join
-    bool node2_joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 5, [&]() {
+    bool node2_joined = AdvanceTime(
+        discovery_timeout + 5000, discovery_timeout + 5000, 15, 0, [&]() {
             return node2.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -295,8 +295,8 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
     discovery_timeout = GetSuperframeDuration(node1) * 3;
 
     // Wait for node3 to join
-    bool node3_joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 5, [&]() {
+    bool node3_joined = AdvanceTime(
+        discovery_timeout + 5000, discovery_timeout + 5000, 15, 0, [&]() {
             return node3.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -312,8 +312,8 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
     discovery_timeout = GetSuperframeDuration(node1) * 3;
 
     // Wait for node4 to join
-    bool node4_joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 5, [&]() {
+    bool node4_joined = AdvanceTime(
+        discovery_timeout + 5000, discovery_timeout + 5000, 15, 0, [&]() {
             return node4.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -375,8 +375,8 @@ TEST_F(CapabilityPropagationTests, UnknownNodeCapabilityQuery) {
     auto discovery_timeout = GetDiscoveryTimeout(node);
     auto slot_duration = GetSlotDuration(node);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 5, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;

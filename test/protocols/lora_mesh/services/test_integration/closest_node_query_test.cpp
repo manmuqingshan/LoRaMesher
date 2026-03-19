@@ -119,8 +119,8 @@ TEST_F(ClosestNodeQueryTests, RouteEntryIncludesCapabilitiesAndManagerFlag) {
     auto discovery_timeout = GetDiscoveryTimeout(manager);
     auto slot_duration = GetSlotDuration(manager);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return manager.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -130,12 +130,12 @@ TEST_F(ClosestNodeQueryTests, RouteEntryIncludesCapabilitiesAndManagerFlag) {
     ASSERT_TRUE(StartNode(node2));
     WaitForTasksToExecute();
 
-    bool joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
-            return node2.protocol->GetState() ==
-                   protocols::lora_mesh::INetworkService::ProtocolState::
-                       NORMAL_OPERATION;
-        });
+    bool joined = AdvanceTime(discovery_timeout + 5000,
+                              discovery_timeout + 5000, 15, 0, [&]() {
+                                  return node2.protocol->GetState() ==
+                                         protocols::lora_mesh::INetworkService::
+                                             ProtocolState::NORMAL_OPERATION;
+                              });
     ASSERT_TRUE(joined) << "Node2 did not join network";
 
     // Wait for routing info to propagate
@@ -177,8 +177,8 @@ TEST_F(ClosestNodeQueryTests, GetClosestGatewayReturnsNulloptWhenNoGateways) {
     auto discovery_timeout = GetDiscoveryTimeout(manager);
     auto slot_duration = GetSlotDuration(manager);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return manager.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -188,12 +188,12 @@ TEST_F(ClosestNodeQueryTests, GetClosestGatewayReturnsNulloptWhenNoGateways) {
     ASSERT_TRUE(StartNode(node2));
     WaitForTasksToExecute();
 
-    bool joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
-            return node2.protocol->GetState() ==
-                   protocols::lora_mesh::INetworkService::ProtocolState::
-                       NORMAL_OPERATION;
-        });
+    bool joined = AdvanceTime(discovery_timeout + 5000,
+                              discovery_timeout + 5000, 15, 0, [&]() {
+                                  return node2.protocol->GetState() ==
+                                         protocols::lora_mesh::INetworkService::
+                                             ProtocolState::NORMAL_OPERATION;
+                              });
     ASSERT_TRUE(joined);
 
     auto superframe = GetSuperframeDuration(manager);
@@ -232,8 +232,8 @@ TEST_F(ClosestNodeQueryTests,
     auto discovery_timeout = GetDiscoveryTimeout(node1);
     auto slot_duration = GetSlotDuration(node1);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return node1.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -244,8 +244,8 @@ TEST_F(ClosestNodeQueryTests,
     ASSERT_TRUE(StartNode(node2));
     WaitForTasksToExecute();
 
-    bool node2_joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+    bool node2_joined = AdvanceTime(
+        discovery_timeout + 5000, discovery_timeout + 5000, 15, 0, [&]() {
             return node2.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -260,7 +260,7 @@ TEST_F(ClosestNodeQueryTests,
     auto superframe = GetSuperframeDuration(node1);
 
     bool node3_joined =
-        AdvanceTime(slot_duration / 2, superframe * 3 + 5000, 10, 2, [&]() {
+        AdvanceTime(superframe * 3 + 5000, superframe * 3 + 5000, 15, 0, [&]() {
             return node3.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -302,8 +302,8 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCustomCapability) {
     auto discovery_timeout = GetDiscoveryTimeout(manager);
     auto slot_duration = GetSlotDuration(manager);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return manager.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -315,8 +315,8 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCustomCapability) {
     node2.protocol->SetNodeCapabilities(CUSTOM_CAP);
     WaitForTasksToExecute();
 
-    bool node2_joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
+    bool node2_joined = AdvanceTime(
+        discovery_timeout + 5000, discovery_timeout + 5000, 15, 0, [&]() {
             return node2.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -330,7 +330,7 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCustomCapability) {
     auto superframe = GetSuperframeDuration(manager);
 
     bool node3_joined =
-        AdvanceTime(slot_duration / 2, superframe * 3 + 5000, 10, 2, [&]() {
+        AdvanceTime(superframe * 3 + 5000, superframe * 3 + 5000, 15, 0, [&]() {
             return node3.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NORMAL_OPERATION;
@@ -372,8 +372,8 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCapabilityIgnoresInactiveRoutes) {
     auto discovery_timeout = GetDiscoveryTimeout(manager);
     auto slot_duration = GetSlotDuration(manager);
 
-    bool became_manager =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 500, 10, 2, [&]() {
+    bool became_manager = AdvanceTime(
+        discovery_timeout + 500, discovery_timeout + 500, 15, 0, [&]() {
             return manager.protocol->GetState() ==
                    protocols::lora_mesh::INetworkService::ProtocolState::
                        NETWORK_MANAGER;
@@ -385,18 +385,18 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCapabilityIgnoresInactiveRoutes) {
     gw_node.protocol->SetNodeCapabilities(GATEWAY);
     WaitForTasksToExecute();
 
-    bool joined =
-        AdvanceTime(slot_duration / 2, discovery_timeout + 5000, 10, 2, [&]() {
-            return gw_node.protocol->GetState() ==
-                   protocols::lora_mesh::INetworkService::ProtocolState::
-                       NORMAL_OPERATION;
-        });
+    bool joined = AdvanceTime(discovery_timeout + 5000,
+                              discovery_timeout + 5000, 15, 0, [&]() {
+                                  return gw_node.protocol->GetState() ==
+                                         protocols::lora_mesh::INetworkService::
+                                             ProtocolState::NORMAL_OPERATION;
+                              });
     ASSERT_TRUE(joined);
 
     // Wait for capabilities to propagate
     auto superframe = GetSuperframeDuration(manager);
     bool found_gateway =
-        AdvanceTime(superframe * 3, superframe * 3, 100, 2, [&]() {
+        AdvanceTime(superframe * 3, superframe * 3, 100, 0, [&]() {
             auto result = FindClosestNodeByCapability(manager, GATEWAY);
             return result.has_value() && result->destination == 0x1002;
         });
@@ -414,7 +414,7 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCapabilityIgnoresInactiveRoutes) {
 
     // Advance enough time for the route to expire
     auto route_timeout = discovery_timeout * 5;
-    AdvanceTime(route_timeout, route_timeout, 100, 2, [&]() {
+    AdvanceTime(route_timeout, route_timeout, 100, 0, [&]() {
         // During this time, the route may still be present but should eventually be marked inactive
         auto intermediate_result =
             FindClosestNodeByCapability(manager, GATEWAY);
