@@ -44,7 +44,7 @@ class SuperframeServiceLifecycleTest : public ::testing::Test {
     void TearDown() override {
         // Clean up resources
         if (service_) {
-            if (service_->IsSynchronized()) {
+            if (service_->IsRunning()) {
                 service_->StopSuperframe();
             }
             service_.reset();
@@ -204,7 +204,7 @@ class SuperframeServiceSynchronizeWithTest : public ::testing::Test {
 
     void TearDown() override {
         if (service_) {
-            if (service_->IsSynchronized()) {
+            if (service_->IsRunning()) {
                 service_->StopSuperframe();
             }
             service_.reset();
@@ -1434,7 +1434,7 @@ class SuperframeServiceCoverageTest : public ::testing::Test {
 
     void TearDown() override {
         if (service_) {
-            if (service_->IsSynchronized()) {
+            if (service_->IsRunning()) {
                 service_->StopSuperframe();
             }
             service_.reset();
