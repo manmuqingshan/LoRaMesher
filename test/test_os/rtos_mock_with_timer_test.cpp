@@ -507,6 +507,58 @@ TEST_F(RTOSMockTimeTest, ForceKillSleepingTask) {
     EXPECT_FALSE(state->taskCompleted);
 }
 
+TEST_F(RTOSMockTimeTest, WaitForTasksReblocksAfterQueueDataArrives) {
+    auto q = CreateTrackedQueue(5, sizeof(int));
+
+    struct State {
+        std::atomic<int> received{-1};
+        std::atomic<bool> entered_receive{false};
+    };
+
+    auto state = std::make_shared<State>();
+
+    auto* p =
+        new std::pair<os::QueueHandle_t, std::shared_ptr<State>>(q, state);
+    taskParameterCleanup_.push_back([p] { delete p; });
+
+    os::TaskHandle_t task = nullptr;
+    rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<
+                std::pair<os::QueueHandle_t, std::shared_ptr<State>>*>(param);
+            int v = 0;
+            s->second->entered_receive = true;
+            if (GetRTOS().ReceiveFromQueue(s->first, &v, 5000) ==
+                os::QueueResult::kOk)
+                s->second->received = v;
+            // Keep task alive so TearDown can DeleteTask cleanly
+            while (true)
+                GetRTOS().delay(100000);
+        },
+        "Receiver", 2048, p, 1, &task);
+    taskHandles_.push_back(task);
+
+    // Wait for task to enter ReceiveFromQueue and block on the empty queue
+    uint32_t attempts = 0;
+    while (!state->entered_receive && attempts++ < 50)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_TRUE(state->entered_receive);
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(20));  // let it reach waitFor
+
+    // Send data while task is blocked — notify_one fires but task not scheduled yet
+    int data = 42;
+    rtos_->SendToQueue(q, &data, 0);
+
+    // With fix: waits until task processes the message (pending_queue_items_ → 0)
+    // Without fix: returns immediately (queue_cv_count_ > 0 → "blocked") before task runs
+    rtosMock_->waitForTasksToReblock(100);
+
+    EXPECT_EQ(42, state->received.load())
+        << "Task had not processed queue data before waitForTasksToReblock "
+           "returned";
+}
+
 }  // namespace test
 }  // namespace loramesher
 
