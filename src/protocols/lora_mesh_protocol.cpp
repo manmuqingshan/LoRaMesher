@@ -181,7 +181,8 @@ Result LoRaMeshProtocol::Init(
     // protocol processing (e.g. subslot delay + radio TX ~900ms).
     superframe_service_->SetSuperframeCallback(
         [this](uint16_t slot, bool new_superframe) {
-            SlotTransitionData data{slot, new_superframe};
+            SlotTransitionData data{slot, new_superframe,
+                                    superframe_service_->GetTimeInSlot()};
             GetRTOS().SendToQueue(slot_transition_queue_, &data, 0);
             NotifyProtocolTask(ProtocolNotificationType::SLOT_TRANSITION);
         });
@@ -702,6 +703,8 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     while (rtos.ReceiveFromQueue(
                                protocol->slot_transition_queue_, &data, 0) ==
                            os::QueueResult::kOk) {
+                        protocol->current_slot_arrival_time_ms_ =
+                            data.arrival_time_ms;
                         protocol->OnSlotTransition(data.slot,
                                                    data.new_superframe);
                     }
@@ -1014,8 +1017,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 // Skip TX if the slot callback arrived too late to complete
                 // transmission before the slot boundary.
                 {
-                    uint32_t time_in_slot =
-                        superframe_service_->GetTimeInSlot();
+                    uint32_t time_in_slot = current_slot_arrival_time_ms_;
                     uint32_t slot_duration =
                         superframe_service_->GetSlotDuration();
                     if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
@@ -1112,8 +1114,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 // transmission before the slot boundary. Radio is already in
                 // kReceive from above, so it is safe to bail out here.
                 {
-                    uint32_t time_in_slot =
-                        superframe_service_->GetTimeInSlot();
+                    uint32_t time_in_slot = current_slot_arrival_time_ms_;
                     uint32_t slot_duration =
                         superframe_service_->GetSlotDuration();
                     if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
@@ -1178,8 +1179,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 // Skip TX if the slot callback arrived too late to complete
                 // transmission before the slot boundary.
                 {
-                    uint32_t time_in_slot =
-                        superframe_service_->GetTimeInSlot();
+                    uint32_t time_in_slot = current_slot_arrival_time_ms_;
                     uint32_t slot_duration =
                         superframe_service_->GetSlotDuration();
                     if (time_in_slot + kLateArrivalMarginMs > slot_duration) {

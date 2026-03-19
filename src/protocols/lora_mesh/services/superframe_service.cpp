@@ -120,7 +120,7 @@ Result SuperframeService::StartSuperframe() {
     }
 
     LOG_INFO("Superframe service started - %d slots, %dms per slot",
-             total_slots_, slot_duration_ms_);
+             total_slots_.load(), slot_duration_ms_.load());
 
     // Notify update task that superframe has started
     // NotifyUpdateTask(SuperframeNotificationType::STARTED);
@@ -456,7 +456,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     LOG_DEBUG("[TIMING_SYNC]   elapsed_time: %u ms", elapsed_time);
     LOG_DEBUG("[TIMING_SYNC]   current_time: %u ms", current_time);
     LOG_DEBUG("[TIMING_SYNC]   old_superframe_start: %u ms",
-              superframe_start_time_);
+              superframe_start_time_.load());
 
     // Check for potential underflow
     if (elapsed_time > external_slot_start_time) {

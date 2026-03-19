@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -76,6 +77,8 @@ class SuperframeService : public ISuperframeService {
     Result DoNotUpdateStartTimeOnNewSuperframe() override;
 
     bool IsSynchronized() const override;
+
+    bool IsRunning() const { return is_running_; }
 
     void SetSynchronized(bool synchronized) override;
 
@@ -388,10 +391,11 @@ class SuperframeService : public ISuperframeService {
      */
     void NotifyUpdateTask(SuperframeNotificationType notification_type);
 
-    uint16_t total_slots_ = 16;  ///< Total number of slots in the superframe
-    uint32_t slot_duration_ms_ =
+    std::atomic<uint16_t> total_slots_ =
+        16;  ///< Total number of slots in the superframe
+    std::atomic<uint32_t> slot_duration_ms_ =
         1000;  ///< Duration of each slot in milliseconds
-    uint32_t superframe_start_time_ =
+    std::atomic<uint32_t> superframe_start_time_ =
         0;                       ///< Start time of current superframe cycle
     uint16_t node_address_ = 0;  ///< Node address for logging context
 
@@ -400,7 +404,7 @@ class SuperframeService : public ISuperframeService {
     /// Default 5000ms provides sufficient spread for nodes starting within 1-10s.
     uint32_t discovery_jitter_max_ms_ = 5000;
 
-    bool is_running_;
+    std::atomic<bool> is_running_;
     bool is_synchronized_;
     bool auto_advance_ = true;
     bool update_start_time_in_new_superframe =
