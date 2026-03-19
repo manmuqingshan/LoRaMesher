@@ -722,7 +722,11 @@ class VirtualTimeController {
         // LOG_DEBUG("Advancing time by %u ms", time_ms);
         current_time_ += time_ms;
 
+        ProcessTimeDependentEvents();
+
 #ifdef LORAMESHER_BUILD_NATIVE
+        network_.AdvanceTime(time_ms);
+
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
 
         if (rtos_mock) {
@@ -730,19 +734,9 @@ class VirtualTimeController {
         } else {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
-
-        bool messages_delivered = network_.AdvanceTime(time_ms);
-        if (messages_delivered) {
-            // Give protocol tasks time to process delivered messages through the
-            // full pipeline (radio ISR → protocol stack → application callback).
-            // WaitForNotify-blocked tasks are not detected by waitForTasksToReblock,
-            // so a brief sleep guarantees the pipeline completes before advancing time.
-            std::this_thread::sleep_for(std::chrono::milliseconds(3));
-        }
 #else
         network_.AdvanceTime(time_ms);
 #endif  // LORAMESHER_BUILD_NATIVE
-        ProcessTimeDependentEvents();
     }
 
     /**
@@ -840,6 +834,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         // Set up packet data storage
         EXPECT_CALL(*radio_, getPacketLength())
             .WillRepeatedly(testing::Invoke([this]() -> size_t {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
                 if (message_queue_.empty()) {
                     LOG_ERROR(
                         "MockRadio: getPacketLength() - No messages "
@@ -857,6 +852,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
 
         EXPECT_CALL(*radio_, getRSSI())
             .WillRepeatedly(testing::Invoke([this]() -> int8_t {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
                 if (message_queue_.empty()) {
                     return -100;  // Default RSSI value when no message
                 }
@@ -865,6 +861,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
 
         EXPECT_CALL(*radio_, getSNR())
             .WillRepeatedly(testing::Invoke([this]() -> int8_t {
+                std::lock_guard<std::mutex> lock(queue_mutex_);
                 if (message_queue_.empty()) {
                     return 0;  // Default SNR value when no message
                 }
@@ -874,6 +871,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         EXPECT_CALL(*radio_, readData(testing::_, testing::_))
             .WillRepeatedly(
                 testing::Invoke([this](uint8_t* data, size_t len) -> Result {
+                    std::lock_guard<std::mutex> lock(queue_mutex_);
                     if (message_queue_.empty()) {
                         LOG_ERROR("MockRadio: readData() - No data received",
                                   address_);
@@ -971,8 +969,11 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         original_callback_ = nullptr;
 
         // Clear message queue to prevent access after destruction
-        while (!message_queue_.empty()) {
-            message_queue_.pop();
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            while (!message_queue_.empty()) {
+                message_queue_.pop();
+            }
         }
 
         // Unregister from network
@@ -986,10 +987,12 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         msg.data = data;
         msg.rssi = rssi;
         msg.snr = snr;
-        message_queue_.push(msg);
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            message_queue_.push(msg);
+        }
 
-        LOG_DEBUG("RadioToNetworkAdapter: Received message, queue size: %zu",
-                  address_, message_queue_.size());
+        LOG_DEBUG("RadioToNetworkAdapter: Received message", address_);
 
         // Use instance-aware notification instead of static ISR callback
         LOG_DEBUG(
@@ -1005,6 +1008,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
          * @return true if radio is in receive mode, false otherwise
          */
     bool CanReceive() const override {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
         return current_radio_state_ ==
                    loramesher::radio::RadioState::kReceive &&
                message_queue_.empty();
@@ -1037,6 +1041,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
     VirtualNetwork& network_;
     AddressType address_;
     std::queue<QueuedMessage> message_queue_;
+    mutable std::mutex queue_mutex_;
     std::function<void()> original_callback_ = nullptr;  ///< Original callback
     loramesher::radio::RadioState current_radio_state_{
         loramesher::radio::RadioState::kIdle};  ///< Track current radio state
