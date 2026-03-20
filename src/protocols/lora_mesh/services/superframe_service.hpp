@@ -407,7 +407,7 @@ class SuperframeService : public ISuperframeService {
 
     std::atomic<bool> is_running_;
     bool is_synchronized_;
-    bool auto_advance_ = true;
+    std::atomic<bool> auto_advance_ = true;
     bool update_start_time_in_new_superframe =
         true;  ///< Flag to control start time updates
     std::atomic<bool> sync_in_progress_{
