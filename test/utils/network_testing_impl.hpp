@@ -171,6 +171,7 @@ class VirtualNetwork {
      */
     void UnregisterNode(uint32_t address) {
         nodes_.erase(address);
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         sent_messages_.erase(address);
     }
 
@@ -185,7 +186,10 @@ class VirtualNetwork {
     void TransmitMessage(uint32_t source, const std::vector<uint8_t>& data,
                          int8_t rssi = -65, int8_t snr = 8) {
         // Store the sent message for testing purposes
-        sent_messages_[source].push_back(data);
+        {
+            std::lock_guard<std::mutex> lock(sent_messages_mutex_);
+            sent_messages_[source].push_back(data);
+        }
 
         // Check if source exists
         if (nodes_.find(source) == nodes_.end()) {
@@ -246,6 +250,7 @@ class VirtualNetwork {
      */
     std::vector<std::vector<uint8_t>> GetSentMessages(
         uint32_t node_address) const {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             return it->second;
@@ -262,6 +267,7 @@ class VirtualNetwork {
      */
     std::vector<std::vector<uint8_t>> GetLastSentMessages(uint32_t node_address,
                                                           size_t count) const {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it == sent_messages_.end() || it->second.empty()) {
             return std::vector<std::vector<uint8_t>>();
@@ -285,7 +291,7 @@ class VirtualNetwork {
     std::vector<std::vector<uint8_t>> GetFilteredSentMessages(
         uint32_t node_address,
         std::function<bool(const std::vector<uint8_t>&)> filter) const {
-
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it == sent_messages_.end()) {
             return std::vector<std::vector<uint8_t>>();
@@ -307,6 +313,7 @@ class VirtualNetwork {
      * @param node_address Address of the node
      */
     void ClearSentMessages(uint32_t node_address) {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             it->second.clear();
@@ -316,15 +323,19 @@ class VirtualNetwork {
     /**
      * @brief Clear all sent messages for all nodes
      */
-    void ClearAllSentMessages() { sent_messages_.clear(); }
+    void ClearAllSentMessages() {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
+        sent_messages_.clear();
+    }
 
     /**
      * @brief Get the number of messages sent by a specific node
-     * 
+     *
      * @param node_address Address of the node
      * @return Number of messages sent by the node
      */
     size_t GetSentMessageCount(uint32_t node_address) const {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             return it->second.size();
@@ -465,6 +476,8 @@ class VirtualNetwork {
         pending_messages_mutex_;  ///< Mutex for thread-safe access to pending_messages_
     std::map<uint32_t, std::vector<std::vector<uint8_t>>>
         sent_messages_;  ///< Store sent messages per node
+    mutable std::mutex
+        sent_messages_mutex_;  ///< Mutex for thread-safe access to sent_messages_
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
@@ -696,9 +709,14 @@ class VirtualTimeController {
      * @brief Destructor
      */
     ~VirtualTimeController() {
-        if (instance_ == this) {
+        if (instance_ == this)
             instance_ = nullptr;
+#ifdef LORAMESHER_BUILD_NATIVE
+        os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+        if (rtos_mock) {
+            rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
         }
+#endif
     }
 
     /**
@@ -1043,7 +1061,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
     std::queue<QueuedMessage> message_queue_;
     mutable std::mutex queue_mutex_;
     std::function<void()> original_callback_ = nullptr;  ///< Original callback
-    loramesher::radio::RadioState current_radio_state_{
+    std::atomic<loramesher::radio::RadioState> current_radio_state_{
         loramesher::radio::RadioState::kIdle};  ///< Track current radio state
     RadioConfig radio_config_;  ///< Radio configuration for ToA calculations
 };
