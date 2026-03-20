@@ -1874,9 +1874,9 @@ Result NetworkService::UpdateSlotTable() {
 Result NetworkService::SetDiscoverySlots() {
     // Clear existing discovery slots
     allocated_discovery_slots_ =
-        ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+        std::max(ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT,
+                 static_cast<uint32_t>(slot_count_));
 
-    slot_count_ = 0;
     slot_count_ = static_cast<uint16_t>(allocated_discovery_slots_);
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
         SlotAllocation slot;
