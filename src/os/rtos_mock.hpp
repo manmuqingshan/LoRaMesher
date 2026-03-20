@@ -892,6 +892,13 @@ class RTOSMock : public RTOS {
             std::lock_guard<std::mutex> lock(cvToQueue_mutex_);
             cvToQueue_.erase(&q->notEmpty);
         }
+        {
+            std::lock_guard<std::mutex> lock(q->mutex);
+            int leftover = static_cast<int>(q->data.size());
+            if (leftover > 0)
+                pending_queue_items_.fetch_sub(leftover,
+                                               std::memory_order_relaxed);
+        }
         delete q;
     }
 
