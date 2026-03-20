@@ -838,10 +838,9 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         // Set the RadioLibRadio instance on the MockRadio for instance-aware notifications
         radio_->SetRadioLibInstance(radio_lib_instance);
         LOG_DEBUG(
-            "[0x%04X] RadioToNetworkAdapter: Set RadioLibRadio instance %p on "
+            "RadioToNetworkAdapter: Set RadioLibRadio instance %p on "
             "MockRadio %p",
-            address_, static_cast<void*>(radio_lib_instance),
-            static_cast<void*>(radio_));
+            static_cast<void*>(radio_lib_instance), static_cast<void*>(radio_));
 
         // Set up original callback saving
         EXPECT_CALL(*radio_, setActionReceive(A<void (*)(void)>()))
@@ -856,15 +855,14 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                 if (message_queue_.empty()) {
                     LOG_ERROR(
                         "MockRadio: getPacketLength() - No messages "
-                        "in queue (queue empty)",
-                        address_);
+                        "in queue (queue empty)");
                     return 0;
                 }
                 size_t packet_size = message_queue_.front().data.size();
                 LOG_DEBUG(
                     "MockRadio: getPacketLength() - Queue size: %zu, "
                     "packet size: %zu",
-                    address_, message_queue_.size(), packet_size);
+                    message_queue_.size(), packet_size);
                 return packet_size;
             }));
 
@@ -891,8 +889,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                 testing::Invoke([this](uint8_t* data, size_t len) -> Result {
                     std::lock_guard<std::mutex> lock(queue_mutex_);
                     if (message_queue_.empty()) {
-                        LOG_ERROR("MockRadio: readData() - No data received",
-                                  address_);
+                        LOG_ERROR("MockRadio: readData() - No data received");
                         return Result(LoraMesherErrorCode::kHardwareError,
                                       "No data received");
                     }
@@ -902,14 +899,14 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                     LOG_DEBUG(
                         "MockRadio: readData() - Consumed message, "
                         "queue size after pop: %zu",
-                        address_, message_queue_.size());
+                        message_queue_.size());
 
                     if (len < current_message.data.size()) {
                         LOG_ERROR(
                             "MockRadio: readData() - Buffer too small "
                             "for received message: "
                             "expected %zu, got %zu",
-                            address_, current_message.data.size(), len);
+                            current_message.data.size(), len);
                         return Result(LoraMesherErrorCode::kBufferOverflow,
                                       "Buffer too small");
                     }
@@ -1010,13 +1007,10 @@ class RadioToNetworkAdapter : public IRadioReceiver {
             message_queue_.push(msg);
         }
 
-        LOG_DEBUG("RadioToNetworkAdapter: Received message", address_);
-
         // Use instance-aware notification instead of static ISR callback
         LOG_DEBUG(
             "RadioToNetworkAdapter: Notifying processing task via "
-            "MockRadio",
-            address_);
+            "MockRadio");
         radio_->NotifyProcessingTask();
     }
 
