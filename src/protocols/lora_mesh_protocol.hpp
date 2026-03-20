@@ -439,6 +439,8 @@ class LoRaMeshProtocol : public Protocol {
         false;  ///< True during subslotted slots (radio stays in RX)
     uint32_t current_slot_arrival_time_ms_ =
         0;  ///< GetTimeInSlot() at slot boundary (from SlotTransitionData)
+    uint32_t nm_election_deadline_ms_ =
+        0;  ///< Absolute tick deadline for NM election finalization (0 = none)
 
     // Constants
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 8192;

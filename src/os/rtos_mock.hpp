@@ -114,6 +114,7 @@ class RTOSMock : public RTOS {
                     std::chrono::duration_cast<std::chrono::milliseconds>(
                         now.time_since_epoch())
                         .count();
+                virtualTimeMsAtomic_.store(virtualTimeMs_, std::memory_order_release);
                 debug_time = virtualTimeMs_;
                 debug_case = 1;
             }
@@ -125,6 +126,7 @@ class RTOSMock : public RTOS {
                     std::chrono::duration_cast<std::chrono::milliseconds>(
                         now.time_since_epoch())
                         .count();
+                virtualTimeMsAtomic_.store(virtualTimeMs_, std::memory_order_release);
                 debug_time = virtualTimeMs_;
                 debug_case = 2;
             }
@@ -176,6 +178,7 @@ class RTOSMock : public RTOS {
             std::lock_guard<std::mutex> lock(timeMutex_);
 
             virtualTimeMs_ += ms;
+            virtualTimeMsAtomic_.store(virtualTimeMs_, std::memory_order_release);
 
             // Find tasks that should wake up within the new time window
             auto it = waitingTasks_.begin();
@@ -323,7 +326,7 @@ class RTOSMock : public RTOS {
             task_info.priority = priority;
             task_info.thread_id = thread->get_id();
             task_info.stack_watermark = 0;
-            task_info.notification_pending = false;
+            task_info.notification_pending.store(false, std::memory_order_relaxed);
             task_info.suspended = false;
             task_info.stop_requested.store(false, std::memory_order_relaxed);
             task_info.exit_future = exit_future;
@@ -380,7 +383,7 @@ class RTOSMock : public RTOS {
                                                 std::memory_order_release);
 
                 // Set delay interruption flag to wake up any delay() calls
-                it->second.delay_interrupted = true;
+                it->second.delay_interrupted.store(true, std::memory_order_release);
 
                 // If task is suspended, resume it so it can process the stop request
                 if (was_suspended) {
@@ -932,34 +935,27 @@ class RTOSMock : public RTOS {
                 registerQueueCV(&q->notEmpty);
                 q->current_waiter_.store(task_info, std::memory_order_release);
 
-                // Use task-aware waitFor with suspension detection
-                bool initial_suspended_state = task_info->suspended;
+                // Use task-aware waitFor with suspension detection.
+                // Capture task_info pointer directly to avoid acquiring tasksMutex_
+                // (M0) inside the predicate while q->mutex (M6) is held by waitFor,
+                // which would create a M6 → M0 lock-order inversion.
+                bool initial_suspended_state =
+                    task_info->suspended.load(std::memory_order_acquire);
 
                 bool success = waitFor(
                     q->notEmpty, lock, timeout,
-                    [this, q, current_thread_id, initial_suspended_state]() {
+                    [q, task_info, initial_suspended_state]() {
                         // Check if queue has data (normal case)
                         if (!q->data.empty()) {
                             return true;
                         }
-
-                        // Check task state with proper locking
-                        std::lock_guard<std::timed_mutex> tasks_lock(
-                            tasksMutex_);
-                        for (const auto& [thread_ptr, task_info] : tasks_) {
-                            if (task_info.thread_id == current_thread_id) {
-                                // Return true if:
-                                // 1. Task is deleted/stop requested
-                                // 2. Suspension state changed (got suspended or resumed)
-                                return task_info.stop_requested.load(
-                                           std::memory_order_relaxed) ||
-                                       (task_info.suspended !=
-                                        initial_suspended_state);
-                            }
-                        }
-
-                        // Task not found, assume deleted
-                        return true;
+                        // Return true if stop requested or suspension state changed.
+                        // task_info is stable: this thread cannot be deleted while running.
+                        return task_info->stop_requested.load(
+                                   std::memory_order_acquire) ||
+                               (task_info->suspended.load(
+                                    std::memory_order_acquire) !=
+                                initial_suspended_state);
                     });
 
                 // Unregister the condition variable after waiting
@@ -1068,7 +1064,7 @@ class RTOSMock : public RTOS {
         {
             std::lock_guard<std::mutex> lock(task_info->mutex);
             if (task_info->stop_requested.load(std::memory_order_relaxed) ||
-                task_info->delay_interrupted) {
+                task_info->delay_interrupted.load(std::memory_order_acquire)) {
                 throw TaskTerminationException();  // Terminate task execution
             }
         }
@@ -1080,12 +1076,13 @@ class RTOSMock : public RTOS {
                 lock, std::chrono::milliseconds(ms), [task_info]() {
                     return task_info->stop_requested.load(
                                std::memory_order_relaxed) ||
-                           task_info->delay_interrupted;
+                           task_info->delay_interrupted.load(
+                               std::memory_order_acquire);
                 });
 
             // After wait returns, check if we were interrupted
             if (task_info->stop_requested.load(std::memory_order_relaxed) ||
-                task_info->delay_interrupted) {
+                task_info->delay_interrupted.load(std::memory_order_acquire)) {
                 throw TaskTerminationException();
             }
             return;
@@ -1111,18 +1108,17 @@ class RTOSMock : public RTOS {
             task_info->delay_cv.wait(lock, [this, wakeTimeMs, task_info]() {
                 // Check stop/interruption flags first
                 if (task_info->stop_requested.load(std::memory_order_relaxed) ||
-                    task_info->delay_interrupted) {
+                    task_info->delay_interrupted.load(std::memory_order_acquire)) {
                     return true;
                 }
 
-                // Check if virtual time has advanced enough
-                std::lock_guard<std::mutex> timeLock(timeMutex_);
-                return virtualTimeMs_ >= wakeTimeMs;
+                // Check if virtual time has advanced enough using atomic mirror
+                return virtualTimeMsAtomic_.load(std::memory_order_acquire) >= wakeTimeMs;
             });
 
             // After wait returns, check if we were woken due to termination request
             if (task_info->stop_requested.load(std::memory_order_relaxed) ||
-                task_info->delay_interrupted) {
+                task_info->delay_interrupted.load(std::memory_order_acquire)) {
                 // Clean up before throwing
                 {
                     std::lock_guard<std::mutex> timeLock(timeMutex_);
@@ -1293,7 +1289,7 @@ class RTOSMock : public RTOS {
             for (const auto& [thread, info] : tasks_) {
                 if (thread->get_id() == current_id) {
                     // Set notification flag for this task
-                    tasks_[thread].notification_pending = true;
+                    tasks_[thread].notification_pending.store(true, std::memory_order_release);
 
                     // Wake up the task if it's waiting for a notification
                     tasks_[thread].notify_cv.notify_one();
@@ -1305,7 +1301,7 @@ class RTOSMock : public RTOS {
 
             if (auto it = tasks_.find(thread); it != tasks_.end()) {
                 // Set notification flag for this task
-                it->second.notification_pending = true;
+                it->second.notification_pending.store(true, std::memory_order_release);
 
                 // Wake up the task if it's waiting for a notification
                 it->second.notify_cv.notify_one();
@@ -1327,7 +1323,7 @@ class RTOSMock : public RTOS {
             for (const auto& [thread, info] : tasks_) {
                 if (thread->get_id() == current_id) {
                     // Set notification flag for this task
-                    tasks_[thread].notification_pending = true;
+                    tasks_[thread].notification_pending.store(true, std::memory_order_release);
 
                     // Wake up the task if it's waiting for a notification
                     tasks_[thread].notify_cv.notify_one();
@@ -1339,7 +1335,7 @@ class RTOSMock : public RTOS {
 
             if (auto it = tasks_.find(thread); it != tasks_.end()) {
                 // Set notification flag for this task
-                it->second.notification_pending = true;
+                it->second.notification_pending.store(true, std::memory_order_release);
 
                 // Wake up the task if it's waiting for a notification
                 it->second.notify_cv.notify_one();
@@ -1404,8 +1400,9 @@ class RTOSMock : public RTOS {
             }
 
             // If we already have a pending notification and not suspended, consume it
-            if (task_info->notification_pending && !task_info->suspended) {
-                task_info->notification_pending = false;
+            if (task_info->notification_pending.load(std::memory_order_acquire) &&
+                !task_info->suspended.load(std::memory_order_acquire)) {
+                task_info->notification_pending.store(false, std::memory_order_relaxed);
                 // std::cout << "MOCK: Consumed pending notification immediately" << std::endl;
                 return QueueResult::kOk;
             }
@@ -1421,36 +1418,33 @@ class RTOSMock : public RTOS {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Remember the initial suspension state to detect changes
-            bool initial_suspended_state = task_info->suspended;
+            bool initial_suspended_state =
+                task_info->suspended.load(std::memory_order_acquire);
 
-            // CRITICAL FIX: Set up resume acknowledgment BEFORE waiting
-            // This ensures that if we get suspended and then resumed while waiting,
-            // the ResumeTask call won't timeout waiting for acknowledgment
-            auto wait_predicate = [this, initial_suspended_state]() {
-                // Check conditions under the proper lock
-                std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
-                auto it = tasks_.find(static_cast<std::thread*>(this_task));
-                if (it == tasks_.end()) {
-                    return true;  // Task deleted, exit wait
+            // Capture task_info pointer to avoid acquiring tasksMutex_ (M0) inside
+            // the predicate while task_info->mutex (M1) is held by waitFor's
+            // cv.wait_until, which would create a M1 → M0 lock-order inversion.
+            // task_info is stable: this thread cannot be deleted while executing here.
+            auto wait_predicate = [task_info, initial_suspended_state]() {
+                if (task_info->stop_requested.load(std::memory_order_acquire))
+                    return true;
+                bool currently_suspended =
+                    task_info->suspended.load(std::memory_order_acquire);
+                // If we were just resumed, acknowledge it using CAS to avoid races.
+                if (initial_suspended_state && !currently_suspended) {
+                    bool expected = false;
+                    if (task_info->resume_acknowledged.compare_exchange_strong(
+                            expected, true, std::memory_order_acq_rel)) {
+                        task_info->resume_ack_cv.notify_all();
+                    }
                 }
-
-                // If we were just resumed, acknowledge it immediately
-                if (initial_suspended_state && !it->second.suspended &&
-                    !it->second.resume_acknowledged) {
-                    it->second.resume_acknowledged = true;
-                    it->second.resume_ack_cv.notify_all();
-                    // std::cout << "MOCK: WaitForNotify acknowledged resume operation" << std::endl;
-                }
-
                 // Return true if:
-                // 1. Stop requested (should exit)
-                // 2. Not suspended AND have pending notification (normal notification)
-                // 3. Suspension state changed (either got suspended or resumed)
-                return it->second.stop_requested.load(
-                           std::memory_order_relaxed) ||
-                       (!it->second.suspended &&
-                        it->second.notification_pending) ||
-                       (it->second.suspended != initial_suspended_state);
+                // 1. Not suspended AND have pending notification (normal notification)
+                // 2. Suspension state changed (got suspended or resumed)
+                return (!currently_suspended &&
+                        task_info->notification_pending.load(
+                            std::memory_order_acquire)) ||
+                       (currently_suspended != initial_suspended_state);
             };
 
             if (timeout == MAX_DELAY) {
@@ -1498,9 +1492,9 @@ class RTOSMock : public RTOS {
                     kTimeout;  // Return timeout to indicate we should check suspension state
             }
 
-            if (it->second.notification_pending) {
+            if (it->second.notification_pending.load(std::memory_order_acquire)) {
                 // Notification received and we're not suspended, consume it
-                it->second.notification_pending = false;
+                it->second.notification_pending.store(false, std::memory_order_relaxed);
                 // std::cout << "MOCK: Notification received after wait" << std::endl;
                 return QueueResult::kOk;
             } else {
@@ -1807,12 +1801,17 @@ class RTOSMock : public RTOS {
             return true;
         }
 
-        // Register this task as waiting until the wake time
+        // Register this task as waiting until the wake time.
+        // Read virtual time via atomic mirror to avoid acquiring timeMutex_ while
+        // the caller's lock (task_info->mutex or q->mutex) is held, which would
+        // create a lock-order inversion (M1/M6 → M2).
+        wakeTimeMs = virtualTimeMsAtomic_.load(std::memory_order_acquire) + relTimeMs;
+        lock.unlock();
         {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
-            wakeTimeMs = virtualTimeMs_ + relTimeMs;
             waitingTasks_[&cv] = wakeTimeMs;
         }
+        lock.lock();
 
         tasks_blocked_cv_.notify_all();
 
@@ -1828,11 +1827,11 @@ class RTOSMock : public RTOS {
         // exits on the next combined_pred check (within 1 second at most).
         //
         // In real-time mode, log and exit on timeout (genuine missed wakeup).
+        // Use atomic mirror to avoid M1/M6 → M2 lock-order inversion inside pred.
         auto combined_pred = [this, wakeTimeMs, &pred]() {
             if (pred())
                 return true;
-            std::lock_guard<std::mutex> timeLock(timeMutex_);
-            return virtualTimeMs_ >= wakeTimeMs;
+            return virtualTimeMsAtomic_.load(std::memory_order_acquire) >= wakeTimeMs;
         };
         bool success = false;
         while (!success) {
@@ -1853,11 +1852,14 @@ class RTOSMock : public RTOS {
             break;
         }
 
-        // Clean up our wait registration
+        // Clean up our wait registration. Unlock caller's lock first to avoid
+        // M1/M6 → M2 lock-order inversion when acquiring timeMutex_.
+        lock.unlock();
         {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
             waitingTasks_.erase(&cv);
         }
+        lock.lock();
 
         // Return true only if the predicate is satisfied
         return pred();
@@ -2227,7 +2229,7 @@ class RTOSMock : public RTOS {
         std::thread::id thread_id;
 
         // For notification support
-        bool notification_pending = false;
+        std::atomic<bool> notification_pending{false};
         std::condition_variable notify_cv;
 
         std::mutex mutex;
@@ -2242,7 +2244,7 @@ class RTOSMock : public RTOS {
         std::condition_variable resume_ack_cv;
 
         // For delay interruption support
-        bool delay_interrupted = false;
+        std::atomic<bool> delay_interrupted{false};
         std::condition_variable delay_cv;
 
         // For logging context
@@ -2263,7 +2265,8 @@ class RTOSMock : public RTOS {
     };
 
     TimeMode timeMode_;       ///< Current time mode (real or virtual)
-    uint64_t virtualTimeMs_;  ///< Virtual time counter in milliseconds
+    uint64_t virtualTimeMs_;  ///< Virtual time counter in milliseconds (written under timeMutex_)
+    std::atomic<uint64_t> virtualTimeMsAtomic_{0};  ///< Atomic mirror of virtualTimeMs_ for lock-free reads
     mutable std::mutex
         timeMutex_;  ///< Mutex protecting time-related operations
 

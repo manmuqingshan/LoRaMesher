@@ -611,9 +611,7 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     std::min(timeout_ms, protocol->GetDiscoveryTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
-                // Wait two full slots for subslot-based NM_CLAIM TX +
-                // reception of counter-claims before calling CreateNetwork()
-                timeout_ms = 2 * protocol->GetSlotDuration();
+                timeout_ms = std::min(timeout_ms, 2 * protocol->GetSlotDuration());
                 break;
             default:
                 // Use default timeout for other states
@@ -859,6 +857,16 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
     // Reset subslotted slot flag at every slot transition
     in_subslotted_slot_ = false;
 
+    // Finalize NM election once counter-claim window has closed
+    if (nm_election_deadline_ms_ != 0 &&
+        network_service_->GetState() ==
+            lora_mesh::INetworkService::ProtocolState::NM_ELECTION &&
+        GetRTOS().getTickCount() >= nm_election_deadline_ms_) {
+        nm_election_deadline_ms_ = 0;
+        LOG_INFO("NM_ELECTION slot-level timeout: creating network");
+        network_service_->CreateNetwork();
+    }
+
     // Handle new superframe
     if (new_superframe) {
         network_service_->HandleSuperframeStart();
@@ -893,9 +901,18 @@ void LoRaMeshProtocol::OnStateChange(
         case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
             // Update slot table when entering operational states
             // Note: NetworkService should call this internally
+            nm_election_deadline_ms_ = 0;
+            break;
+
+        case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
+            // Record deadline so OnSlotTransition can finalize election
+            // after counter-claims have had time to arrive (2 slot durations).
+            nm_election_deadline_ms_ =
+                GetRTOS().getTickCount() + 2 * GetSlotDuration();
             break;
 
         default:
+            nm_election_deadline_ms_ = 0;
             break;
     }
 

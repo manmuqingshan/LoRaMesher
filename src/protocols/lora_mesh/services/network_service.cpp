@@ -3243,9 +3243,14 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             network_id_ = claim.GetNetworkId();
         }
 
-        // Restart discovery: the claimant will become NM, we'll join them
-        StartDiscovery(
-            60000 /* discovery_timeout_ms — long, claim sets up network */);
+        // Enter DISCOVERY directly — cannot call StartDiscovery() because
+        // NETWORK_MANAGER-role nodes skip discovery and re-create a network.
+        network_found_ = false;
+        network_creator_ = false;
+        selected_sponsor_ = 0;
+        discovery_start_time_ = GetRTOS().getTickCount();
+        SetDiscoverySlots();
+        SetState(ProtocolState::DISCOVERY);
     }
     // If our priority is lower or equal, we win — ignore their claim
 
