@@ -2472,41 +2472,20 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
 void NetworkService::SetSyncBeaconPreSendCallback(BaseMessage& base_msg) {
     base_msg.SetPreSendCallback([this](BaseMessage& msg) {
-        const uint32_t SERIALIZATION_OVERHEAD_MS = 1;
+        constexpr uint32_t kSerializationOverheadMs = 1;
         uint32_t actual_time =
             superframe_service_->GetTimeSinceSuperframeStart() +
-            SERIALIZATION_OVERHEAD_MS;
+            kSerializationOverheadMs;
 
-        auto serialized_opt = msg.Serialize();
-        if (!serialized_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to serialize base message");
-            return;
-        }
-
-        auto beacon_opt =
-            SyncBeaconMessage::CreateFromSerialized(*serialized_opt);
-        if (!beacon_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to deserialize sync beacon");
-            return;
-        }
-
-        beacon_opt->UpdatePropagationDelay(actual_time);
-
-        auto updated_serialized_opt = beacon_opt->Serialize();
-        if (!updated_serialized_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to re-serialize sync beacon");
-            return;
-        }
-
-        auto updated_msg_opt =
-            BaseMessage::CreateFromSerialized(*updated_serialized_opt);
-        if (!updated_msg_opt.has_value()) {
+        auto payload = msg.MutablePayload();
+        constexpr size_t kOffset =
+            SyncBeaconHeader::kPropagationDelayPayloadOffset;
+        if (payload.size() < kOffset + sizeof(uint32_t)) {
             LOG_ERROR(
-                "Pre-send callback: Failed to create updated base message");
+                "Pre-send callback: payload too small for propagation delay");
             return;
         }
-
-        msg = *updated_msg_opt;
+        std::memcpy(payload.data() + kOffset, &actual_time, sizeof(uint32_t));
 
         LOG_DEBUG("Pre-send callback: updated propagation_delay to %u ms",
                   actual_time);
