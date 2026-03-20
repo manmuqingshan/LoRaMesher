@@ -370,6 +370,7 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
 
     // Record discovery start time
     discovery_start_time_ = GetRTOS().getTickCount();
+    nm_election_start_time_ = 0;
 
     LOG_INFO("Starting network discovery, timeout: %d ms, current time: %d ms",
              discovery_timeout_ms, discovery_start_time_);
@@ -1777,7 +1778,7 @@ Result NetworkService::UpdateSlotTable() {
         }
         LOG_DEBUG("Allocated slot %zu as %d for sync hop_layer %zu", slot_index,
                   static_cast<int>(sync_type), hop_layer);
-        AllocateSlot(sync_type, 0xFFFF);
+        AllocateSlot(sync_type, kBroadcastAddress);
     }
 
     // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
@@ -1792,7 +1793,8 @@ Result NetworkService::UpdateSlotTable() {
         } else {
             LOG_DEBUG("Allocated CONTROL_RX slot %zu (index %zu)", slot_index,
                       i);
-            AllocateSlot(SlotAllocation::SlotType::CONTROL_RX, 0xFFFF);
+            AllocateSlot(SlotAllocation::SlotType::CONTROL_RX,
+                         kBroadcastAddress);
         }
     }
 
@@ -1879,8 +1881,7 @@ Result NetworkService::SetDiscoverySlots() {
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
         SlotAllocation slot;
         slot.slot_number = i;
-        slot.target_address =
-            INetworkService::kBroadcastAddress;  // Discovery to broadcast
+        slot.target_address = kBroadcastAddress;  // Discovery to broadcast
         slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
 
         slot_table_[i] = slot;
@@ -2061,6 +2062,28 @@ Result NetworkService::PerformJoining(uint32_t timeout_ms) {
     }
 
     // Still waiting for join response - do nothing, let the protocol continue
+    return Result::Success();
+}
+
+uint32_t NetworkService::GetNMElectionTimeout() const {
+    uint32_t window_ms =
+        superframe_service_ ? 2 * superframe_service_->GetSlotDuration() : 2000;
+    if (nm_election_start_time_ == 0) {
+        return window_ms;
+    }
+    uint32_t end_time = nm_election_start_time_ + window_ms;
+    uint32_t now = GetRTOS().getTickCount();
+    return (now < end_time) ? (end_time - now) : 0;
+}
+
+Result NetworkService::PerformNMElection() {
+    if (state_ != ProtocolState::NM_ELECTION) {
+        return Result::Success();
+    }
+    if (GetNMElectionTimeout() == 0) {
+        LOG_INFO("NM_ELECTION deadline reached, creating network");
+        return CreateNetwork();
+    }
     return Result::Success();
 }
 
@@ -2510,10 +2533,10 @@ Result NetworkService::SendSyncBeacon() {
     // Create original sync beacon with placeholder propagation_delay (0)
     // The actual timing will be captured by the pre-send callback right before transmission
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
-        0xFFFF,         // Broadcast destination
-        node_address_,  // Network manager as source
-        network_id_,    // Stable network identifier (survives NM elections)
-        total_slots,    // Actual total slots from slot table
+        kBroadcastAddress,  // Broadcast destination
+        node_address_,      // Network manager as source
+        network_id_,        // Stable network identifier (survives NM elections)
+        total_slots,        // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
         node_address_,  // Network manager address
         0,              // Placeholder - will be updated by callback
@@ -2722,6 +2745,7 @@ Result NetworkService::HandleSuperframeStart() {
                 // the DISCOVERY_RX fallback TX path in this same slot
                 SetDiscoverySlots();
                 SendNMClaim();  // queue claim for next DISCOVERY_TX slot
+                nm_election_start_time_ = GetRTOS().getTickCount();
                 SetState(ProtocolState::NM_ELECTION);
             }
         }

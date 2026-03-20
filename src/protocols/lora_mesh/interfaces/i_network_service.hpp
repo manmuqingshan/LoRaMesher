@@ -84,9 +84,6 @@ class INetworkService {
             NodeRole::AUTO;  ///< Node role for network formation
     };
 
-    static constexpr AddressType kBroadcastAddress =
-        0xFFFF;  ///< Broadcast address for routing
-
     // Node management methods
 
     /**
@@ -332,6 +329,20 @@ class INetworkService {
      * @return uint8_t Hop distance to network manager (0 if NM, 1 if unknown)
      */
     virtual uint8_t GetHopDistanceToNM() const = 0;
+
+    /**
+     * @brief Check election deadline and create network if window has closed.
+     *
+     * @return Result Success or error
+     */
+    virtual Result PerformNMElection() = 0;
+
+    /**
+     * @brief Remaining ms until NM_ELECTION deadline (0 if expired or not in election).
+     *
+     * @return uint32_t Remaining milliseconds
+     */
+    virtual uint32_t GetNMElectionTimeout() const = 0;
 };
 
 }  // namespace lora_mesh

@@ -611,7 +611,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     std::min(timeout_ms, protocol->GetDiscoveryTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
-                timeout_ms = std::min(timeout_ms, 2 * protocol->GetSlotDuration());
+                timeout_ms = std::min(
+                    timeout_ms,
+                    protocol->network_service_->GetNMElectionTimeout());
                 break;
             default:
                 // Use default timeout for other states
@@ -672,14 +674,11 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
                         case lora_mesh::INetworkService::ProtocolState::
                             NM_ELECTION:
-                            // Election backoff expired: become NM
-                            LOG_INFO("NM_ELECTION: creating network");
                             result =
-                                protocol->network_service_->CreateNetwork();
+                                protocol->network_service_->PerformNMElection();
                             if (!result) {
-                                LOG_ERROR(
-                                    "NM election failed to create network: %s",
-                                    result.GetErrorMessage().c_str());
+                                LOG_ERROR("NM election failed: %s",
+                                          result.GetErrorMessage().c_str());
                             }
                             break;
 
@@ -753,10 +752,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
 
                 case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
-                    LOG_INFO("NM_ELECTION timeout: creating network");
-                    result = protocol->network_service_->CreateNetwork();
+                    result = protocol->network_service_->PerformNMElection();
                     if (!result) {
-                        LOG_ERROR("NM election failed to create network: %s",
+                        LOG_ERROR("NM election failed: %s",
                                   result.GetErrorMessage().c_str());
                     }
                     break;
@@ -858,13 +856,9 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
     in_subslotted_slot_ = false;
 
     // Finalize NM election once counter-claim window has closed
-    if (nm_election_deadline_ms_ != 0 &&
-        network_service_->GetState() ==
-            lora_mesh::INetworkService::ProtocolState::NM_ELECTION &&
-        GetRTOS().getTickCount() >= nm_election_deadline_ms_) {
-        nm_election_deadline_ms_ = 0;
-        LOG_INFO("NM_ELECTION slot-level timeout: creating network");
-        network_service_->CreateNetwork();
+    if (network_service_->GetState() ==
+        lora_mesh::INetworkService::ProtocolState::NM_ELECTION) {
+        network_service_->PerformNMElection();
     }
 
     // Handle new superframe
@@ -894,27 +888,6 @@ void LoRaMeshProtocol::OnStateChange(
     lora_mesh::INetworkService::ProtocolState new_state) {
 
     LOG_INFO("Protocol state changed to %d", static_cast<int>(new_state));
-
-    // Handle state-specific initialization
-    switch (new_state) {
-        case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
-        case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
-            // Update slot table when entering operational states
-            // Note: NetworkService should call this internally
-            nm_election_deadline_ms_ = 0;
-            break;
-
-        case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
-            // Record deadline so OnSlotTransition can finalize election
-            // after counter-claims have had time to arrive (2 slot durations).
-            nm_election_deadline_ms_ =
-                GetRTOS().getTickCount() + 2 * GetSlotDuration();
-            break;
-
-        default:
-            nm_election_deadline_ms_ = 0;
-            break;
-    }
 
     // Notify protocol task of state change for immediate processing
     NotifyProtocolTask(ProtocolNotificationType::STATE_CHANGE);
@@ -1488,8 +1461,8 @@ Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
     message_queue_service_->RemoveMessage(loramesher::MessageType::ROUTE_TABLE);
 
     // Create a new routing message with broadcast destination
-    auto routing_message = network_service_->CreateRoutingTableMessage(
-        lora_mesh::INetworkService::kBroadcastAddress);
+    auto routing_message =
+        network_service_->CreateRoutingTableMessage(kBroadcastAddress);
     if (!routing_message) {
         return Result(LoraMesherErrorCode::kMemoryError,
                       "Failed to create routing message");
