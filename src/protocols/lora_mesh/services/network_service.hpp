@@ -128,6 +128,9 @@ class NetworkService : public INetworkService {
     const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
     GetNetworkNodes() const override;
 
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+    GetNetworkNodesCopy() const override;
+
     /**
      * @brief Get the number of nodes in the network
      * 

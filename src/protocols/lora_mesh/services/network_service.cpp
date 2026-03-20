@@ -138,6 +138,10 @@ const std::vector<NetworkNodeRoute>& NetworkService::GetNetworkNodes() const {
     return routing_table_->GetNodes();
 }
 
+std::vector<NetworkNodeRoute> NetworkService::GetNetworkNodesCopy() const {
+    return routing_table_->GetNodesCopy();
+}
+
 size_t NetworkService::GetNetworkSize() const {
     std::lock_guard<std::mutex> lock(network_mutex_);
     return routing_table_->GetSize();

@@ -132,6 +132,14 @@ class INetworkService {
     GetNetworkNodes() const = 0;
 
     /**
+     * @brief Get a thread-safe copy of all network nodes
+     *
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes
+     */
+    virtual std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+    GetNetworkNodesCopy() const = 0;
+
+    /**
      * @brief Get total node count
      * 
      * @return size_t Number of nodes

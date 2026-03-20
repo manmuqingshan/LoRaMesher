@@ -560,6 +560,10 @@ const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
     return network_service_->GetNetworkNodes();
 }
 
+std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodesCopy() const {
+    return network_service_->GetNetworkNodesCopy();
+}
+
 const LoRaMeshProtocol::ServiceConfiguration&
 LoRaMeshProtocol::GetServiceConfiguration() const {
     return service_config_;
