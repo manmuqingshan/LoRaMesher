@@ -46,12 +46,12 @@ Result LoraMesherSX1262::Begin(const RadioConfig& config) {
     }
 
     // Begin radio module with SX1262-specific parameters
-    // tcxoVoltage = 0 (no TCXO by default), useRegulatorLDO = false (use DC-DC)
+    // useRegulatorLDO = false (use DC-DC)
     int16_t status = radio_module_->begin(
         config.getFrequency(), config.getBandwidth(),
         config.getSpreadingFactor(), config.getCodingRate(),
-        config.getSyncWord(), config.getPower(), config.getPreambleLength(), 0,
-        false);
+        config.getSyncWord(), config.getPower(), config.getPreambleLength(),
+        config.getTcxoVoltage(), false);
     if (status != RADIOLIB_ERR_NONE) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
