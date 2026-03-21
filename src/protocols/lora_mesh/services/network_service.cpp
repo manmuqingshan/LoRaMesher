@@ -2689,7 +2689,11 @@ Result NetworkService::HandleSuperframeStart() {
                 static_cast<uint8_t>(
                     1 << std::min(join_retry_count_, static_cast<uint8_t>(2))),
                 static_cast<uint8_t>(4));
-            join_backoff_remaining_ = GetRTOS().GetRandom() % (max_backoff + 1);
+
+            // Always wait at least 1 superframe so the sponsor has time to deliver
+            // the JOIN_RESPONSE before the joining node retransmits
+            join_backoff_remaining_ =
+                1 + GetRTOS().GetRandom() % (max_backoff + 1);
             LOG_DEBUG("Join retry #%d, next backoff: %d superframes",
                       join_retry_count_, join_backoff_remaining_);
         }
