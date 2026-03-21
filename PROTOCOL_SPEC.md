@@ -754,14 +754,14 @@ if (combinedQuality < MIN_QUALITY_THRESHOLD) {
 
 **Route Comparison** (Weighted Cost Metric):
 
-The route selection uses a composite cost that balances hop count and link quality:
+The route selection uses an ETX-inspired cost metric based on Expected Transmission Count (RFC 6551):
 
 ```cpp
-// cost = hop_count × 35 + (255 - link_quality)
+// cost = hop_count × 65536 / max(quality, 1)
 // Lower cost = better route
 uint16_t CalculateRouteCost(uint8_t hop_count, uint8_t link_quality) {
-    constexpr uint16_t COST_PER_HOP = 35;
-    return (hop_count * COST_PER_HOP) + (255 - link_quality);
+    if (link_quality == 0) return 65535;
+    return std::min(hop_count * 65536u / link_quality, 65535u);
 }
 
 bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
@@ -778,16 +778,18 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
 }
 ```
 
-**Cost Formula Rationale**:
-- COST_PER_HOP = 35: Each additional hop acceptable if quality improves by ~35 points
-- Balances LoRa's per-hop latency/energy cost against link reliability
+**ETX Cost Formula Rationale**:
+- Based on Expected Transmission Count (RFC 6551/6719), the industry standard for mesh routing
+- Each hop adds at least 256 to the cost (for a perfect link with quality 255), naturally penalizing longer paths without a tunable weight
+- quality (0-255) maps to delivery ratio: `ETX_per_hop ≈ 255 / quality`
+- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss)
 - Example rankings (lower cost wins):
   | Route | Hops | Quality | Cost |
   |-------|------|---------|------|
-  | C     | 4    | 250     | 145  |
-  | B     | 3    | 200     | 160  |
-  | A     | 2    | 150     | 175  |
-  | D     | 2    | 100     | 225  |
+  | A     | 1    | 255     | 257  |
+  | B     | 1    | 200     | 327  |
+  | C     | 2    | 255     | 514  |
+  | D     | 2    | 200     | 655  |
 
 ### 4.2 Loop Prevention
 
