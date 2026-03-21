@@ -1256,22 +1256,19 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageSkipsZeroAddressEntry) {
 }
 
 // =============================================================================
-// UpdateLinkStatistics: fast invalidation after consecutive missed messages
+// UpdateLinkStatistics: two-phase degradation then invalidation
 // =============================================================================
 
-TEST_F(RoutingTableUnitTest,
-       UpdateLinkStatisticsInvalidatesAfterConsecutiveMisses) {
-    // kMaxConsecutiveMissed = 3, kMinMessagesBeforeInvalidation = 1
-    // To trigger fast invalidation we need:
-    //   consecutive_missed >= 3  AND  messages_received >= 1
-    // Calling ProcessRoutingTableMessage registers a received message and seeds
-    // the node as a direct neighbor (hop_count=1, is_active=true).
+TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsDegradesThenInvalidates) {
+    // Two-phase behavior:
+    //   consecutive_missed >= 3 → quality halved each superframe (degradation)
+    //   consecutive_missed >= 6 → is_active = false (hard invalidation)
 
     std::vector<RoutingTableEntry> empty;
     routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
                                                kGoodQuality, kMaxHops);
 
-    // Verify node is active before the test loop
+    // Verify node is active with initial quality
     {
         const auto& nodes = routing_table_->GetNodes();
         auto it = std::find_if(
@@ -1282,12 +1279,26 @@ TEST_F(RoutingTableUnitTest,
         ASSERT_TRUE(it->is_active);
     }
 
-    // Call UpdateLinkStatistics repeatedly without any new ReceivedRoutingMessage.
-    // Each call increments consecutive_missed (via ExpectRoutingMessage inside
-    // UpdateLinkStatistics).  After kMaxConsecutiveMissed (3) misses the node
-    // should be marked inactive.
+    // Phase 1: After 5 calls, node should still be active but quality degrades
+    for (int i = 0; i < 5; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_TRUE(it->is_active)
+            << "Node should still be active during degradation phase";
+        EXPECT_LT(it->routing_entry.link_quality, kGoodQuality)
+            << "Quality should be degraded after consecutive misses";
+    }
+
+    // Phase 2: After 6+ calls total, node becomes inactive
     bool became_inactive = false;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 5; ++i) {
         routing_table_->UpdateLinkStatistics();
         const auto& nodes = routing_table_->GetNodes();
         auto it = std::find_if(
@@ -1301,7 +1312,7 @@ TEST_F(RoutingTableUnitTest,
     }
 
     EXPECT_TRUE(became_inactive) << "Node should become inactive after "
-                                    "consecutive missed routing messages";
+                                    "kConsecutiveMissedForInactivation misses";
 }
 
 // =============================================================================

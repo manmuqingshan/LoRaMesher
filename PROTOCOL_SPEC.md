@@ -889,11 +889,13 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 - `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
 - `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
 
-**Link Quality-Based Fast Invalidation**:
+**Two-Phase Link Quality Degradation**:
 
-In addition to the time-based route aging above, direct neighbor routes are also invalidated via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0. After `kMaxConsecutiveMissed` (3) consecutive misses, the route is marked inactive immediately, without waiting for the full `route_timeout_ms`.
+In addition to the time-based route aging above, direct neighbor routes are monitored via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0.
 
-This provides fast detection of link failures (typically 3 superframes, ~6-15s) while the time-based timeout handles multi-hop route expiration.
+After `kConsecutiveMissedForDegradation` (3) consecutive misses, link quality is halved each superframe. The route stays active but its ETX cost increases, naturally causing `IsBetterRoute` to prefer multi-hop alternatives when quality drops below the crossover point. Multi-hop routes via the degraded neighbor also have their quality halved (cascade degradation). After `kConsecutiveMissedForInactivation` (6) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
+
+This two-phase approach allows ETX-based route selection to naturally transition traffic to alternative paths before hard invalidation occurs.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
