@@ -31,6 +31,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Coverage](#profiling--code-coverage-llvm)
   - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
+- [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
 - [License](#license)
@@ -354,6 +355,58 @@ clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp  # sin
 ```
 
 Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others (see `.clang-tidy`).
+
+---
+
+## Contributing
+
+### One-Time Setup
+
+Enable the shared pre-commit hook (runs `clang-format-19` on staged files):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This catches formatting issues locally before they reach CI. Install `clang-format-19` to match the CI version:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install clang-format-19
+```
+
+### Code Style
+
+The project uses the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html) with customizations defined in `.clang-format`.
+
+Format all modified files:
+
+```bash
+# Format specific files
+clang-format-19 -i src/path/to/file.cpp
+
+# Format all source files
+find src -name '*.cpp' -o -name '*.hpp' | xargs clang-format-19 -i
+```
+
+For deeper static analysis, run `clang-tidy` (see [Static Analysis](#static-analysis-clang-tidy) above).
+
+### Testing Before Pushing
+
+Run the full tests before pushing, they take several minutes but should pass before opening a PR:
+
+```bash
+pio test -e test_native -v"
+```
+
+### Conventions
+
+- **C++20** standard required
+- **4 spaces** indentation, no tabs
+- **PascalCase** for classes and functions, **UPPER_CASE** for constants and enums
+- **Trailing underscore** for private members (`config_`)
+- **Doxygen comments** for public APIs
+- Keep comments generic — describe *what* the code does, not *why* a specific change was made
 
 ---
 
