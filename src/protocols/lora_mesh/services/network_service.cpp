@@ -2051,9 +2051,12 @@ Result NetworkService::BroadcastSlotAllocation() {
 // Discovery implementation
 
 Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
-    // NODE_ONLY nodes never create a network - keep discovering indefinitely
-    if (node_role_ == NodeRole::NODE_ONLY) {
-        // Still discovering, will wait for sync beacon from existing network
+    // NODE_ONLY and NETWORK_MANAGER nodes never create a network on timeout.
+    // NODE_ONLY always waits for an existing network.
+    // NETWORK_MANAGER-role nodes that reach DISCOVERY surrendered via
+    // ProcessNMClaim; re-creating on timeout causes a yield-recreate cycle.
+    if (node_role_ == NodeRole::NODE_ONLY ||
+        node_role_ == NodeRole::NETWORK_MANAGER) {
         return Result::Success();
     }
 
