@@ -1467,8 +1467,8 @@
                     const timeTimestampMatch = line.match(/^(\d{1,2}):(\d{2}):(\d{2})\.(\d{3})\s*>/);
                     // Format 3: 2026-03-13 05-14-25.659266 [INFO] [0x1001] message
                     const dateTimeTimestampMatch = line.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2})-(\d{2})\.(\d+)/);
-                    // Format 4: [2026-03-23 13:46:18] [DEBUG] [0x14A4] message
-                    const bracketDateTimeMatch = line.match(/^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\]/);
+                    // Format 4: [2026-03-23 14:30:05.123] [DEBUG] [0x14A4] message
+                    const bracketDateTimeMatch = line.match(/^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\]/);
 
                     if (msTimestampMatch) {
                         timestamp = parseInt(msTimestampMatch[1]);
@@ -1525,10 +1525,11 @@
                         const hours   = parseInt(bracketDateTimeMatch[4]);
                         const minutes = parseInt(bracketDateTimeMatch[5]);
                         const seconds = parseInt(bracketDateTimeMatch[6]);
+                        const ms = bracketDateTimeMatch[7] ? parseInt(bracketDateTimeMatch[7].padEnd(3, '0')) : 0;
 
-                        timestamp = new Date(year, month, day, hours, minutes, seconds, 0).getTime();
+                        timestamp = new Date(year, month, day, hours, minutes, seconds, ms).getTime();
 
-                        const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.000`;
+                        const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
                         fileData.originalTimeMap.set(timestamp, originalTime);
 
                         const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
