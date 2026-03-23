@@ -462,6 +462,9 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
         case MessageType::DATA:
             return ProcessDataMessage(message, reception_timestamp);
 
+        case MessageType::DATA_BROADCAST:
+            return ProcessBroadcastMessage(message, reception_timestamp);
+
         default:
             LOG_WARNING("Unknown message type: %d",
                         static_cast<int>(message.GetType()));
@@ -1398,12 +1401,29 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     AddressType next_hop = data_msg.GetNextHop();
     AddressType final_dest = data_msg.GetDestination();
     AddressType original_src = data_msg.GetSource();
+    uint8_t seq_num = data_msg.GetSeqNum();
+    uint8_t ttl = data_msg.GetTTL();
 
     LOG_DEBUG(
         "DATA message: src=0x%04X, dest=0x%04X, next_hop=0x%04X, "
-        "my_addr=0x%04X, payload_size=%zu",
-        original_src, final_dest, next_hop, node_address_,
+        "my_addr=0x%04X, ttl=%u, seq=%u, payload_size=%zu",
+        original_src, final_dest, next_hop, node_address_, ttl, seq_num,
         data_msg.GetPayload().size());
+
+    // Ignore our own messages heard back
+    if (original_src == node_address_) {
+        LOG_DEBUG("Ignoring own data message (seq=%u)", seq_num);
+        return Result::Success();
+    }
+
+    // De-duplication check (prevents loops)
+    if (IsMessageDuplicate(original_src, seq_num)) {
+        LOG_DEBUG("Dropping duplicate DATA from 0x%04X seq=%u", original_src,
+                  seq_num);
+        return Result::Success();
+    }
+
+    AddToMessageCache(original_src, seq_num);
 
     // Check if we are the intended next hop
     if (next_hop != node_address_) {
@@ -1426,9 +1446,15 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
             LOG_WARNING("No data callback registered - DATA dropped");
         }
     } else {
+        // TTL check before forwarding
+        if (ttl <= 1) {
+            LOG_WARNING("DATA TTL expired (src=0x%04X, dest=0x%04X), dropping",
+                        original_src, final_dest);
+            return Result::Success();
+        }
         // Forward to next hop toward final destination
-        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X", original_src,
-                 final_dest);
+        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X (ttl=%u)", original_src,
+                 final_dest, ttl);
         return ForwardDataMessage(data_msg);
     }
 
@@ -1446,22 +1472,17 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
                       "No route to destination for forwarding");
     }
 
-    // Create forwarded message with updated next_hop
-    auto forwarded_msg = DataMessage::Create(
-        original_msg.GetDestination(),  // Keep final destination
-        original_msg.GetSource(),       // Keep original source
-        new_next_hop,                   // Update next hop
-        original_msg.GetPayload());     // Keep original payload
-
+    auto forwarded_msg =
+        DataMessage::CreateForwarded(original_msg, new_next_hop);
     if (!forwarded_msg) {
-        LOG_ERROR("Failed to create forwarded DATA message");
-        return Result(LoraMesherErrorCode::kMemoryError,
-                      "Failed to create forwarded data message");
+        LOG_WARNING("DATA TTL expired during forwarding, dropping");
+        return Result::Success();
     }
 
-    LOG_DEBUG("Forwarding DATA: dest=0x%04X, src=0x%04X, new_next_hop=0x%04X",
-              original_msg.GetDestination(), original_msg.GetSource(),
-              new_next_hop);
+    LOG_DEBUG(
+        "Forwarding DATA: dest=0x%04X, src=0x%04X, next_hop=0x%04X, ttl=%u",
+        original_msg.GetDestination(), original_msg.GetSource(), new_next_hop,
+        forwarded_msg->GetTTL());
 
     // Queue for TX slot
     auto base_msg =
@@ -1492,20 +1513,135 @@ Result NetworkService::SendData(AddressType destination,
         next_hop = destination;
     }
 
-    // Create the data message
-    auto data_msg =
-        DataMessage::Create(destination, node_address_, next_hop, data);
+    // Assign TTL and sequence number
+    message_seq_++;
+    uint8_t ttl = (config_.max_hops > 0) ? config_.max_hops : kDefaultTTL;
+
+    auto data_msg = DataMessage::Create(destination, node_address_, next_hop,
+                                        data, ttl, message_seq_);
     if (!data_msg) {
         LOG_ERROR("Failed to create DATA message for 0x%04X", destination);
         return Result(LoraMesherErrorCode::kMemoryError,
                       "Failed to create data message");
     }
 
-    LOG_INFO("Sending DATA to 0x%04X via next_hop 0x%04X, payload_size=%zu",
-             destination, next_hop, data.size());
+    // Prevent self-receive if we hear our own message
+    AddToMessageCache(node_address_, message_seq_);
+
+    LOG_INFO(
+        "Sending DATA to 0x%04X via 0x%04X (ttl=%u, seq=%u), payload_size=%zu",
+        destination, next_hop, ttl, message_seq_, data.size());
 
     // Queue for TX slot
     auto base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
+                                              std::move(base_msg));
+
+    return Result::Success();
+}
+
+// Broadcast message implementations
+
+Result NetworkService::ProcessBroadcastMessage(
+    const BaseMessage& message, uint32_t /* reception_timestamp */) {
+    auto bcast_opt =
+        BroadcastMessage::CreateFromSerialized(*message.Serialize());
+    if (!bcast_opt) {
+        LOG_ERROR("Failed to deserialize broadcast message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize broadcast message");
+    }
+
+    const BroadcastMessage& bcast = *bcast_opt;
+    AddressType source = bcast.GetSource();
+    uint8_t seq_num = bcast.GetSeqNum();
+    uint8_t ttl = bcast.GetTTL();
+
+    // Ignore our own broadcasts heard back
+    if (source == node_address_) {
+        LOG_DEBUG("Ignoring own broadcast (seq=%u)", seq_num);
+        return Result::Success();
+    }
+
+    // De-duplication check
+    if (IsMessageDuplicate(source, seq_num)) {
+        LOG_DEBUG("Dropping duplicate broadcast from 0x%04X seq=%u", source,
+                  seq_num);
+        return Result::Success();
+    }
+
+    AddToMessageCache(source, seq_num);
+
+    // Deliver to application layer
+    LOG_INFO("BROADCAST from 0x%04X (ttl=%u, seq=%u), payload_size=%zu", source,
+             ttl, seq_num, bcast.GetPayload().size());
+
+    if (data_received_callback_) {
+        data_received_callback_(source, bcast.GetPayload());
+    } else {
+        LOG_WARNING("No data callback registered - broadcast dropped");
+    }
+
+    // Forward if TTL allows
+    if (ttl > 1) {
+        return ForwardBroadcastMessage(bcast);
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
+    message_seq_++;
+
+    auto bcast = BroadcastMessage::Create(node_address_, kDefaultTTL,
+                                          message_seq_, data);
+    if (!bcast) {
+        LOG_ERROR("Failed to create broadcast message");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create broadcast message");
+    }
+
+    // Prevent self-receive if we hear our own broadcast
+    AddToMessageCache(node_address_, message_seq_);
+
+    LOG_INFO("Sending BROADCAST (ttl=%u, seq=%u), payload_size=%zu",
+             kDefaultTTL, message_seq_, data.size());
+
+    auto base_msg = std::make_unique<BaseMessage>(bcast->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
+                                              std::move(base_msg));
+
+    return Result::Success();
+}
+
+bool NetworkService::IsMessageDuplicate(AddressType source,
+                                        uint8_t seq_num) const {
+    for (const auto& entry : message_cache_) {
+        if (entry.valid && entry.source == source && entry.seq_num == seq_num) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void NetworkService::AddToMessageCache(AddressType source, uint8_t seq_num) {
+    message_cache_[message_cache_head_] = {source, seq_num, true};
+    message_cache_head_ = (message_cache_head_ + 1) % kMessageCacheSize;
+}
+
+Result NetworkService::ForwardBroadcastMessage(
+    const BroadcastMessage& original) {
+    auto forwarded = BroadcastMessage::CreateForwarded(original);
+    if (!forwarded) {
+        LOG_DEBUG("Broadcast TTL expired, not forwarding");
+        return Result::Success();
+    }
+
+    LOG_DEBUG("Forwarding broadcast from 0x%04X (ttl=%u->%u, seq=%u)",
+              original.GetSource(), original.GetTTL(), forwarded->GetTTL(),
+              original.GetSeqNum());
+
+    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
     message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
                                               std::move(base_msg));
 
@@ -3082,6 +3218,11 @@ void NetworkService::ResetNetworkState() {
 
     // Clear join data
     pending_join_data_.reset();
+
+    // Reset message de-duplication state
+    message_cache_.fill({});
+    message_cache_head_ = 0;
+    message_seq_ = 0;
 
     // Reset to initial state
     SetState(ProtocolState::INITIALIZING);

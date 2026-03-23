@@ -186,6 +186,21 @@ Result LoraMesher::Send(AddressType destination,
     return SendMessage(*message_opt);
 }
 
+Result LoraMesher::SendBroadcast(std::span<const uint8_t> data) {
+    if (!is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoraMesher not running");
+    }
+
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoRaMesh protocol not active");
+    }
+
+    return mesh_protocol->SendBroadcast(data);
+}
+
 void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     data_callback_ = callback;
 

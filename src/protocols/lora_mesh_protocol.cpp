@@ -413,6 +413,7 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
 
     switch (message.GetType()) {
         case MessageType::DATA:
+        case MessageType::DATA_BROADCAST:
             slot_type = SlotAllocation::SlotType::TX;
             break;
         case MessageType::ROUTE_TABLE:
@@ -445,6 +446,15 @@ Result LoRaMeshProtocol::SendData(AddressType destination,
     }
 
     return network_service_->SendData(destination, data);
+}
+
+Result LoRaMeshProtocol::SendBroadcast(std::span<const uint8_t> data) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+
+    return network_service_->SendBroadcast(data);
 }
 
 Result LoRaMeshProtocol::Pause() {
