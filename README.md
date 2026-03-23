@@ -46,6 +46,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **Network manager election** — distributed NM election with configurable priority
 - **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
 - **Desktop simulation** — full native test environment with hardware mocks, no hardware required
+- **Broadcast messaging** — TTL-based flooding with per-node de-duplication
 - **Memory-safe** — tested under ASAN, UBSAN, and TSAN; no heap allocations per packet on ESP32
 - **LLVM coverage** — instrumented test environment with `llvm-cov` HTML/text reports
 
@@ -144,8 +145,9 @@ SensorData reading { .counter = 42 };
 // Unicast
 mesh.createPacketAndSend(destinationAddress, &reading, /*count=*/1);
 
-// Broadcast
-mesh.createPacketAndSend(kBroadcastAddress, &reading, 1);
+// Broadcast (reaches all nodes via TTL-based flooding)
+std::vector<uint8_t> data = {0x01, 0x02, 0x03};
+mesh.SendBroadcast(data);
 
 // Reliable (acknowledged, larger payloads)
 mesh.sendReliable(destinationAddress, &reading, 1);
@@ -431,7 +433,7 @@ pio test -e test_native -v"
 
 ### Packet Types
 
-`SYNC_BEACON` · `ROUTING_TABLE` · `NM_CLAIM` · `JOIN_REQUEST` · `JOIN_RESPONSE` · `SLOT_ALLOCATION` · `DATA` · `KEEP_ALIVE` · `FAULT_RECOVERY`
+`SYNC_BEACON` · `ROUTING_TABLE` · `NM_CLAIM` · `JOIN_REQUEST` · `JOIN_RESPONSE` · `SLOT_ALLOCATION` · `DATA` · `DATA_BROADCAST` · `KEEP_ALIVE` · `FAULT_RECOVERY`
 
 ---
 
