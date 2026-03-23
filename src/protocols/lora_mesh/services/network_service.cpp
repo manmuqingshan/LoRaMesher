@@ -1107,6 +1107,23 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             }
         }
 
+        // Verify no other node already holds this index (stale propagation
+        // can cause a previously-removed node to re-appear with an index
+        // that was already reassigned to another node)
+        if (control_slot_index != 0xFF) {
+            for (const auto& node : nodes) {
+                if (node.GetAddress() != source &&
+                    node.control_slot_index == control_slot_index) {
+                    LOG_WARNING(
+                        "Control slot index %d conflict: already assigned to "
+                        "0x%04X, reassigning for 0x%04X",
+                        control_slot_index, node.GetAddress(), source);
+                    control_slot_index = 0xFF;
+                    break;
+                }
+            }
+        }
+
         if (control_slot_index == 0xFF) {
             // New node: find lowest available control slot index
             control_slot_index = FindLowestAvailableControlSlot();
@@ -1650,7 +1667,8 @@ Result NetworkService::UpdateSlotTable() {
 
     if (network_manager_ == node_address_) {
         // NM: compute from actual assignments
-        uint8_t max_index = my_control_slot_index_;
+        uint8_t max_index =
+            (my_control_slot_index_ != 0xFF) ? my_control_slot_index_ : 0;
         for (const auto& node : ordered_nodes) {
             if (node.control_slot_index != 0xFF &&
                 node.control_slot_index > max_index) {
@@ -1788,7 +1806,8 @@ Result NetworkService::UpdateSlotTable() {
     // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
     for (size_t i = 0; i < allocated_control_slots_ && slot_index < slot_count_;
          i++) {
-        if (i == my_control_slot_index_ && network_manager_ != 0) {
+        if (my_control_slot_index_ != 0xFF && i == my_control_slot_index_ &&
+            network_manager_ != 0) {
             LOG_DEBUG(
                 "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
                 "%d)",
@@ -3085,7 +3104,9 @@ uint8_t NetworkService::GetMaxHopsFromRoutingTable() const {
 
 uint8_t NetworkService::FindLowestAvailableControlSlot() {
     std::set<uint8_t> used_indices;
-    used_indices.insert(my_control_slot_index_);  // NM's own slot (0)
+    if (my_control_slot_index_ != 0xFF) {
+        used_indices.insert(my_control_slot_index_);  // NM's own slot (0)
+    }
     for (const auto& node : routing_table_->GetNodes()) {
         if (node.control_slot_index != 0xFF) {
             used_indices.insert(node.control_slot_index);
