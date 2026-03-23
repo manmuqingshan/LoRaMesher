@@ -742,6 +742,15 @@ class NetworkService : public INetworkService {
     }
 
     /**
+     * @brief Set this node's control slot index (for testing)
+     *
+     * @param index Control slot index (0xFF = unassigned)
+     */
+    void SetMyControlSlotIndex(uint8_t index) {
+        my_control_slot_index_ = index;
+    }
+
+    /**
      * @brief Get this node's hop distance to the network manager
      *
      * @return uint8_t Hop distance to NM (0 if NM, 1 if unknown)
@@ -1076,7 +1085,7 @@ class NetworkService : public INetworkService {
 
     // Control slot assignment
     uint8_t my_control_slot_index_ =
-        0;  ///< This node's assigned control slot index (NM=0, others assigned at join)
+        0xFF;  ///< This node's assigned control slot index (0xFF=unassigned, NM=0, others assigned at join)
     uint8_t beacon_node_count_ =
         1;  ///< Authoritative node count from NM's sync beacon
 
