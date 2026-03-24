@@ -36,12 +36,15 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
 }
 
 void NetworkNodeRoute::LinkQualityStats::ExpectMessage() {
+    // Deferred decay: only apply EWMA decay if the previous expected
+    // message was actually missed (consecutive_missed > 0 means no
+    // ReceivedMessage() call since the last ExpectMessage())
+    if (consecutive_missed > 0) {
+        ewma_quality = static_cast<uint8_t>(
+            (static_cast<uint16_t>(256u - ewma_alpha) * ewma_quality) / 256u);
+    }
     messages_expected++;
     consecutive_missed++;
-    // EWMA decay: sample = 0 (missed message)
-    // ewma = (1 - alpha) * ewma = (256 - alpha) * ewma / 256
-    ewma_quality = static_cast<uint8_t>(
-        (static_cast<uint16_t>(256u - ewma_alpha) * ewma_quality) / 256u);
 }
 
 void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(

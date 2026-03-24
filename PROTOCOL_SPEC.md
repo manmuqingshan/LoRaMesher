@@ -901,11 +901,11 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 
 **EWMA Link Quality Tracking**:
 
-Direct neighbor routes are monitored via Exponentially Weighted Moving Average (EWMA) quality tracking. Each superframe, `UpdateLinkStatistics()` calls `ExpectMessage()` which decays the EWMA quality for direct neighbors that have not sent a routing message. When a routing message is received, `ReceivedMessage()` boosts the EWMA quality.
+Direct neighbor routes are monitored via Exponentially Weighted Moving Average (EWMA) quality tracking. Each superframe, `UpdateLinkStatistics()` calls `ExpectMessage()` for each active direct neighbor. EWMA decay is deferred: it only applies when the previous superframe's expected message was not received (`consecutive_missed > 0`). When a routing message is received, `ReceivedMessage()` boosts the EWMA quality. This ensures perfect reception converges to ~255 while missed messages still cause proportional quality degradation.
 
 The EWMA formula uses fixed-point arithmetic:
 - On received message: `ewma = α × 255 + (1 − α) × ewma`
-- On missed message: `ewma = (1 − α) × ewma`
+- On missed message (deferred to next `ExpectMessage`): `ewma = (1 − α) × ewma`
 
 Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
 
@@ -2926,7 +2926,7 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 This specification has been synchronized with the actual codebase as of version 1.7. Several features documented in earlier versions are marked as planned in Section 10:
 
 **v1.7 Changelog**:
-- **EWMA link quality** (Section 4.3): Replaced cumulative PDR ratio with EWMA for responsive link quality tracking. Configurable via `setLinkQualityEwmaAlpha()`.
+- **EWMA link quality** (Section 4.3): Uses deferred decay — quality only degrades when a message is actually missed, ensuring perfect reception converges to ~255. Configurable via `setLinkQualityEwmaAlpha()`.
 - **Re-activation hysteresis** (Section 4.3): Routes must receive `min_consecutive_for_reactivation` (default 2) consecutive messages before re-activation, preventing oscillation on marginal links.
 - **Multi-hop quality capping** (Section 4.3): Multi-hop cascade uses `min()` cap instead of quality halving; EWMA provides smooth degradation.
 - **Link quality configuration** (Section 10.6.5): New parameters `link_quality_ewma_alpha`, `consecutive_missed_for_inactivation`, `min_consecutive_for_reactivation`.
