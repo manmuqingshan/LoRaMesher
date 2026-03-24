@@ -244,7 +244,7 @@ std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
         return std::nullopt;
     }
 
-    const auto& network_nodes = mesh_protocol->GetNetworkNodes();
+    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
 
     std::optional<RouteEntry> best;
     uint16_t best_cost = UINT16_MAX;
@@ -320,7 +320,7 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         return routes;
     }
 
-    const auto& network_nodes = mesh_protocol->GetNetworkNodes();
+    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
     routes.reserve(network_nodes.size());
 
     for (const auto& node : network_nodes) {
