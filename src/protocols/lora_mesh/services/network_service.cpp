@@ -3394,9 +3394,11 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             discovery_start_time_ = GetRTOS().getTickCount();
             SetDiscoverySlots();
             SetState(ProtocolState::DISCOVERY);
+        } else {
+            // Our priority wins — send counter-claim so the remote NM can
+            // compare priorities and yield without waiting for beacon alignment
+            SendNMClaim();
         }
-        // else: our priority wins; the remote will surrender when they receive
-        // our NM_CLAIM (already queued by HandleForeignBeacon).
         return Result::Success();
     }
 
