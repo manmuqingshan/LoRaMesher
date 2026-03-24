@@ -397,7 +397,7 @@ Result NetworkService::StartJoining(AddressType /* manager_address */,
 
     // Reset join retry backoff
     join_retry_count_ = 0;
-    join_backoff_remaining_ = 0;
+    join_backoff_remaining_ = 1;
 
     // Record discovery start time
     joining_start_time_ = GetRTOS().getTickCount();
