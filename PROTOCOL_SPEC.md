@@ -321,7 +321,7 @@ JOIN_REQUEST  = 0x42,  // Request to join network (with sponsor support)
 JOIN_RESPONSE = 0x43,  // Response to join request (with routing semantics)
 ```
 
-**JOIN_REQUEST Format (Updated v1.3)**:
+**JOIN_REQUEST Format**:
 ```cpp
 struct JoinRequestHeader {
     // Standard message header (6 bytes)
@@ -339,7 +339,7 @@ struct JoinRequestHeader {
 };
 ```
 
-**JOIN_RESPONSE Format (Updated v1.3)**:
+**JOIN_RESPONSE Format**:
 ```cpp
 struct JoinResponseHeader {
     // Standard message header (6 bytes)
@@ -899,23 +899,31 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 - `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
 - `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
 
-**Two-Phase Link Quality Degradation**:
+**EWMA Link Quality Tracking**:
 
-In addition to the time-based route aging above, direct neighbor routes are monitored via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0.
+Direct neighbor routes are monitored via Exponentially Weighted Moving Average (EWMA) quality tracking. Each superframe, `UpdateLinkStatistics()` calls `ExpectMessage()` which decays the EWMA quality for direct neighbors that have not sent a routing message. When a routing message is received, `ReceivedMessage()` boosts the EWMA quality.
 
-After `kConsecutiveMissedForDegradation` (3) consecutive misses, link quality is halved each superframe. The route stays active but its ETX cost increases, naturally causing `IsBetterRoute` to prefer multi-hop alternatives when quality drops below the crossover point. Multi-hop routes via the degraded neighbor also have their quality halved (cascade degradation). After `kConsecutiveMissedForInactivation` (6) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
+The EWMA formula uses fixed-point arithmetic:
+- On received message: `ewma = α × 255 + (1 − α) × ewma`
+- On missed message: `ewma = (1 − α) × ewma`
 
-This two-phase approach allows ETX-based route selection to naturally transition traffic to alternative paths before hard invalidation occurs.
+Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
+
+Multi-hop routes via a degraded neighbor have their quality capped to the direct link quality (`min()` cascade), ensuring that indirect routes cannot appear better than the bottleneck link.
+
+After `consecutive_missed_for_inactivation` (default 10, configurable) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
-**Route Re-activation on Stale Entry**
+**Route Re-activation with Hysteresis**
 
-When `UpdateRoute()` is called for an inactive (`is_active=false`) node:
-- If the new advertisement is **genuinely better** (lower weighted cost), the route is updated normally.
-- If the new advertisement is **not better** (equal or worse hop count / quality), the node is **re-activated using the existing (better) route** — hop_count and next_hop are preserved. Only `is_active` and `last_seen` are refreshed.
+When `UpdateRoute()` or `ProcessRoutingTableMessage()` is called for an inactive (`is_active=false`) node:
+- If the new advertisement is **genuinely better** (lower weighted cost), the route is updated normally and activated immediately.
+- If the new advertisement is **not better** (equal or worse hop count / quality), a `recovery_counter` is incremented. The node is only re-activated when the counter reaches `min_consecutive_for_reactivation` (default 2, configurable). The existing (better) route's hop_count and next_hop are preserved.
 
-**Rationale**: without this guard, an expired direct-neighbor route (hop_count=1) could be overwritten with a stale 2-hop advertisement received from another node's routing table, causing false `max_hops` inflation that shifts the entire superframe structure.
+The hysteresis prevents oscillation on marginal links where a single lucky message would immediately re-activate a just-invalidated route, causing repeated slot table churn. The `recovery_counter` resets to 0 when a node is marked inactive.
+
+**Rationale**: without the route-preservation guard, an expired direct-neighbor route (hop_count=1) could be overwritten with a stale 2-hop advertisement, causing false `max_hops` inflation that shifts the entire superframe structure.
 
 ### 4.4 Network Topology Examples and Routing Behavior
 
@@ -2827,6 +2835,12 @@ struct DiscoveryResponse {
 
 `min_sleep_fraction` (default 30%) is **implemented**. It ensures a minimum percentage of superframe slots are reserved for sleep. Configured via `config.setMinSleepFraction(0.30f)` (range 0.0–0.9).
 
+`link_quality_ewma_alpha` (default 0.30) is **implemented**. EWMA smoothing factor for link quality tracking. Higher values make quality respond faster to changes. Configured via `config.setLinkQualityEwmaAlpha(0.30f)` (range 0.05–0.95).
+
+`consecutive_missed_for_inactivation` (default 10) is **implemented**. Number of consecutive superframes without a routing message before a direct neighbor is marked inactive. Configured via `config.setConsecutiveMissedForInactivation(10)` (range 4–30).
+
+`min_consecutive_for_reactivation` (default 2) is **implemented**. Number of consecutive routing message receptions required before an inactive route is re-activated (hysteresis). Configured via `config.setMinConsecutiveForReactivation(2)` (range 1–10).
+
 ```cpp
 // Remaining planned additions
 uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms) — not yet implemented
@@ -2850,6 +2864,11 @@ uint8_t checksum;        // XOR checksum of entire frame
 
 A composite cost formula combining hop count and link quality has been implemented.
 See Section 4.1 for details on the `CalculateRouteCost()` function and `IsBetterRouteThan()` method.
+
+**EWMA Link Quality and Re-activation Hysteresis** (Implemented):
+
+EWMA-based link quality tracking and hysteresis-based re-activation are implemented.
+See Section 4.3 for details on EWMA quality calculation, multi-hop quality capping, and the `recovery_counter` mechanism.
 
 **Explicit Route Poisoning**:
 ```cpp
@@ -2904,7 +2923,13 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 - **Memory Footprint**: ~4.4KB RAM usage suitable for ESP32 deployment
 
 ### Implementation Notes
-This specification has been synchronized with the actual codebase as of version 1.6. Several features documented in earlier versions are marked as planned in Section 10:
+This specification has been synchronized with the actual codebase as of version 1.7. Several features documented in earlier versions are marked as planned in Section 10:
+
+**v1.7 Changelog**:
+- **EWMA link quality** (Section 4.3): Replaced cumulative PDR ratio with EWMA for responsive link quality tracking. Configurable via `setLinkQualityEwmaAlpha()`.
+- **Re-activation hysteresis** (Section 4.3): Routes must receive `min_consecutive_for_reactivation` (default 2) consecutive messages before re-activation, preventing oscillation on marginal links.
+- **Multi-hop quality capping** (Section 4.3): Multi-hop cascade uses `min()` cap instead of quality halving; EWMA provides smooth degradation.
+- **Link quality configuration** (Section 10.6.5): New parameters `link_quality_ewma_alpha`, `consecutive_missed_for_inactivation`, `min_consecutive_for_reactivation`.
 
 **v1.6 Changelog**:
 - **NM_ELECTION state** (Section 2.2): New state added; node broadcasts NM_CLAIM and waits for counter-claims before calling `CreateNetwork()`.

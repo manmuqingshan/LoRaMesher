@@ -71,10 +71,10 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
     uint32_t step_ms = 15u;
 
     uint32_t end_superframe_time = 0;
-    // Wait for routing tables to update
-    // The route from N1 to N3 should now go through N2 or N4
+    // Wait for routing tables to update (needs enough superframes for EWMA
+    // decay + inactivation threshold + distance-vector convergence)
     bool updated = AdvanceTime(
-        superframe_time * 8, superframe_time * 8, step_ms, 0, [&]() {
+        superframe_time * 16, superframe_time * 16, step_ms, 0, [&]() {
             // N1 should still have a route to N3, but with more hops
             if (!HasRouteTo(*nodes[0], nodes[2]->address)) {
                 return false;

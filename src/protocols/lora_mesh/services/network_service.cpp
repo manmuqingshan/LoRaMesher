@@ -540,6 +540,15 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     node_role_ = config.node_role;
     target_duty_cycle_ = config.target_duty_cycle;
     min_sleep_fraction_ = config.min_sleep_fraction;
+    ewma_alpha_fixed_ = static_cast<uint8_t>(
+        std::clamp(config.link_quality_ewma_alpha, 0.05f, 0.95f) * 256.0f);
+    consecutive_missed_for_inactivation_ =
+        config.consecutive_missed_for_inactivation;
+    min_consecutive_for_reactivation_ = config.min_consecutive_for_reactivation;
+
+    routing_table_->SetLinkQualityParams(ewma_alpha_fixed_,
+                                         consecutive_missed_for_inactivation_,
+                                         min_consecutive_for_reactivation_);
 
     LOG_INFO("Network service configured with node address 0x%04X, role: %d",
              node_address_, static_cast<int>(node_role_));
