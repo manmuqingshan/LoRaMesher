@@ -1445,8 +1445,10 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     // We are the next hop - check if we are also the final destination
     if (final_dest == node_address_) {
         // Deliver to application layer
-        LOG_INFO("DATA reached final destination from 0x%04X, payload_size=%zu",
-                 original_src, data_msg.GetPayload().size());
+        LOG_INFO(
+            "DATA reached final destination: src=0x%04X, dest=0x%04X, seq=%u, "
+            "payload_size=%zu",
+            original_src, final_dest, seq_num, data_msg.GetPayload().size());
 
         if (data_received_callback_) {
             data_received_callback_(original_src, data_msg.GetPayload());
@@ -1457,13 +1459,14 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     } else {
         // TTL check before forwarding
         if (ttl <= 1) {
-            LOG_WARNING("DATA TTL expired (src=0x%04X, dest=0x%04X), dropping",
-                        original_src, final_dest);
+            LOG_WARNING(
+                "DATA TTL expired: src=0x%04X, dest=0x%04X, seq=%u, dropping",
+                original_src, final_dest, seq_num);
             return Result::Success();
         }
         // Forward to next hop toward final destination
-        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X (ttl=%u)", original_src,
-                 final_dest, ttl);
+        LOG_INFO("Forwarding DATA: src=0x%04X, dest=0x%04X, seq=%u, ttl=%u",
+                 original_src, final_dest, seq_num, ttl);
         return ForwardDataMessage(data_msg);
     }
 
@@ -1475,8 +1478,9 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
     AddressType new_next_hop = FindNextHop(original_msg.GetDestination());
 
     if (new_next_hop == 0) {
-        LOG_ERROR("No route found to destination 0x%04X for forwarding",
-                  original_msg.GetDestination());
+        LOG_ERROR("No route to dest=0x%04X for forwarding: src=0x%04X, seq=%u",
+                  original_msg.GetDestination(), original_msg.GetSource(),
+                  original_msg.GetSeqNum());
         return Result(LoraMesherErrorCode::kNoRoute,
                       "No route to destination for forwarding");
     }
