@@ -8,15 +8,15 @@ In the sf9_17Power_experiment with 15 nodes, node 0x3428 could receive routing t
 
 ## Root Cause
 
-The library has the data to detect unidirectional links but two code locations prevented it from acting:
+The library has the data to detect unidirectional links but three code locations prevented it from acting:
 
 ### Failure Chain
 
 1. **Route change**: Node 0x3428 receives a routing table broadcast from 0x77A4, marking it as a direct neighbor (hop_count=1). This replaces the correct 2-hop route via=0x006C.
 
-2. **Quality looks excellent**: Link quality to 0x77A4 calculates as 230/255 based on one-way EWMA reception. The library checks what 0x77A4 reports about 0x3428 via `GetLinkQualityFor(0x3428)`, which returns 0 (0x77A4 has never heard 0x3428). But `network_service.cpp` defaults 0 to 128, masking the unidirectional nature. Final quality: (230 + 128) / 2 = 179.
+2. **Quality looks excellent**: Link quality to 0x77A4 calculates as 230/255 based on one-way EWMA reception. The library checks what 0x77A4 reports about 0x3428 via `GetLinkQualityFor(0x3428)`. In a mesh, 0x77A4 typically has a multi-hop route to 0x3428 (e.g., hop_count=2 via 0x006C, quality=251), so `GetLinkQualityFor()` returns 251 instead of 0, masking the unidirectional nature. Final quality: (230 + 251) / 2 = 240.
 
-3. **Wrong path selected**: With quality 179 at 1 hop, the direct route is preferred over the working 2-hop route via 0x006C (quality ~90).
+3. **Wrong path selected**: With quality 240 at 1 hop, the direct route is preferred over the working 2-hop route via 0x006C.
 
 4. **TDMA slot mismatch**: Node 0x3428 allocates a DATA TX slot for sending to 0x77A4. But 0x77A4 doesn't know 0x3428 as a direct neighbor, so it allocates that slot as SLEEP (radio off).
 
@@ -24,31 +24,23 @@ The library has the data to detect unidirectional links but two code locations p
 
 6. **Repeats indefinitely**: All 27+ monitoring messages forwarded toward 0x77A4 via 0x3428 are lost.
 
-### Bug Locations
+### Bug Locations (Fixed)
 
-**`network_service.cpp:213-214`** — Masks `GetLinkQualityFor()=0` by defaulting to 128:
-```cpp
-uint8_t local_link_quality = routing_msg.GetLinkQualityFor(node_address_);
-if (local_link_quality == 0) {
-    local_link_quality = 128;  // Masks unidirectional links
-}
-```
+**Bug 1 (fixed in commit 16a310e)**: `network_service.cpp` masked `GetLinkQualityFor()=0` by defaulting to 128.
 
-**`network_node_route.cpp:CalculateQuality()`** — No penalty when `remote_link_quality == 0`:
-```cpp
-if (remote_link_quality > 0) {
-    return (ewma_quality + remote_link_quality) / 2;
-}
-return ewma_quality;  // Full quality even though peer can't hear us
-```
+**Bug 2 (fixed in commit 16a310e)**: `network_node_route.cpp:CalculateQuality()` had no penalty when `remote_link_quality == 0`.
+
+**Bug 3 (fixed post-experiment)**: `routing_table_message.cpp:GetLinkQualityFor()` returned link_quality for ANY entry matching the destination, including multi-hop indirect routes. In a real mesh, the peer almost always has some multi-hop route to us via NM, so `remote_link_quality` was never 0 and the penalty from Bug 2's fix never triggered.
+
+Fix: `GetLinkQualityFor()` now filters by `hop_count == 1`. Only a direct-neighbor entry proves the peer hears us. On the sender side, `SetLinkQualityFor()` already only updates quality for `IsDirectNeighbor()` entries, so multi-hop entries contain routing-table quality (not link quality) and should not be used for unidirectional detection.
 
 ## Detection Algorithm
 
 ### Mechanism
 
-When node A receives a routing table from node B, A checks whether B lists A in its entries via `GetLinkQualityFor(A)`. If A is not listed, `GetLinkQualityFor()` returns 0, meaning "B doesn't hear A."
+When node A receives a routing table from node B, A checks whether B lists A as a **direct neighbor** (hop_count=1) via `GetLinkQualityFor(A)`. The function only considers hop_count==1 entries — multi-hop entries are ignored because they prove indirect reachability, not direct radio contact. If A is not listed as a direct neighbor, `GetLinkQualityFor()` returns 0, meaning "B doesn't hear A directly."
 
-The fix lets this 0 propagate (instead of defaulting to 128) and adds a penalty after confirmation:
+The detection adds a penalty after confirmation:
 
 1. **Grace period**: For the first 2 routing table exchanges, `remote_link_quality=0` is tolerated. The peer hasn't had time to list us yet — bidirectional links typically get `remote_link_quality > 0` by superframe 2.
 

@@ -486,8 +486,21 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     kMinExpectedForDegradation &&
                 node.link_stats.messages_received >=
                     kMinMessagesBeforeInvalidation) {
+                uint8_t old_quality = node.routing_entry.link_quality;
                 node.routing_entry.link_quality =
                     node.link_stats.CalculateQuality();
+                if (node.routing_entry.link_quality != old_quality) {
+                    LOG_DEBUG(
+                        "LinkStats 0x%04X: quality %d -> %d "
+                        "(ewma=%d remote=%d exp=%d recv=%d missed=%d)",
+                        node.routing_entry.destination, old_quality,
+                        node.routing_entry.link_quality,
+                        node.link_stats.ewma_quality,
+                        node.link_stats.remote_link_quality,
+                        node.link_stats.messages_expected,
+                        node.link_stats.messages_received,
+                        node.link_stats.consecutive_missed);
+                }
                 LogRouteEntry(node);
 
                 // Cascade: cap multi-hop routes through this neighbor
@@ -550,6 +563,18 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Update existing source node - it's a direct neighbor
         source_node_it->ReceivedRoutingMessage(local_link_quality,
                                                reception_timestamp);
+        LOG_DEBUG(
+            "Source 0x%04X: remote_quality=%d ewma=%d link_quality=%d "
+            "expected=%d received=%d%s",
+            source_address, local_link_quality,
+            source_node_it->link_stats.ewma_quality,
+            source_node_it->routing_entry.link_quality,
+            source_node_it->link_stats.messages_expected,
+            source_node_it->link_stats.messages_received,
+            (local_link_quality == 0 &&
+             source_node_it->link_stats.messages_expected >= 3)
+                ? " [UNIDIRECTIONAL]"
+                : "");
 
         // Always update capabilities for direct neighbor (source of the message)
         // The source is always the next hop to itself for direct neighbors

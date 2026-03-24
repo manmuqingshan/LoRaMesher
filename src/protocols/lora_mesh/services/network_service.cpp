@@ -208,8 +208,10 @@ Result NetworkService::ProcessRoutingTableMessage(
         last_sync_time_ = reception_timestamp;
     }
 
-    // Get local link quality to the source (0 = peer doesn't list us)
+    // Get local link quality to the source (0 = peer doesn't list us as direct)
     uint8_t local_link_quality = routing_msg.GetLinkQualityFor(node_address_);
+    LOG_DEBUG("Remote link quality from 0x%04X for us (0x%04X): %d", source,
+              node_address_, local_link_quality);
 
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
