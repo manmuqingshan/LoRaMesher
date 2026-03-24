@@ -38,24 +38,22 @@ AddressType DistanceVectorRoutingTable::FindNextHop(
         return node_address_;
     }
 
-    // Find best active route
+    // Find best active route using ETX cost (consistent with IsBetterRouteThan)
     AddressType best_next_hop = 0;
+    uint16_t best_cost = UINT16_MAX;
     uint8_t best_hop_count = UINT8_MAX;
-    uint8_t best_link_quality = 0;
 
     for (const auto& node : nodes_) {
         if (node.routing_entry.destination == destination && node.is_active) {
-            // Prefer routes with fewer hops
-            if (node.routing_entry.hop_count < best_hop_count) {
+            uint16_t cost = types::protocols::lora_mesh::NetworkNodeRoute::
+                CalculateRouteCost(node.routing_entry.hop_count,
+                                   node.routing_entry.link_quality);
+            if (cost < best_cost ||
+                (cost == best_cost &&
+                 node.routing_entry.hop_count < best_hop_count)) {
+                best_cost = cost;
                 best_hop_count = node.routing_entry.hop_count;
                 best_next_hop = node.next_hop;
-                best_link_quality = node.routing_entry.link_quality;
-            }
-            // If hop counts equal, prefer better link quality
-            else if (node.routing_entry.hop_count == best_hop_count &&
-                     node.routing_entry.link_quality > best_link_quality) {
-                best_next_hop = node.next_hop;
-                best_link_quality = node.routing_entry.link_quality;
             }
         }
     }
