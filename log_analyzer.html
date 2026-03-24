@@ -11,6 +11,11 @@
             padding: 20px;
             background: #f5f5f5;
         }
+        .node-id {
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
+            font-variant-numeric: tabular-nums;
+        }
         .container {
             max-width: 1400px;
             margin: 0 auto;
@@ -303,10 +308,14 @@
         .message-from {
             font-weight: bold;
             color: #e74c3c;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
         }
         .message-to {
             font-weight: bold;
             color: #27ae60;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
         }
         .stats-grid {
             display: grid;
@@ -366,7 +375,8 @@
         .delivery-table td:first-child,
         .delivery-table th:first-child {
             text-align: left;
-            font-family: monospace;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
         }
         .delivery-table tbody tr:hover {
             background: #f8f9fa;
@@ -405,7 +415,8 @@
             padding: 2px 6px;
             background: #e8f4f8;
             border-radius: 3px;
-            font-family: monospace;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
             font-size: 12px;
         }
         .hop-arrow { color: #adb5bd; font-size: 11px; }
@@ -423,7 +434,8 @@
         }
         .heatmap-table th {
             background: #f1f3f5;
-            font-family: monospace;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
             font-size: 11px;
         }
         .heatmap-cell {
@@ -713,6 +725,8 @@
             padding: 0 6px;
             font-weight: bold;
             font-size: 12px;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
             color: #2c3e50;
             border-bottom: 1px solid #eee;
             overflow: hidden;
@@ -1012,8 +1026,8 @@
                 <div id="deliveryHeatmap" class="delivery-table-wrapper"></div>
                 <div class="delivery-section-title">Message Flows</div>
                 <div class="delivery-filters">
-                    <label>Source: <select id="deliverySrcFilter" onchange="analyzer.renderDelivery()"><option value="">All</option></select></label>
-                    <label>Dest: <select id="deliveryDstFilter" onchange="analyzer.renderDelivery()"><option value="">All</option></select></label>
+                    <label>Source: <select id="deliverySrcFilter" class="node-id" onchange="analyzer.renderDelivery()"><option value="">All</option></select></label>
+                    <label>Dest: <select id="deliveryDstFilter" class="node-id" onchange="analyzer.renderDelivery()"><option value="">All</option></select></label>
                     <label>Status: <select id="deliveryStatusFilter" onchange="analyzer.renderDelivery()">
                         <option value="">All</option>
                         <option value="delivered">Delivered</option>
@@ -3201,7 +3215,8 @@
 
                 const flows = this.messageFlows;
                 const totalSent = flows.filter(f => f.sentTime !== null).length;
-                const totalDelivered = flows.filter(f => f.status === 'delivered').length;
+                const totalDelivered = flows.filter(f => f.status === 'delivered' && f.sentTime !== null).length;
+                const untrackedDeliveries = flows.filter(f => f.status === 'delivered' && f.sentTime === null).length;
                 const totalDropped = flows.filter(f => f.status.startsWith('dropped')).length;
                 const totalInFlight = flows.filter(f => f.status === 'in_flight').length;
                 const deliveredWithLatency = flows.filter(f => f.latency !== null && f.latency >= 0);
@@ -3222,6 +3237,7 @@
                     { label: 'Max Latency', value: maxLatency === '-' ? '-' : maxLatency + ' ms' },
                     { label: 'Dropped', value: totalDropped, color: totalDropped > 0 ? '#e74c3c' : undefined },
                     { label: 'In-Flight', value: totalInFlight, color: totalInFlight > 0 ? '#f39c12' : undefined },
+                    ...(untrackedDeliveries > 0 ? [{ label: 'Untracked Deliveries', value: untrackedDeliveries, color: '#8e44ad' }] : []),
                 ];
                 summaryEl.innerHTML = cards.map(c => `
                     <div class="stat-card">
@@ -3395,9 +3411,9 @@
                     const rowId = `flow-${flow.key.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
                     html += `<tr class="flow-row" onclick="document.getElementById('${rowId}').classList.toggle('show')">
-                        <td>0x${flow.src}</td><td>0x${flow.dest}</td><td>${flow.seq}</td>
+                        <td class="node-id">0x${flow.src}</td><td class="node-id">0x${flow.dest}</td><td>${flow.seq}</td>
                         <td><span class="flow-status ${statusClass}">${statusLabel}</span></td>
-                        <td style="text-align:left; font-family:monospace; font-size:12px;">${pathStr}</td>
+                        <td class="node-id" style="text-align:left; font-size:12px;">${pathStr}</td>
                         <td>${latStr}</td><td>${sizeStr}</td>
                     </tr>`;
 
@@ -3779,7 +3795,7 @@
                     text.setAttribute('text-anchor', 'middle');
                     text.setAttribute('dominant-baseline', 'central');
                     text.setAttribute('fill', 'white');
-                    text.setAttribute('font-family', 'monospace');
+                    text.setAttribute('font-family', "Menlo, Consolas, 'DejaVu Sans Mono', monospace");
                     text.setAttribute('font-size', '12');
                     text.setAttribute('font-weight', 'bold');
                     text.setAttribute('pointer-events', 'none');
