@@ -158,6 +158,16 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                 LogRouteEntry(*node_it);
             }
         }
+
+        // Capability propagation: update even when route cost hasn't
+        // changed, so a late-arriving GATEWAY flag isn't lost
+        if (node_it->is_active && capabilities != 0 &&
+            capabilities != node_it->routing_entry.capabilities &&
+            (node_it->routing_entry.capabilities == 0 ||
+             node_it->next_hop == source)) {
+            node_it->routing_entry.capabilities = capabilities;
+            route_changed = true;
+        }
     } else {
         // Add new node
         if (WouldExceedLimit()) {
@@ -786,6 +796,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                                       hop_count_via_source);
                     LogRouteEntry(*node_it);
                 }
+            }
+
+            // Capability propagation: update even when route cost hasn't
+            // changed, so a late-arriving GATEWAY flag isn't lost
+            if (node_it->is_active && entry.capabilities != 0 &&
+                entry.capabilities != node_it->routing_entry.capabilities &&
+                (node_it->routing_entry.capabilities == 0 ||
+                 node_it->next_hop == source_address)) {
+                node_it->routing_entry.capabilities = entry.capabilities;
+                routing_changed = true;
             }
 
             // Always refresh last_seen — receiving routing info about this
