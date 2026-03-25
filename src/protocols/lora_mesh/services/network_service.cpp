@@ -1483,6 +1483,16 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
                   original_msg.GetSeqNum());
         return Result(LoraMesherErrorCode::kNoRoute,
                       "No route to destination for forwarding");
+    } else if (new_next_hop == original_msg.GetSource()) {
+        LOG_ERROR(
+            "Next hop for forwarding is the original sender (0x%04X) - "
+            "potential routing loop, dropping message: src=0x%04X, "
+            "dest=0x%04X, seq=%u",
+            new_next_hop, original_msg.GetSource(),
+            original_msg.GetDestination(), original_msg.GetSeqNum());
+        return Result(
+            LoraMesherErrorCode::kNoRoute,
+            "Next hop is the original sender, potential routing loop");
     }
 
     auto forwarded_msg =
