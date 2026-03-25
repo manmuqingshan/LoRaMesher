@@ -786,6 +786,165 @@
             border: 6px solid transparent;
             border-bottom-color: rgba(30,39,46,0.97);
         }
+        /* ── Link Detail Panel ── */
+        .topology-wrapper {
+            position: relative;
+            overflow: hidden;
+        }
+        .link-detail-panel {
+            position: absolute;
+            right: 0; top: 0; bottom: 0;
+            width: 420px;
+            background: white;
+            border-left: 2px solid #dee2e6;
+            box-shadow: -3px 0 12px rgba(0,0,0,0.1);
+            transform: translateX(100%);
+            transition: transform 0.25s ease;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .link-detail-panel.open {
+            transform: translateX(0);
+        }
+        .link-detail-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid #dee2e6;
+            background: #f8f9fa;
+            flex-shrink: 0;
+        }
+        .link-detail-header span {
+            font-weight: 600;
+            font-size: 14px;
+            color: #2c3e50;
+        }
+        .link-detail-header button {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            color: #7f8c8d;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .link-detail-header button:hover {
+            background: #e9ecef;
+            color: #2c3e50;
+        }
+        .link-detail-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px;
+        }
+        .link-list-group {
+            margin-bottom: 16px;
+        }
+        .link-list-group-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #7f8c8d;
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
+        .link-list-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .link-list-row:hover {
+            background: #f0f4f8;
+        }
+        .link-quality-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .link-peer-id {
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: #2c3e50;
+            min-width: 70px;
+        }
+        .link-sparkline-wrap {
+            flex: 1;
+            height: 30px;
+        }
+        .link-sparkline-wrap canvas {
+            width: 100%;
+            height: 100%;
+        }
+        .link-stat {
+            font-size: 11px;
+            color: #7f8c8d;
+            text-align: right;
+            min-width: 30px;
+        }
+        .link-chart-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 13px;
+            color: #3498db;
+            cursor: pointer;
+            margin-bottom: 10px;
+            padding: 4px 0;
+        }
+        .link-chart-back:hover {
+            text-decoration: underline;
+        }
+        .link-chart-title {
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            font-weight: 700;
+            font-size: 14px;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        .link-chart-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+            font-size: 13px;
+        }
+        .link-chart-canvas {
+            width: 100%;
+            height: 140px;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .link-chart-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 4px;
+        }
+        .network-node-circle {
+            cursor: pointer;
+        }
+        .network-node-circle.selected-node {
+            filter: drop-shadow(0 0 6px rgba(52,152,219,0.8));
+        }
+        .network-node-circle.multi-selected {
+            stroke: #e74c3c !important;
+            stroke-width: 3 !important;
+            filter: drop-shadow(0 0 4px rgba(231,76,60,0.6));
+        }
+        .network-edge-path.selected-edge {
+            filter: drop-shadow(0 0 4px rgba(52,152,219,0.7));
+        }
     </style>
 </head>
 <body>
@@ -993,14 +1152,21 @@
                         <span id="networkTimestamp" style="font-family:monospace; min-width:180px; text-align:right; color:#2c3e50;">Latest</span>
                     </div>
                 </div>
-                <!-- SVG canvas -->
-                <div style="border:1px solid #ddd; border-radius:6px; overflow:hidden;">
+                <!-- SVG canvas + Link detail panel -->
+                <div class="topology-wrapper" style="border:1px solid #ddd; border-radius:6px;">
                     <svg id="networkSvg" width="100%" height="600" style="display:block; background:#fafafa;">
                         <defs id="networkDefs"></defs>
                         <g id="networkEdges"></g>
                         <g id="networkNodes"></g>
                         <g id="networkLabels"></g>
                     </svg>
+                    <div id="linkDetailPanel" class="link-detail-panel">
+                        <div class="link-detail-header">
+                            <span id="linkDetailTitle"></span>
+                            <button onclick="analyzer.closeLinkPanel()">&times;</button>
+                        </div>
+                        <div id="linkDetailContent" class="link-detail-content"></div>
+                    </div>
                 </div>
                 <!-- Legend -->
                 <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:10px; font-size:13px; color:#495057;">
@@ -1010,6 +1176,9 @@
                     <span><span style="display:inline-block;width:14px;height:4px;border-top:3px dashed #aaa;vertical-align:middle;margin-right:4px;"></span>Inactive</span>
                     <span><span style="display:inline-block;width:14px;height:4px;border-top:2px dashed #9b59b6;vertical-align:middle;margin-right:4px;"></span>Inferred (multi-hop)</span>
                     <span><span style="display:inline-block;width:14px;height:14px;background:#f1c40f;border-radius:50%;vertical-align:middle;border:2px solid #f39c12;margin-right:4px;"></span>Network Manager</span>
+                </div>
+                <div style="font-size:12px; color:#7f8c8d; margin-top:6px;">
+                    Tip: Click node for link details. Ctrl+click to multi-select, then scroll to spread/contract. Scroll without selection to zoom.
                 </div>
                 <!-- Empty state -->
                 <div id="networkEmpty" style="text-align:center; color:#7f8c8d; padding:40px; display:none;">
@@ -1191,11 +1360,19 @@
                 this.dataEvents      = [];        // [{timestamp, nodeId, eventType, src, dest, seq, ...}]
                 this.messageFlows    = [];        // built by buildMessageFlows()
                 this.linkStats       = new Map();  // "sender-receiver" -> {sent, received}
+                this.linkRFHistory   = new Map();  // "receiver-sender" -> [{timestamp, rssi, snr}]
+                this.linkQualityHistory = new Map(); // "nodeId-dest" -> [{timestamp, quality, active}]
+                this._linkPanelOpen  = false;
+                this._linkPanelNode  = null;
+                this._linkPanelExpanded = null; // {from, to} when drilled into a specific link
                 this.nodePositions   = new Map(); // nodeId -> {x, y} — persists across time scrubs
                 this.networkCurrentTime = null;   // null = snap to latest on render
                 this.showInferredLinks = true;
                 this._dragging = null;
                 this._networkDragSetup = false;
+                this._forceLayoutDone = false;
+                this._selectedNodes = new Set();
+                this._svgViewBox = null; // {x, y, w, h} for zoom state
                 this.superframeBoundaries = [];
                 this._hitMap = [];
                 this._tlDrag = null;
@@ -1229,6 +1406,14 @@
             }
 
             setupEventListeners() {
+                // Escape key closes link detail panel and clears multi-selection
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        if (this._linkPanelOpen) this.closeLinkPanel();
+                        if (this._selectedNodes.size > 0) this._clearMultiSelection();
+                    }
+                });
+
                 const uploadSection = document.getElementById('uploadSection');
                 const fileInput = document.getElementById('fileInput');
                 const refreshDropZone = document.getElementById('refreshDropZone');
@@ -2119,6 +2304,8 @@
                 this.routingEntries = [];
                 this.dataEvents = [];
                 this.originalTimeMap.clear();
+                this._forceLayoutDone = false;
+                this.nodePositions.clear();
 
                 let allTimestamps = [];
 
@@ -2198,6 +2385,42 @@
                 this.superframeBoundaries = this.events
                     .filter(e => e.type === 'slot_transition' && e.slotNum === 0)
                     .map(e => e.timestamp);
+
+                this.buildLinkTimeSeries();
+            }
+
+            buildLinkTimeSeries() {
+                this.linkRFHistory.clear();
+                this.linkQualityHistory.clear();
+
+                // RF history from received messages with RSSI/SNR
+                for (const msg of this.messages) {
+                    if (msg.direction !== 'received' || msg.rssi === undefined) continue;
+                    const sender = msg.from ? msg.from.replace(/^0x/i, '').toUpperCase() : null;
+                    const receiver = msg.nodeId ? msg.nodeId.toUpperCase() : null;
+                    if (!sender || !receiver) continue;
+                    const key = `${receiver}-${sender}`;
+                    if (!this.linkRFHistory.has(key)) this.linkRFHistory.set(key, []);
+                    this.linkRFHistory.get(key).push({
+                        timestamp: msg.timestamp, rssi: msg.rssi, snr: msg.snr
+                    });
+                }
+
+                // Quality history from routing entries (direct neighbors only)
+                for (const entry of this.routingEntries) {
+                    if (entry.hops !== 1) continue;
+                    const nodeId = entry.nodeId.toUpperCase();
+                    const dest = entry.dest.toUpperCase();
+                    const key = `${nodeId}-${dest}`;
+                    if (!this.linkQualityHistory.has(key)) this.linkQualityHistory.set(key, []);
+                    this.linkQualityHistory.get(key).push({
+                        timestamp: entry.timestamp, quality: entry.quality, active: entry.active
+                    });
+                }
+
+                // Sort each array by timestamp
+                this.linkRFHistory.forEach(arr => arr.sort((a, b) => a.timestamp - b.timestamp));
+                this.linkQualityHistory.forEach(arr => arr.sort((a, b) => a.timestamp - b.timestamp));
             }
 
             toggleFile(fileId) {
@@ -3512,18 +3735,134 @@
                 return timestamps; // Already sorted since routingEntries is sorted
             }
 
-            getInitialNodePositions(nodeIds, W, H) {
-                // Circular layout; preserves already-dragged positions
-                const cx = W / 2, cy = H / 2, r = Math.min(W, H) * 0.35;
-                nodeIds.forEach((nodeId, i) => {
+            getAllTimeLinks() {
+                // Collect all direct links across all time steps with average quality
+                const linkMap = new Map(); // "from-to" -> {from, to, totalQuality, count}
+                for (const entry of this.routingEntries) {
+                    if (entry.hops !== 1 || !entry.active) continue;
+                    const key = `${entry.nodeId}-${entry.dest}`;
+                    if (!linkMap.has(key)) {
+                        linkMap.set(key, { from: entry.nodeId, to: entry.dest, totalQuality: 0, count: 0 });
+                    }
+                    const l = linkMap.get(key);
+                    l.totalQuality += entry.quality;
+                    l.count++;
+                }
+                return Array.from(linkMap.values()).map(l => ({
+                    from: l.from, to: l.to, quality: l.totalQuality / l.count
+                }));
+            }
+
+            forceDirectedLayout(nodeIds, links, W, H) {
+                const PAD = 40;
+                const ITERATIONS = 150;
+                const K_REPEL = 8000;
+                const K_ATTRACT = 0.005;
+                const REST_LENGTH = 120;
+                const CENTER_PULL = 0.01;
+                const MAX_FORCE = 10;
+                const cx = W / 2, cy = H / 2;
+
+                // Initialize positions: random within bounds for new nodes
+                nodeIds.forEach(nodeId => {
                     if (!this.nodePositions.has(nodeId)) {
-                        const angle = (2 * Math.PI * i) / nodeIds.length - Math.PI / 2;
                         this.nodePositions.set(nodeId, {
-                            x: cx + r * Math.cos(angle),
-                            y: cy + r * Math.sin(angle)
+                            x: PAD + Math.random() * (W - 2 * PAD),
+                            y: PAD + Math.random() * (H - 2 * PAD)
                         });
                     }
                 });
+
+                // Build adjacency set for quick lookup
+                const nodeSet = new Set(nodeIds);
+                const validLinks = links.filter(l => nodeSet.has(l.from) && nodeSet.has(l.to));
+
+                // Velocity array
+                const vel = new Map();
+                nodeIds.forEach(id => vel.set(id, { vx: 0, vy: 0 }));
+
+                for (let iter = 0; iter < ITERATIONS; iter++) {
+                    const cooling = 1 - iter / ITERATIONS; // Linear cooling
+                    const damping = 0.85;
+
+                    // Reset forces
+                    const forces = new Map();
+                    nodeIds.forEach(id => forces.set(id, { fx: 0, fy: 0 }));
+
+                    // Repulsion: all pairs
+                    for (let i = 0; i < nodeIds.length; i++) {
+                        const a = nodeIds[i];
+                        const posA = this.nodePositions.get(a);
+                        for (let j = i + 1; j < nodeIds.length; j++) {
+                            const b = nodeIds[j];
+                            const posB = this.nodePositions.get(b);
+                            let dx = posA.x - posB.x;
+                            let dy = posA.y - posB.y;
+                            let dist = Math.sqrt(dx * dx + dy * dy);
+                            if (dist < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; dist = 1; }
+                            const force = Math.min(MAX_FORCE, K_REPEL / (dist * dist));
+                            const fx = (dx / dist) * force;
+                            const fy = (dy / dist) * force;
+                            forces.get(a).fx += fx;
+                            forces.get(a).fy += fy;
+                            forces.get(b).fx -= fx;
+                            forces.get(b).fy -= fy;
+                        }
+                    }
+
+                    // Attraction: along edges
+                    validLinks.forEach(link => {
+                        const posA = this.nodePositions.get(link.from);
+                        const posB = this.nodePositions.get(link.to);
+                        const dx = posB.x - posA.x;
+                        const dy = posB.y - posA.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < 1) return;
+                        const strength = K_ATTRACT * (1 + (link.quality || 128) / 255);
+                        const displacement = dist - REST_LENGTH;
+                        const force = strength * displacement;
+                        const fx = (dx / dist) * force;
+                        const fy = (dy / dist) * force;
+                        forces.get(link.from).fx += fx;
+                        forces.get(link.from).fy += fy;
+                        forces.get(link.to).fx -= fx;
+                        forces.get(link.to).fy -= fy;
+                    });
+
+                    // Centering pull
+                    nodeIds.forEach(id => {
+                        const pos = this.nodePositions.get(id);
+                        forces.get(id).fx += (cx - pos.x) * CENTER_PULL;
+                        forces.get(id).fy += (cy - pos.y) * CENTER_PULL;
+                    });
+
+                    // Apply forces with velocity and cooling
+                    nodeIds.forEach(id => {
+                        const v = vel.get(id);
+                        const f = forces.get(id);
+                        v.vx = (v.vx + f.fx * cooling) * damping;
+                        v.vy = (v.vy + f.fy * cooling) * damping;
+                        const pos = this.nodePositions.get(id);
+                        pos.x = Math.max(PAD, Math.min(W - PAD, pos.x + v.vx));
+                        pos.y = Math.max(PAD, Math.min(H - PAD, pos.y + v.vy));
+                    });
+                }
+            }
+
+            getInitialNodePositions(nodeIds, W, H) {
+                if (!this._forceLayoutDone) {
+                    // First render: run full force-directed simulation using all-time links
+                    const allLinks = this.getAllTimeLinks();
+                    this.forceDirectedLayout(nodeIds, allLinks, W, H);
+                    this._forceLayoutDone = true;
+                } else {
+                    // Subsequent renders: only position new nodes via incremental simulation
+                    const newNodes = nodeIds.filter(id => !this.nodePositions.has(id));
+                    if (newNodes.length > 0) {
+                        const allLinks = this.getAllTimeLinks();
+                        this.forceDirectedLayout(nodeIds, allLinks, W, H);
+                    }
+                }
             }
 
             renderNetwork() {
@@ -3585,6 +3924,20 @@
                 this._renderNetworkNodes(nodeIds, topology);
             }
 
+            _updateNodeSVG(nodeId, x, y) {
+                const svg = document.getElementById('networkSvg');
+                const circle = svg.querySelector(`.network-node-circle[data-nodeid="${nodeId}"]`);
+                if (circle) {
+                    circle.setAttribute('cx', x);
+                    circle.setAttribute('cy', y);
+                    const text = circle.nextSibling;
+                    if (text && text.tagName === 'text') {
+                        text.setAttribute('x', x);
+                        text.setAttribute('y', y);
+                    }
+                }
+            }
+
             _setupNetworkDrag() {
                 const svg = document.getElementById('networkSvg');
                 svg.addEventListener('mousemove', (e) => {
@@ -3593,27 +3946,103 @@
                     const svgRect = svg.getBoundingClientRect();
                     const scaleX = (svg.clientWidth || svgRect.width) / svgRect.width;
                     const scaleY = (svg.clientHeight || svgRect.height) / svgRect.height;
-                    const newX = startPosX + (e.clientX - startX) * scaleX;
-                    const newY = startPosY + (e.clientY - startY) * scaleY;
-                    this.nodePositions.set(nodeId, { x: newX, y: newY });
+                    const dx = (e.clientX - startX) * scaleX;
+                    const dy = (e.clientY - startY) * scaleY;
 
-                    const circle = svg.querySelector(`.network-node-circle[data-nodeid="${nodeId}"]`);
-                    if (circle) {
-                        circle.setAttribute('cx', newX);
-                        circle.setAttribute('cy', newY);
-                        const text = circle.nextSibling;
-                        if (text && text.tagName === 'text') {
-                            text.setAttribute('x', newX);
-                            text.setAttribute('y', newY);
-                        }
+                    if (this._selectedNodes.has(nodeId) && this._selectedNodes.size > 1) {
+                        // Group drag: move all selected nodes by the same delta
+                        this._selectedNodes.forEach(id => {
+                            const origPos = this._dragGroupStart ? this._dragGroupStart.get(id) : null;
+                            if (origPos) {
+                                const nx = origPos.x + dx, ny = origPos.y + dy;
+                                this.nodePositions.set(id, { x: nx, y: ny });
+                                this._updateNodeSVG(id, nx, ny);
+                            }
+                        });
+                    } else {
+                        // Single node drag
+                        const newX = startPosX + dx;
+                        const newY = startPosY + dy;
+                        this.nodePositions.set(nodeId, { x: newX, y: newY });
+                        this._updateNodeSVG(nodeId, newX, newY);
                     }
 
                     const topology = this.getTopologyAtTime(this.networkCurrentTime);
                     const inferredLinks = this.showInferredLinks ? this.getInferredLinks(topology) : [];
                     this._renderNetworkEdges(this.getDirectLinks(topology), inferredLinks);
                 });
-                svg.addEventListener('mouseup', () => { this._dragging = null; });
-                svg.addEventListener('mouseleave', () => { this._dragging = null; });
+                svg.addEventListener('mouseup', () => {
+                    this._dragging = null;
+                    this._dragGroupStart = null;
+                });
+                svg.addEventListener('mouseleave', () => {
+                    this._dragging = null;
+                    this._dragGroupStart = null;
+                });
+
+                // Click on SVG background closes link panel and clears multi-selection
+                svg.addEventListener('click', (e) => {
+                    if (e.target === svg) {
+                        if (this._linkPanelOpen) this.closeLinkPanel();
+                        if (this._selectedNodes.size > 0) this._clearMultiSelection();
+                    }
+                });
+
+                // Mouse wheel: zoom (no selection) or spread/contract (with selection)
+                svg.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const W = svg.clientWidth || svg.getBoundingClientRect().width || 800;
+                    const H = parseInt(svg.getAttribute('height')) || 600;
+
+                    if (this._selectedNodes.size > 0) {
+                        // Spread/contract selected nodes around their centroid
+                        const scale = e.deltaY < 0 ? 1.08 : 0.93;
+                        let cx = 0, cy = 0;
+                        this._selectedNodes.forEach(id => {
+                            const p = this.nodePositions.get(id);
+                            if (p) { cx += p.x; cy += p.y; }
+                        });
+                        cx /= this._selectedNodes.size;
+                        cy /= this._selectedNodes.size;
+
+                        this._selectedNodes.forEach(id => {
+                            const p = this.nodePositions.get(id);
+                            if (!p) return;
+                            p.x = cx + (p.x - cx) * scale;
+                            p.y = cy + (p.y - cy) * scale;
+                            // Clamp
+                            p.x = Math.max(40, Math.min(W - 40, p.x));
+                            p.y = Math.max(40, Math.min(H - 40, p.y));
+                            this._updateNodeSVG(id, p.x, p.y);
+                        });
+
+                        const topology = this.getTopologyAtTime(this.networkCurrentTime);
+                        const inferredLinks = this.showInferredLinks ? this.getInferredLinks(topology) : [];
+                        this._renderNetworkEdges(this.getDirectLinks(topology), inferredLinks);
+                    } else {
+                        // Zoom entire topology via viewBox
+                        if (!this._svgViewBox) {
+                            this._svgViewBox = { x: 0, y: 0, w: W, h: H };
+                        }
+                        const vb = this._svgViewBox;
+                        const scale = e.deltaY < 0 ? 0.9 : 1.1;
+
+                        // Mouse position in viewBox coordinates
+                        const svgRect = svg.getBoundingClientRect();
+                        const mx = vb.x + ((e.clientX - svgRect.left) / svgRect.width) * vb.w;
+                        const my = vb.y + ((e.clientY - svgRect.top) / svgRect.height) * vb.h;
+
+                        // Scale viewBox around mouse position
+                        const newW = vb.w * scale, newH = vb.h * scale;
+                        // Clamp zoom: min 0.2x, max 5x of original
+                        if (newW < W * 0.2 || newW > W * 5) return;
+                        vb.x = mx - (mx - vb.x) * scale;
+                        vb.y = my - (my - vb.y) * scale;
+                        vb.w = newW;
+                        vb.h = newH;
+                        svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+                    }
+                });
             }
 
             _renderNetworkDefs() {
@@ -3746,6 +4175,13 @@
                     if (!link.active) path.setAttribute('stroke-dasharray', '6,4');
                     path.setAttribute('marker-end', marker);
                     path.setAttribute('class', 'network-edge-path');
+                    path.setAttribute('data-from', link.from);
+                    path.setAttribute('data-to', link.to);
+                    path.style.cursor = 'pointer';
+                    path.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.openNodeLinkPanel(link.from, { from: link.from, to: link.to });
+                    });
                     edgesG.appendChild(path);
 
                     // Quality label at bezier control point
@@ -3785,7 +4221,8 @@
                     circle.setAttribute('fill', isNM ? '#f1c40f' : '#3498db');
                     circle.setAttribute('stroke', isNM ? '#f39c12' : '#2980b9');
                     circle.setAttribute('stroke-width', 2);
-                    circle.setAttribute('class', 'network-node-circle');
+                    circle.setAttribute('class', 'network-node-circle' +
+                        (this._selectedNodes.has(nodeId) ? ' multi-selected' : ''));
                     circle.setAttribute('data-nodeid', nodeId);
                     nodesG.appendChild(circle);
 
@@ -3807,14 +4244,55 @@
             }
 
             _makeDraggable(circle, nodeId) {
+                let dragStarted = false;
                 circle.addEventListener('mousedown', (e) => {
+                    dragStarted = false;
                     const pos = this.nodePositions.get(nodeId);
                     this._dragging = {
                         nodeId, startX: e.clientX, startY: e.clientY,
                         startPosX: pos.x, startPosY: pos.y
                     };
+                    // Snapshot all selected node positions for group drag
+                    if (this._selectedNodes.has(nodeId) && this._selectedNodes.size > 1) {
+                        this._dragGroupStart = new Map();
+                        this._selectedNodes.forEach(id => {
+                            const p = this.nodePositions.get(id);
+                            if (p) this._dragGroupStart.set(id, { x: p.x, y: p.y });
+                        });
+                    }
                     e.preventDefault();
                 });
+                circle.addEventListener('mousemove', () => {
+                    if (this._dragging && this._dragging.nodeId === nodeId) {
+                        const dx = Math.abs(this._dragging.startPosX - (this.nodePositions.get(nodeId)?.x || 0));
+                        const dy = Math.abs(this._dragging.startPosY - (this.nodePositions.get(nodeId)?.y || 0));
+                        if (dx > 3 || dy > 3) dragStarted = true;
+                    }
+                });
+                circle.addEventListener('click', (e) => {
+                    if (!dragStarted) {
+                        e.stopPropagation();
+                        if (e.ctrlKey || e.metaKey) {
+                            // Multi-select toggle
+                            if (this._selectedNodes.has(nodeId)) {
+                                this._selectedNodes.delete(nodeId);
+                                circle.classList.remove('multi-selected');
+                            } else {
+                                this._selectedNodes.add(nodeId);
+                                circle.classList.add('multi-selected');
+                            }
+                        } else {
+                            this._clearMultiSelection();
+                            this.openNodeLinkPanel(nodeId);
+                        }
+                    }
+                });
+            }
+
+            _clearMultiSelection() {
+                this._selectedNodes.clear();
+                document.querySelectorAll('.network-node-circle.multi-selected')
+                    .forEach(el => el.classList.remove('multi-selected'));
             }
 
             _qualityColor(q, active) {
@@ -3849,6 +4327,12 @@
                 this.networkCurrentTime = changeTimes[idx];
                 document.getElementById('networkTimeSlider').value = idx;
                 this.renderNetwork();
+                // Update charts if link panel is expanded
+                if (this._linkPanelOpen && this._linkPanelExpanded) {
+                    const { from, to } = this._linkPanelExpanded;
+                    const reverseCheckbox = document.getElementById('showReverseLink');
+                    this._drawLinkCharts(from, to, reverseCheckbox ? reverseCheckbox.checked : false);
+                }
             }
 
             networkStepPrev() {
@@ -3862,8 +4346,478 @@
                 this.networkOnSliderInput(Math.min(changeTimes.length - 1, parseInt(slider.value) + 1));
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // LINK DETAIL PANEL — node-centric link quality visualization
+            // ═══════════════════════════════════════════════════════════════
+
+            openNodeLinkPanel(nodeId, expandLink = null) {
+                const panel = document.getElementById('linkDetailPanel');
+                const title = document.getElementById('linkDetailTitle');
+                const content = document.getElementById('linkDetailContent');
+
+                this._linkPanelNode = nodeId;
+                this._linkPanelOpen = true;
+                this._linkPanelExpanded = expandLink;
+                title.textContent = `Node 0x${nodeId}`;
+                panel.classList.add('open');
+
+                // Highlight the node in SVG
+                document.querySelectorAll('.network-node-circle.selected-node')
+                    .forEach(el => el.classList.remove('selected-node'));
+                const circle = document.querySelector(`.network-node-circle[data-nodeid="${nodeId}"]`);
+                if (circle) circle.classList.add('selected-node');
+
+                if (expandLink) {
+                    this._renderLinkChartView(expandLink.from, expandLink.to);
+                } else {
+                    this._renderLinkListView(nodeId);
+                }
+            }
+
+            closeLinkPanel() {
+                const panel = document.getElementById('linkDetailPanel');
+                panel.classList.remove('open');
+                this._linkPanelOpen = false;
+                this._linkPanelNode = null;
+                this._linkPanelExpanded = null;
+
+                document.querySelectorAll('.network-node-circle.selected-node')
+                    .forEach(el => el.classList.remove('selected-node'));
+                document.querySelectorAll('.network-edge-path.selected-edge')
+                    .forEach(el => el.classList.remove('selected-edge'));
+            }
+
+            _getLinksForNode(nodeId) {
+                const nid = nodeId.toUpperCase();
+                const outbound = []; // links where nodeId is the observer (nodeId sees dest)
+                const inbound = [];  // links where nodeId is observed by someone else
+
+                // Collect all unique peers from both RF and quality histories
+                const outPeers = new Set();
+                const inPeers = new Set();
+
+                this.linkRFHistory.forEach((_, key) => {
+                    const [receiver, sender] = key.split('-');
+                    if (receiver === nid) outPeers.add(sender);
+                    if (sender === nid) inPeers.add(receiver);
+                });
+                this.linkQualityHistory.forEach((_, key) => {
+                    const [observer, dest] = key.split('-');
+                    if (observer === nid) outPeers.add(dest);
+                    if (dest === nid) inPeers.add(observer);
+                });
+
+                outPeers.forEach(peer => {
+                    const rfKey = `${nid}-${peer}`;
+                    const qKey = `${nid}-${peer}`;
+                    const rfData = this.linkRFHistory.get(rfKey) || [];
+                    const qData = this.linkQualityHistory.get(qKey) || [];
+                    const lastRF = rfData.length > 0 ? rfData[rfData.length - 1] : null;
+                    const lastQ = qData.length > 0 ? qData[qData.length - 1] : null;
+                    outbound.push({
+                        peer, direction: 'out',
+                        from: nid, to: peer,
+                        lastRssi: lastRF ? lastRF.rssi : null,
+                        lastSnr: lastRF ? lastRF.snr : null,
+                        lastQuality: lastQ ? lastQ.quality : null,
+                        lastActive: lastQ ? lastQ.active : true,
+                        rfCount: rfData.length,
+                        qCount: qData.length,
+                        rfData, qData
+                    });
+                });
+
+                inPeers.forEach(peer => {
+                    const rfKey = `${peer}-${nid}`;
+                    const qKey = `${peer}-${nid}`;
+                    const rfData = this.linkRFHistory.get(rfKey) || [];
+                    const qData = this.linkQualityHistory.get(qKey) || [];
+                    const lastRF = rfData.length > 0 ? rfData[rfData.length - 1] : null;
+                    const lastQ = qData.length > 0 ? qData[qData.length - 1] : null;
+                    inbound.push({
+                        peer, direction: 'in',
+                        from: peer, to: nid,
+                        lastRssi: lastRF ? lastRF.rssi : null,
+                        lastSnr: lastRF ? lastRF.snr : null,
+                        lastQuality: lastQ ? lastQ.quality : null,
+                        lastActive: lastQ ? lastQ.active : true,
+                        rfCount: rfData.length,
+                        qCount: qData.length,
+                        rfData, qData
+                    });
+                });
+
+                // Sort by quality descending
+                const sortFn = (a, b) => (b.lastQuality || 0) - (a.lastQuality || 0);
+                outbound.sort(sortFn);
+                inbound.sort(sortFn);
+                return { outbound, inbound };
+            }
+
+            _renderLinkListView(nodeId) {
+                const content = document.getElementById('linkDetailContent');
+                const { outbound, inbound } = this._getLinksForNode(nodeId);
+
+                if (outbound.length === 0 && inbound.length === 0) {
+                    content.innerHTML = '<div style="color:#7f8c8d; text-align:center; padding:30px;">No link data found for this node.</div>';
+                    return;
+                }
+
+                let html = '';
+                const renderGroup = (title, links, arrow) => {
+                    if (links.length === 0) return '';
+                    let g = `<div class="link-list-group"><div class="link-list-group-title">${title} (${links.length})</div>`;
+                    links.forEach(link => {
+                        const qColor = link.lastQuality === null ? '#ccc' :
+                            (link.lastQuality > 170 ? '#27ae60' : (link.lastQuality > 85 ? '#f39c12' : '#e74c3c'));
+                        const rssiStr = link.lastRssi !== null ? `${link.lastRssi}dBm` : '--';
+                        g += `<div class="link-list-row" data-from="${link.from}" data-to="${link.to}">
+                            <div class="link-quality-dot" style="background:${qColor}"></div>
+                            <div class="link-peer-id">${arrow} 0x${link.peer}</div>
+                            <div class="link-sparkline-wrap"><canvas class="link-sparkline" data-key="${link.direction === 'out' ? nodeId : link.peer}-${link.direction === 'out' ? link.peer : nodeId}"></canvas></div>
+                            <div class="link-stat">${rssiStr}</div>
+                        </div>`;
+                    });
+                    g += '</div>';
+                    return g;
+                };
+
+                html += renderGroup('Outbound Links', outbound, '&rarr;');
+                html += renderGroup('Inbound Links', inbound, '&larr;');
+                content.innerHTML = html;
+
+                // Attach click handlers
+                content.querySelectorAll('.link-list-row').forEach(row => {
+                    row.addEventListener('click', () => {
+                        const from = row.getAttribute('data-from');
+                        const to = row.getAttribute('data-to');
+                        this._linkPanelExpanded = { from, to };
+                        this._renderLinkChartView(from, to);
+                        this._highlightEdge(from, to);
+                    });
+                });
+
+                // Render sparklines
+                content.querySelectorAll('.link-sparkline').forEach(canvas => {
+                    const key = canvas.getAttribute('data-key');
+                    const rfData = this.linkRFHistory.get(key);
+                    if (rfData && rfData.length > 1) {
+                        this.renderSparkline(canvas, rfData.map(d => d.rssi), '#3498db');
+                    }
+                });
+            }
+
+            _renderLinkChartView(from, to) {
+                const content = document.getElementById('linkDetailContent');
+                const title = document.getElementById('linkDetailTitle');
+                title.textContent = `0x${from} \u2192 0x${to}`;
+
+                let html = `
+                    <div class="link-chart-back" id="linkChartBack">&larr; Back to node links</div>
+                    <div class="link-chart-controls">
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="showReverseLink"> Show reverse link
+                        </label>
+                    </div>
+                    <div class="link-chart-label">RSSI (dBm)</div>
+                    <canvas class="link-chart-canvas" id="chartRSSI"></canvas>
+                    <div class="link-chart-label">SNR (dB)</div>
+                    <canvas class="link-chart-canvas" id="chartSNR"></canvas>
+                    <div class="link-chart-label">Quality (0-255)</div>
+                    <canvas class="link-chart-canvas" id="chartQuality"></canvas>
+                `;
+                content.innerHTML = html;
+
+                // Back button
+                document.getElementById('linkChartBack').addEventListener('click', () => {
+                    this._linkPanelExpanded = null;
+                    const nodeId = this._linkPanelNode;
+                    document.getElementById('linkDetailTitle').textContent = `Node 0x${nodeId}`;
+                    this._renderLinkListView(nodeId);
+                    document.querySelectorAll('.network-edge-path.selected-edge')
+                        .forEach(el => el.classList.remove('selected-edge'));
+                });
+
+                // Reverse link toggle
+                const reverseCheckbox = document.getElementById('showReverseLink');
+                reverseCheckbox.addEventListener('change', () => {
+                    this._drawLinkCharts(from, to, reverseCheckbox.checked);
+                });
+
+                this._drawLinkCharts(from, to, false);
+            }
+
+            _drawLinkCharts(from, to, showReverse) {
+                const rfKey = `${to}-${from}`; // receiver=to sees sender=from
+                const qKey = `${from}-${to}`;  // from's routing table entry for to (quality from observer's perspective)
+                // Actually: quality key should match how buildLinkTimeSeries stores it
+                // linkQualityHistory key = "nodeId-dest" where nodeId is the observer
+                // For link from→to, the observer of "to" is "from", so key = "from-to"
+                const rfData = this.linkRFHistory.get(rfKey) || [];
+                const qData = this.linkQualityHistory.get(qKey) || [];
+
+                const reverseRFKey = `${from}-${to}`;
+                const reverseQKey = `${to}-${from}`;
+                const reverseRFData = showReverse ? (this.linkRFHistory.get(reverseRFKey) || []) : [];
+                const reverseQData = showReverse ? (this.linkQualityHistory.get(reverseQKey) || []) : [];
+
+                const cursorX = this.networkCurrentTime;
+
+                // RSSI chart
+                const rssiCanvas = document.getElementById('chartRSSI');
+                const rssiSeries = [{ data: rfData.map(d => ({ x: d.timestamp, y: d.rssi })), color: '#3498db', label: `${from}\u2192${to}` }];
+                if (showReverse && reverseRFData.length > 0) {
+                    rssiSeries.push({ data: reverseRFData.map(d => ({ x: d.timestamp, y: d.rssi })), color: '#e74c3c', label: `${to}\u2192${from}`, dashed: true });
+                }
+                this.renderTimeSeriesChart(rssiCanvas, rssiSeries, {
+                    yLabel: 'dBm', cursorX,
+                    thresholds: [
+                        { y: -85, color: 'rgba(39,174,96,0.08)' },
+                        { y: -100, color: 'rgba(243,156,18,0.08)' }
+                    ]
+                });
+
+                // SNR chart
+                const snrCanvas = document.getElementById('chartSNR');
+                const snrSeries = [{ data: rfData.map(d => ({ x: d.timestamp, y: d.snr })), color: '#2ecc71', label: `${from}\u2192${to}` }];
+                if (showReverse && reverseRFData.length > 0) {
+                    snrSeries.push({ data: reverseRFData.map(d => ({ x: d.timestamp, y: d.snr })), color: '#e74c3c', label: `${to}\u2192${from}`, dashed: true });
+                }
+                this.renderTimeSeriesChart(snrCanvas, snrSeries, {
+                    yLabel: 'dB', cursorX,
+                    thresholds: [
+                        { y: 5, color: 'rgba(39,174,96,0.08)' },
+                        { y: 0, color: 'rgba(243,156,18,0.08)' }
+                    ]
+                });
+
+                // Quality chart
+                const qualCanvas = document.getElementById('chartQuality');
+                const qualSeries = [{ data: qData.map(d => ({ x: d.timestamp, y: d.quality })), color: '#9b59b6', label: `${from}\u2192${to}` }];
+                if (showReverse && reverseQData.length > 0) {
+                    qualSeries.push({ data: reverseQData.map(d => ({ x: d.timestamp, y: d.quality })), color: '#e74c3c', label: `${to}\u2192${from}`, dashed: true });
+                }
+                this.renderTimeSeriesChart(qualCanvas, qualSeries, {
+                    yLabel: 'Quality', yMin: 0, yMax: 255, cursorX,
+                    thresholds: [
+                        { y: 170, color: 'rgba(39,174,96,0.08)' },
+                        { y: 85, color: 'rgba(243,156,18,0.08)' }
+                    ]
+                });
+            }
+
+            renderTimeSeriesChart(canvas, series, options = {}) {
+                if (!canvas) return;
+                const rect = canvas.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+                const W = rect.width, H = rect.height;
+
+                const PAD_L = 50, PAD_R = 15, PAD_T = 10, PAD_B = 25;
+                const plotW = W - PAD_L - PAD_R;
+                const plotH = H - PAD_T - PAD_B;
+
+                // Collect all data points for auto-scaling
+                let allX = [], allY = [];
+                series.forEach(s => {
+                    s.data.forEach(p => { allX.push(p.x); allY.push(p.y); });
+                });
+
+                if (allX.length === 0) {
+                    ctx.fillStyle = '#7f8c8d';
+                    ctx.font = '12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('No data', W / 2, H / 2);
+                    return;
+                }
+
+                const xMin = Math.min(...allX), xMax = Math.max(...allX);
+                let yMin = options.yMin !== undefined ? options.yMin : Math.min(...allY);
+                let yMax = options.yMax !== undefined ? options.yMax : Math.max(...allY);
+                if (yMin === yMax) { yMin -= 1; yMax += 1; }
+                const yPad = (yMax - yMin) * 0.1;
+                if (options.yMin === undefined) yMin -= yPad;
+                if (options.yMax === undefined) yMax += yPad;
+                const xRange = xMax - xMin || 1;
+
+                const toCanvasX = x => PAD_L + ((x - xMin) / xRange) * plotW;
+                const toCanvasY = y => PAD_T + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
+
+                // Background
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, W, H);
+
+                // Threshold bands
+                if (options.thresholds) {
+                    const sortedThresh = [...options.thresholds].sort((a, b) => b.y - a.y);
+                    let prevY = PAD_T;
+                    sortedThresh.forEach(t => {
+                        const ty = toCanvasY(t.y);
+                        ctx.fillStyle = t.color;
+                        ctx.fillRect(PAD_L, prevY, plotW, ty - prevY);
+                        // Threshold line
+                        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+                        ctx.lineWidth = 1;
+                        ctx.setLineDash([4, 4]);
+                        ctx.beginPath();
+                        ctx.moveTo(PAD_L, ty);
+                        ctx.lineTo(PAD_L + plotW, ty);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        prevY = ty;
+                    });
+                    // Fill last band
+                    ctx.fillStyle = 'rgba(231,76,60,0.06)';
+                    ctx.fillRect(PAD_L, prevY, plotW, PAD_T + plotH - prevY);
+                }
+
+                // Grid lines and Y axis labels
+                ctx.strokeStyle = '#e9ecef';
+                ctx.lineWidth = 1;
+                ctx.fillStyle = '#7f8c8d';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'right';
+                const yTicks = 5;
+                for (let i = 0; i <= yTicks; i++) {
+                    const val = yMin + (yMax - yMin) * (i / yTicks);
+                    const cy = toCanvasY(val);
+                    ctx.beginPath();
+                    ctx.moveTo(PAD_L, cy);
+                    ctx.lineTo(PAD_L + plotW, cy);
+                    ctx.stroke();
+                    ctx.fillText(val.toFixed(val % 1 === 0 ? 0 : 1), PAD_L - 5, cy + 3);
+                }
+
+                // X axis labels
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#7f8c8d';
+                const xTicks = Math.min(5, allX.length);
+                for (let i = 0; i <= xTicks; i++) {
+                    const val = xMin + xRange * (i / xTicks);
+                    const cx = toCanvasX(val);
+                    ctx.fillText(this.formatTimestamp(val), cx, H - 3);
+                }
+
+                // Plot each series
+                series.forEach(s => {
+                    if (s.data.length === 0) return;
+                    ctx.strokeStyle = s.color;
+                    ctx.lineWidth = 1.5;
+                    if (s.dashed) ctx.setLineDash([6, 4]);
+                    else ctx.setLineDash([]);
+
+                    // Line
+                    ctx.beginPath();
+                    s.data.forEach((p, i) => {
+                        const cx = toCanvasX(p.x), cy = toCanvasY(p.y);
+                        if (i === 0) ctx.moveTo(cx, cy);
+                        else ctx.lineTo(cx, cy);
+                    });
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Points
+                    ctx.fillStyle = s.color;
+                    s.data.forEach(p => {
+                        const cx = toCanvasX(p.x), cy = toCanvasY(p.y);
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+                });
+
+                // Cursor line for current topology time
+                if (options.cursorX !== undefined && options.cursorX !== null) {
+                    const cx = toCanvasX(options.cursorX);
+                    if (cx >= PAD_L && cx <= PAD_L + plotW) {
+                        ctx.strokeStyle = 'rgba(44,62,80,0.5)';
+                        ctx.lineWidth = 1.5;
+                        ctx.setLineDash([3, 3]);
+                        ctx.beginPath();
+                        ctx.moveTo(cx, PAD_T);
+                        ctx.lineTo(cx, PAD_T + plotH);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    }
+                }
+
+                // Legend
+                if (series.length > 1) {
+                    let lx = PAD_L + 8;
+                    const ly = PAD_T + 6;
+                    series.forEach(s => {
+                        ctx.fillStyle = s.color;
+                        ctx.strokeStyle = s.color;
+                        ctx.lineWidth = 2;
+                        if (s.dashed) ctx.setLineDash([4, 3]);
+                        else ctx.setLineDash([]);
+                        ctx.beginPath();
+                        ctx.moveTo(lx, ly + 5);
+                        ctx.lineTo(lx + 20, ly + 5);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        ctx.font = '10px sans-serif';
+                        ctx.textAlign = 'left';
+                        ctx.fillText(s.label || '', lx + 24, ly + 9);
+                        lx += ctx.measureText(s.label || '').width + 40;
+                    });
+                }
+            }
+
+            renderSparkline(canvas, data, color) {
+                if (!canvas || data.length < 2) return;
+                const rect = canvas.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+                const W = rect.width, H = rect.height;
+
+                let yMin = Math.min(...data), yMax = Math.max(...data);
+                if (yMin === yMax) { yMin -= 1; yMax += 1; }
+
+                const pts = data.map((v, i) => ({
+                    x: (i / (data.length - 1)) * W,
+                    y: H - ((v - yMin) / (yMax - yMin)) * H
+                }));
+
+                // Filled area
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, H);
+                pts.forEach(p => ctx.lineTo(p.x, p.y));
+                ctx.lineTo(pts[pts.length - 1].x, H);
+                ctx.closePath();
+                ctx.globalAlpha = 0.15;
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+
+                // Line
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+                ctx.stroke();
+            }
+
+            _highlightEdge(from, to) {
+                document.querySelectorAll('.network-edge-path.selected-edge')
+                    .forEach(el => el.classList.remove('selected-edge'));
+                const edge = document.querySelector(`.network-edge-path[data-from="${from}"][data-to="${to}"]`);
+                if (edge) edge.classList.add('selected-edge');
+            }
+
             resetNetworkLayout() {
                 this.nodePositions.clear();
+                this._forceLayoutDone = false;
+                this._svgViewBox = null;
+                this._clearMultiSelection();
+                const svg = document.getElementById('networkSvg');
+                if (svg) svg.removeAttribute('viewBox');
                 this.renderNetwork();
             }
 
