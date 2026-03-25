@@ -560,15 +560,23 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     // First, handle the source node as a direct neighbor
     auto source_node_it = GetNode(source_address);
     if (source_node_it != nodes_.end()) {
-        // Update existing source node - it's a direct neighbor
-        source_node_it->ReceivedRoutingMessage(local_link_quality,
-                                               reception_timestamp);
+        // Save current route parameters before updating link stats
+        uint8_t prev_hop_count = source_node_it->routing_entry.hop_count;
+        uint8_t prev_quality = source_node_it->routing_entry.link_quality;
+        AddressType prev_next_hop = source_node_it->next_hop;
+        bool was_inactive = !source_node_it->is_active;
+
+        // Update direct link statistics (always tracks the physical link)
+        source_node_it->link_stats.ReceivedMessage(reception_timestamp);
+        source_node_it->link_stats.UpdateRemoteQuality(local_link_quality);
+        source_node_it->last_seen = reception_timestamp;
+        uint8_t direct_quality = source_node_it->link_stats.CalculateQuality();
+
         LOG_DEBUG(
             "Source 0x%04X: remote_quality=%d ewma=%d link_quality=%d "
             "expected=%d received=%d%s",
             source_address, local_link_quality,
-            source_node_it->link_stats.ewma_quality,
-            source_node_it->routing_entry.link_quality,
+            source_node_it->link_stats.ewma_quality, direct_quality,
             source_node_it->link_stats.messages_expected,
             source_node_it->link_stats.messages_received,
             (local_link_quality == 0 &&
@@ -577,7 +585,6 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 : "");
 
         // Always update capabilities for direct neighbor (source of the message)
-        // The source is always the next hop to itself for direct neighbors
         if (source_node_it->routing_entry.capabilities != source_capabilities) {
             source_node_it->routing_entry.capabilities = source_capabilities;
             routing_changed = true;
@@ -596,20 +603,34 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 source_address, source_allocated_data_slots);
         }
 
-        // Ensure it's marked as direct neighbor with hop count 1
-        if (source_node_it->routing_entry.hop_count != 1 ||
-            source_node_it->next_hop != source_address) {
-            source_node_it->next_hop = source_address;
-            source_node_it->routing_entry.hop_count = 1;
-            routing_changed = true;
+        // Only force direct route (hop_count=1) when it has a lower ETX cost
+        // than the current route. An indirect route via a relay can be better
+        // when the direct link is unidirectional or very weak.
+        uint16_t direct_cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                1, direct_quality);
+        uint16_t current_cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                prev_hop_count, prev_quality);
 
-            NotifyRouteUpdate(true, source_address, source_address, 1);
-            LogRouteEntry(*source_node_it);
+        bool use_direct = was_inactive || prev_next_hop == source_address ||
+                          direct_cost <= current_cost;
+
+        if (use_direct) {
+            source_node_it->routing_entry.link_quality = direct_quality;
+            if (source_node_it->routing_entry.hop_count != 1 ||
+                source_node_it->next_hop != source_address) {
+                source_node_it->next_hop = source_address;
+                source_node_it->routing_entry.hop_count = 1;
+                routing_changed = true;
+
+                NotifyRouteUpdate(true, source_address, source_address, 1);
+                LogRouteEntry(*source_node_it);
+            }
         }
 
-        // Direct source re-activation: receiving a routing message from
-        // this node is proof of liveness — re-activate immediately
-        if (!source_node_it->is_active) {
+        // Re-activate if was inactive (hearing from node = proof of liveness)
+        if (was_inactive) {
             source_node_it->is_active = true;
             source_node_it->link_stats.recovery_counter = 0;
             routing_changed = true;
