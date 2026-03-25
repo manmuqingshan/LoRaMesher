@@ -32,13 +32,13 @@ The library has the data to detect unidirectional links but three code locations
 
 **Bug 3 (fixed post-experiment)**: `routing_table_message.cpp:GetLinkQualityFor()` returned link_quality for ANY entry matching the destination, including multi-hop indirect routes. In a real mesh, the peer almost always has some multi-hop route to us via NM, so `remote_link_quality` was never 0 and the penalty from Bug 2's fix never triggered.
 
-Fix: `GetLinkQualityFor()` now filters by `hop_count == 1`. Only a direct-neighbor entry proves the peer hears us. On the sender side, `SetLinkQualityFor()` already only updates quality for `IsDirectNeighbor()` entries, so multi-hop entries contain routing-table quality (not link quality) and should not be used for unidirectional detection.
+Fix: `GetLinkQualityFor()` (now renamed `GetReceptionQualityFor()`) filters by `hop_count == 1` and reads the dedicated `reception_quality` field. This field carries the sender's raw EWMA reception rate, not the combined bidirectional quality, eliminating a circular feedback loop where `CalculateQuality()` output was reflected back as `remote_link_quality`. The redundant `SetLinkQualityFor()` method was removed.
 
 ## Detection Algorithm
 
 ### Mechanism
 
-When node A receives a routing table from node B, A checks whether B lists A as a **direct neighbor** (hop_count=1) via `GetLinkQualityFor(A)`. The function only considers hop_count==1 entries — multi-hop entries are ignored because they prove indirect reachability, not direct radio contact. If A is not listed as a direct neighbor, `GetLinkQualityFor()` returns 0, meaning "B doesn't hear A directly."
+When node A receives a routing table from node B, A checks whether B lists A as a **direct neighbor** (hop_count=1) via `GetReceptionQualityFor(A)`. The function only considers hop_count==1 entries and reads their `reception_quality` field (the sender's raw EWMA). Multi-hop entries are ignored because they prove indirect reachability, not direct radio contact. If A is not listed as a direct neighbor, `GetReceptionQualityFor()` returns 0, meaning "B doesn't hear A directly."
 
 The detection adds a penalty after confirmation:
 

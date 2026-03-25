@@ -209,7 +209,8 @@ Result NetworkService::ProcessRoutingTableMessage(
     }
 
     // Get local link quality to the source (0 = peer doesn't list us as direct)
-    uint8_t local_link_quality = routing_msg.GetLinkQualityFor(node_address_);
+    uint8_t local_link_quality =
+        routing_msg.GetReceptionQualityFor(node_address_);
     LOG_DEBUG("Remote link quality from 0x%04X for us (0x%04X): %d", source,
               node_address_, local_link_quality);
 
@@ -587,15 +588,6 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     }
 
     RoutingTableMessage routing_msg = std::move(routing_msg_opt.value());
-
-    // Add link qualities for direct neighbors
-    const auto& nodes = routing_table_->GetNodes();
-    for (const auto& node : nodes) {
-        if (node.IsDirectNeighbor()) {
-            routing_msg.SetLinkQualityFor(node.routing_entry.destination,
-                                          node.GetLinkQuality());
-        }
-    }
 
     return std::make_unique<BaseMessage>(routing_msg.ToBaseMessage());
 }

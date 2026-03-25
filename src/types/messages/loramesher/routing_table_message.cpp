@@ -156,7 +156,8 @@ uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
     return header_.GetSourceAllocatedDataSlots();
 }
 
-uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
+uint8_t RoutingTableMessage::GetReceptionQualityFor(
+    AddressType node_address) const {
     // Only return quality for direct-neighbor entries (hop_count == 1).
     // Multi-hop entries mean the sender knows us indirectly and cannot
     // hear our transmissions — returning their quality would mask
@@ -164,7 +165,7 @@ uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
     for (uint8_t i = 0; i < entry_count_; ++i) {
         if (entries_[i].destination == node_address &&
             entries_[i].hop_count == 1) {
-            return entries_[i].link_quality;
+            return entries_[i].reception_quality;
         }
     }
 
@@ -178,20 +179,6 @@ size_t RoutingTableMessage::GetTotalPayloadSize() const {
     size += RoutingTableEntry::Size() * entry_count_;
 
     return size;
-}
-
-Result RoutingTableMessage::SetLinkQualityFor(AddressType node_address,
-                                              uint8_t link_quality) {
-    // Find the entry and set the link quality
-    for (uint8_t i = 0; i < entry_count_; ++i) {
-        if (entries_[i].destination == node_address) {
-            entries_[i].link_quality = link_quality;
-            return Result::Success();
-        }
-    }
-
-    return Result(LoraMesherErrorCode::kInvalidState,
-                  "Node address not found in routing table");
 }
 
 BaseMessage RoutingTableMessage::ToBaseMessage() const {

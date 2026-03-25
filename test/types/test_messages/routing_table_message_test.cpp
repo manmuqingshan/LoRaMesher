@@ -38,8 +38,9 @@ class RoutingTableMessageTest : public ::testing::Test {
 
     void SetupEntries() {
         // Create a few test routing entries
-        entries.push_back(RoutingTableEntry(
-            0x1111, 1, 90, 2));  // Direct connection, high quality
+        RoutingTableEntry direct(0x1111, 1, 90, 2);
+        direct.reception_quality = 90;  // Direct neighbor has reception quality
+        entries.push_back(direct);
         entries.push_back(
             RoutingTableEntry(0x2222, 2, 70, 3));  // 2 hops, good quality
         entries.push_back(
@@ -97,7 +98,7 @@ TEST_F(RoutingTableMessageTest, CreationTest) {
 /**
  * @brief Test creation failure with too many entries
  *
- * kMaxRoutingEntries is 34. Creating a message with 35 entries must return
+ * kMaxRoutingEntries is 30. Creating a message with 31 entries must return
  * nullopt (exercises routing_table_message.cpp lines 58-62).
  */
 TEST_F(RoutingTableMessageTest, TooManyEntriesTest) {
@@ -311,7 +312,7 @@ TEST_F(RoutingTableMessageTest, GetHeaderTest) {
  * @brief Test deserialization failure when entry_count in header exceeds max
  *
  * Manually patches the entry_count byte in a valid serialized buffer to a
- * value larger than kMaxRoutingEntries (34), then verifies that
+ * value larger than kMaxRoutingEntries (30), then verifies that
  * CreateFromSerialized returns nullopt
  * (exercises routing_table_message.cpp lines 105-109).
  */
@@ -494,69 +495,42 @@ TEST_F(RoutingTableMessageTest, ConstructFromValidBaseMessageSucceeds) {
 }
 
 // =============================================================================
-// SetLinkQualityFor — missing-node error path (lines 189-190)
+// GetReceptionQualityFor — hop_count filtering (unidirectional link detection)
 // =============================================================================
 
 /**
- * @brief Test SetLinkQualityFor returns kInvalidState when node not found
- *
- * Covers lines 189-190.
+ * @brief Test GetReceptionQualityFor returns reception quality for direct
+ * neighbor (hop_count==1)
  */
-TEST_F(RoutingTableMessageTest, SetLinkQualityForMissingNodeReturnsError) {
+TEST_F(RoutingTableMessageTest,
+       GetReceptionQualityForDirectNeighborReturnsQuality) {
     ASSERT_TRUE(msg_ptr != nullptr);
 
-    // Address 0xDEAD is not in the routing table
-    Result result = msg_ptr->SetLinkQualityFor(0xDEAD, 100);
-    EXPECT_FALSE(result.IsSuccess());
-    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+    // 0x1111 has hop_count=1 with reception_quality=90 in fixture entries
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x1111), 90);
 }
 
 /**
- * @brief Test SetLinkQualityFor succeeds when node is present
- */
-TEST_F(RoutingTableMessageTest, SetLinkQualityForExistingNodeSucceeds) {
-    ASSERT_TRUE(msg_ptr != nullptr);
-
-    // 0x1111 is in the entries list
-    Result result = msg_ptr->SetLinkQualityFor(0x1111, 200);
-    EXPECT_TRUE(result.IsSuccess());
-}
-
-// =============================================================================
-// GetLinkQualityFor — hop_count filtering (unidirectional link detection)
-// =============================================================================
-
-/**
- * @brief Test GetLinkQualityFor returns quality for direct neighbor (hop_count==1)
- */
-TEST_F(RoutingTableMessageTest, GetLinkQualityForDirectNeighborReturnsQuality) {
-    ASSERT_TRUE(msg_ptr != nullptr);
-
-    // 0x1111 has hop_count=1 in fixture entries
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x1111), 90);
-}
-
-/**
- * @brief Test GetLinkQualityFor returns 0 for multi-hop entries
+ * @brief Test GetReceptionQualityFor returns 0 for multi-hop entries
  *
  * Multi-hop entries are filtered out to enable unidirectional link detection.
  * The peer knowing us via multi-hop does not prove they can hear us directly.
  */
-TEST_F(RoutingTableMessageTest, GetLinkQualityForMultiHopReturnsZero) {
+TEST_F(RoutingTableMessageTest, GetReceptionQualityForMultiHopReturnsZero) {
     ASSERT_TRUE(msg_ptr != nullptr);
 
     // 0x2222 has hop_count=2, 0x3333 has hop_count=3
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x2222), 0);
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x3333), 0);
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x2222), 0);
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x3333), 0);
 }
 
 /**
- * @brief Test GetLinkQualityFor returns 0 for missing node
+ * @brief Test GetReceptionQualityFor returns 0 for missing node
  */
-TEST_F(RoutingTableMessageTest, GetLinkQualityForMissingNodeReturnsZero) {
+TEST_F(RoutingTableMessageTest, GetReceptionQualityForMissingNodeReturnsZero) {
     ASSERT_TRUE(msg_ptr != nullptr);
 
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0xDEAD), 0);
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0xDEAD), 0);
 }
 
 }  // namespace test

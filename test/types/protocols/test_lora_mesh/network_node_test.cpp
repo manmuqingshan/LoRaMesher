@@ -702,6 +702,24 @@ TEST_F(NetworkNodeRouteTest, ToRoutingTableEntry) {
     EXPECT_EQ(entry.hop_count, node_.routing_entry.hop_count);
     EXPECT_EQ(entry.link_quality, node_.routing_entry.link_quality);
     EXPECT_EQ(entry.capabilities, node_.routing_entry.capabilities);
+    // hop_count=0 in fixture, so reception_quality stays 0
+    EXPECT_EQ(entry.reception_quality, 0u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryDirectNeighborHasReceptionQuality) {
+    node_.routing_entry.hop_count = 1;
+    node_.link_stats.ewma_quality = 180;
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 180u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryMultiHopHasZeroReceptionQuality) {
+    node_.routing_entry.hop_count = 2;
+    node_.link_stats.ewma_quality = 180;
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 0u);
 }
 
 // ---- GetAddress / GetAllocatedDataSlots ----

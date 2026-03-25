@@ -429,17 +429,19 @@ struct RoutingTableHeader {
 struct RoutingTableEntry {
     AddressType destination;         // Route destination (2 bytes)
     uint8_t hop_count;               // Hops to destination (1 byte)
-    uint8_t link_quality;            // Link quality metric 0-255 (1 byte)
+    uint8_t link_quality;            // Combined route quality metric 0-255 (1 byte)
     uint8_t allocated_data_slots;    // Data slots for this node (1 byte)
     uint8_t capabilities;            // Node capability flags (1 byte)
+    uint8_t control_slot_index;      // Assigned control slot, 0xFF=unassigned (1 byte)
+    uint8_t reception_quality;       // Sender's raw EWMA reception quality (1 byte)
 };
 ```
 
 **Routing Table Message Benefits**:
 - **Versioned Updates**: Table version enables efficient change detection
 - **Modular Architecture**: Clean separation from legacy ROUTING_UPDATE format
-- **Link Quality Support**: Built-in infrastructure for advanced routing algorithms
-- **Compact Format**: 5 bytes per route entry for efficient transmission
+- **Bidirectional Link Quality**: Separate `link_quality` (route cost) and `reception_quality` (raw EWMA) fields prevent circular feedback in quality estimation
+- **Compact Format**: 8 bytes per route entry for efficient transmission
 
 **Usage in Distance-Vector Protocol**:
 1. Each node broadcasts routing table during CONTROL_TX slots
@@ -704,9 +706,11 @@ The implementation uses a two-layer structure for routing information:
 struct RoutingTableEntry {
     AddressType destination = 0;      // Destination address (uint16_t)
     uint8_t hop_count = 0;            // Hop count to destination
-    uint8_t link_quality = 0;         // Link quality metric (0-255)
+    uint8_t link_quality = 0;         // Combined route quality metric (0-255)
     uint8_t allocated_data_slots = 0; // Data slots allocated to node
     uint8_t capabilities = 0;         // Node capabilities bitmap
+    uint8_t control_slot_index = 0xFF;// Assigned control slot (0xFF = unassigned)
+    uint8_t reception_quality = 0;    // Sender's raw EWMA reception quality (0-255)
 };
 ```
 
@@ -917,7 +921,7 @@ After `consecutive_missed_for_inactivation` (default 10, configurable) consecuti
 
 **Unidirectional Link Detection**:
 
-When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetLinkQualityFor(A)`. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `ewma_quality / 4`. This makes multi-hop bidirectional alternatives preferred. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
+When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `ewma_quality / 4`. This makes multi-hop bidirectional alternatives preferred. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
@@ -2499,7 +2503,7 @@ The base header structure used by all messages:
 | SYNC_BEACON | network_id(2), total_slots(1), slot_duration_ms(2), network_manager(2), hop_count(1), propagation_delay_ms(4), max_hops(1), node_count(1) | 20 bytes |
 | JOIN_REQUEST | battery_level(1), requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 13 bytes |
 | JOIN_RESPONSE | network_id(2), allocated_slots(1), status(1), next_hop(2), target_address(2), control_slot_index(1) | 15 bytes |
-| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries | 12+ bytes |
+| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(8 each) | 12+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | NM_CLAIM | election_priority(1), battery_level(1), network_node_count(1), network_id(2) | 11 bytes |
