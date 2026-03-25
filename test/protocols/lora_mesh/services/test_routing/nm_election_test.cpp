@@ -337,16 +337,16 @@ TEST_F(NMElectionTests, TwoAutoNodes_ExactlyOneWinsElection) {
 // ---------------------------------------------------------------------------
 // Test 4: Configured-NM node surrenders in election → enters DISCOVERY (not CreateNetwork)
 //
-// Topology: NM_A (0x1000, NM role, priority=0) ←→ NM_B (0x1080, NM role, priority=64)
+// Topology: NM_A (0x1000, NM role, priority=0) ←→ NM_B (0x10FE, NM role, priority=127)
 //                                               ←→ NM_C (0x1010, NM role, priority=8)
 //           Full mesh (all three connected)
 //
 // 1. All three merge into one network — NM_A (priority 0) wins all claims.
 // 2. NM_A fails.
 // 3. NM_B and NM_C enter FAULT_RECOVERY.  NM_C's backoff expires first
-//    (lower addr_bonus) → NM_C sends NM_CLAIM (priority 8).
+//    (lower addr_bonus; gap exceeds max jitter) → NM_C sends NM_CLAIM (priority 8).
 // 4. NM_B receives NM_CLAIM from NM_C while still in FAULT_RECOVERY:
-//    8 < 64 → NM_B surrenders.
+//    8 < 127 → NM_B surrenders.
 //    Bug (pre-fix): surrender calls StartDiscovery() → for NM-role nodes
 //    StartDiscovery calls CreateNetwork() immediately → split-brain.
 //    Fix: surrender enters DISCOVERY directly, NM_B then joins NM_C.
@@ -360,10 +360,12 @@ TEST_F(NMElectionTests, TwoAutoNodes_ExactlyOneWinsElection) {
  * (not creates its own network), and eventually joins the winner.
  */
 TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
-    // Priority ordering: NM_A (0) < NM_C (8) < NM_B (64)
+    // Priority ordering: NM_A (0) < NM_C (8) < NM_B (127)
     // NM_A wins initial merge; NM_C wins second election; NM_B must surrender.
+    // NM_B addr 0x10FE chosen so addr_bonus gap (~4650 ms) exceeds max jitter
+    // (2500 ms) — NM_C's backoff always expires first, eliminating flakiness.
     auto& nm_a = CreateNode("NM_A", 0x1000, NodeRole::NETWORK_MANAGER);
-    auto& nm_b = CreateNode("NM_B", 0x1080, NodeRole::NETWORK_MANAGER);
+    auto& nm_b = CreateNode("NM_B", 0x10FE, NodeRole::NETWORK_MANAGER);
     auto& nm_c = CreateNode("NM_C", 0x1010, NodeRole::NETWORK_MANAGER);
 
     SetLinkStatus(nm_a, nm_b, true);
