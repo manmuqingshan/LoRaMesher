@@ -3356,7 +3356,6 @@ void NetworkService::HandleForeignBeacon(const SyncBeaconMessage& beacon) {
         "NM_CLAIM so the secondary NM can compare priorities",
         beacon.GetNetworkId(), network_id_);
     SendNMClaim();
-    ScheduleDiscoverySlotForwarding();
 }
 
 Result NetworkService::ProcessNMClaim(const BaseMessage& message) {

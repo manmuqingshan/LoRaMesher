@@ -373,18 +373,25 @@ TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
     SetLinkStatus(nm_b, nm_c, true);
 
     ASSERT_TRUE(StartNode(nm_a));
-    // Stagger startup so superframes are out of phase — otherwise all NMs
-    // transmit SYNC_BEACON in the same slot and no beacon is ever received.
     auto slot_duration = GetSlotDuration(nm_a);
+
+    // Phase 1: sequential 2-way merges — avoids the 3-way alignment deadlock
+    // where NM_C's claim permanently lands in NM_A's SLEEP slot on CI.
+
+    // Start NM_B (stagger=1 slot → slot 15 alignment → direct claim path)
     AdvanceTime(slot_duration);
     ASSERT_TRUE(StartNode(nm_b));
+    std::vector<TestNode*> pair_ab = {&nm_a, &nm_b};
+    ASSERT_TRUE(WaitForNetworkFormation(pair_ab, 1))
+        << "NM_B failed to merge with NM_A";
+
+    // Start NM_C (after NM_B joined, NM_A has SYNC_BEACON_RX at slot 1,
+    // giving 7/16 RX slots — NM_C's claim reaches NM_A reliably)
     AdvanceTime(slot_duration);
     ASSERT_TRUE(StartNode(nm_c));
-
-    // Phase 1: initial merge — NM_A (priority 0) wins; NM_B and NM_C join.
     std::vector<TestNode*> all_nodes = {&nm_a, &nm_b, &nm_c};
     ASSERT_TRUE(WaitForNetworkFormation(all_nodes, 2))
-        << "Initial three-way merge failed";
+        << "NM_C failed to merge with NM_A";
 
     EXPECT_EQ(nm_a.protocol->GetState(), ProtocolState::NETWORK_MANAGER);
     EXPECT_EQ(nm_b.protocol->GetState(), ProtocolState::NORMAL_OPERATION);
