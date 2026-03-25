@@ -1431,15 +1431,16 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
         return Result::Success();
     }
 
-    AddToMessageCache(original_src, seq_num);
-
-    // Check if we are the intended next hop
+    // Check if we are the intended next hop (before caching — overheard
+    // packets must not poison the dedup table or legitimate forwarded
+    // copies addressed to us will be falsely dropped)
     if (next_hop != node_address_) {
-        // Not for us - ignore (was likely overheard)
         LOG_DEBUG("DATA not for this node (next_hop=0x%04X), ignoring",
                   next_hop);
         return Result::Success();
     }
+
+    AddToMessageCache(original_src, seq_num);
 
     // We are the next hop - check if we are also the final destination
     if (final_dest == node_address_) {
