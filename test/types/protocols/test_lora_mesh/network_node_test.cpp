@@ -710,16 +710,27 @@ TEST_F(NetworkNodeRouteTest,
        ToRoutingTableEntryDirectNeighborHasReceptionQuality) {
     node_.routing_entry.hop_count = 1;
     node_.link_stats.ewma_quality = 180;
+    node_.link_stats.messages_received = 3;
     RoutingTableEntry entry = node_.ToRoutingTableEntry();
     EXPECT_EQ(entry.reception_quality, 180u);
 }
 
 TEST_F(NetworkNodeRouteTest,
-       ToRoutingTableEntryMultiHopHasZeroReceptionQuality) {
+       ToRoutingTableEntryMultiHopNoReceptionHasZeroReceptionQuality) {
     node_.routing_entry.hop_count = 2;
     node_.link_stats.ewma_quality = 180;
+    node_.link_stats.messages_received = 0;  // Never received from this node
     RoutingTableEntry entry = node_.ToRoutingTableEntry();
     EXPECT_EQ(entry.reception_quality, 0u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryMultiHopWithReceptionHasReceptionQuality) {
+    node_.routing_entry.hop_count = 2;
+    node_.link_stats.ewma_quality = 48;
+    node_.link_stats.messages_received = 5;  // Heard directly (lossy link)
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 48u);
 }
 
 // ---- GetAddress / GetAllocatedDataSlots ----

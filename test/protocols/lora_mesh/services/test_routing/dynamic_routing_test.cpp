@@ -715,25 +715,51 @@ TEST_F(DynamicRoutingTests, LossyLinkRoutesViaRelay) {
     EXPECT_TRUE(nm_rerouted)
         << "NM should also prefer 2-hop relay to reach Edge";
 
-    // Verify data delivery: Edge → NM via Relay
-    std::vector<uint8_t> payload1 = {0xCA, 0xFE};
-    ASSERT_TRUE(SendMessage(edge, nm, payload1));
+    // Send multiple rounds of data in both directions to observe
+    // routing stability over time
+    constexpr int kRounds = 3;
+    for (int round = 0; round < kRounds; round++) {
+        std::cout << "=== Data round " << (round + 1) << "/" << kRounds
+                  << " ===" << std::endl;
+        for (auto* node : nodes) {
+            PrintRoutingTable(*node);
+        }
 
-    bool nm_received = AdvanceTime(
-        superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
-            return HasReceivedMessageFrom(nm, edge.address, MessageType::DATA);
-        });
-    EXPECT_TRUE(nm_received) << "NM should receive data from Edge via Relay";
+        // Edge → NM
+        std::vector<uint8_t> payload_to_nm = {0xCA, 0xFE,
+                                              static_cast<uint8_t>(round)};
+        ASSERT_TRUE(SendMessage(edge, nm, payload_to_nm));
 
-    // Verify data delivery: NM → Edge via Relay
-    std::vector<uint8_t> payload2 = {0xBE, 0xEF};
-    ASSERT_TRUE(SendMessage(nm, edge, payload2));
+        bool nm_received = AdvanceTime(
+            superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
+                return HasReceivedMessageFrom(nm, edge.address,
+                                              MessageType::DATA);
+            });
+        EXPECT_TRUE(nm_received)
+            << "Round " << (round + 1) << ": NM should receive data from Edge";
 
-    bool edge_received = AdvanceTime(
-        superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
-            return HasReceivedMessageFrom(edge, nm.address, MessageType::DATA);
-        });
-    EXPECT_TRUE(edge_received) << "Edge should receive data from NM via Relay";
+        // NM → Edge
+        std::vector<uint8_t> payload_to_edge = {0xBE, 0xEF,
+                                                static_cast<uint8_t>(round)};
+        ASSERT_TRUE(SendMessage(nm, edge, payload_to_edge));
+
+        bool edge_received = AdvanceTime(
+            superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
+                return HasReceivedMessageFrom(edge, nm.address,
+                                              MessageType::DATA);
+            });
+        EXPECT_TRUE(edge_received)
+            << "Round " << (round + 1) << ": Edge should receive data from NM";
+
+        // Let the network settle between rounds
+        AdvanceTime(superframe_time * 3, 0, step_ms, 0, nullptr);
+    }
+
+    // Final routing state
+    std::cout << "=== Final routing state ===" << std::endl;
+    for (auto* node : nodes) {
+        PrintRoutingTable(*node);
+    }
 }
 
 }  // namespace test

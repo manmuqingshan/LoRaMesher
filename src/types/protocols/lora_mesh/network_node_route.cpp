@@ -302,7 +302,7 @@ bool NetworkNodeRoute::UpdateCapabilities(uint8_t new_capabilities,
 RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
     RoutingTableEntry entry = routing_entry;
     entry.control_slot_index = control_slot_index;
-    if (routing_entry.hop_count == 1) {
+    if (link_stats.messages_received > 0) {
         entry.reception_quality = link_stats.ewma_quality;
     }
     return entry;

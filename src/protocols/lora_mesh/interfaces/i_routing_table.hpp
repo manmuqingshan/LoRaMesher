@@ -177,6 +177,18 @@ class IRoutingTable {
      */
     virtual uint8_t GetLinkQuality(AddressType node_address) const = 0;
 
+    /**
+     * @brief Get direct physical link quality from link_stats
+     *
+     * Returns CalculateQuality() from the node's LinkQualityStats,
+     * reflecting the actual measured direct link (EWMA + remote quality),
+     * not the route quality. Returns 0 if no direct reception data.
+     *
+     * @param node_address Target node address
+     * @return uint8_t Direct link quality (0-255), or 0 if unknown
+     */
+    virtual uint8_t GetDirectLinkQuality(AddressType node_address) const = 0;
+
     // Configuration and callbacks
 
     /**

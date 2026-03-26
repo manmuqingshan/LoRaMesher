@@ -158,18 +158,18 @@ uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
 
 uint8_t RoutingTableMessage::GetReceptionQualityFor(
     AddressType node_address) const {
-    // Only return quality for direct-neighbor entries (hop_count == 1).
-    // Multi-hop entries mean the sender knows us indirectly and cannot
-    // hear our transmissions — returning their quality would mask
-    // unidirectional links.
+    // Return reception_quality if the sender has direct reception data.
+    // The reception_quality field is only non-zero when the sender has
+    // actually received messages from that node (link_stats.messages_received > 0),
+    // so it inherently proves direct radio contact regardless of hop_count.
     for (uint8_t i = 0; i < entry_count_; ++i) {
         if (entries_[i].destination == node_address &&
-            entries_[i].hop_count == 1) {
+            entries_[i].reception_quality > 0) {
             return entries_[i].reception_quality;
         }
     }
 
-    // Node not found or only reachable via multi-hop
+    // Node not found or sender has no direct reception data
     return 0;
 }
 

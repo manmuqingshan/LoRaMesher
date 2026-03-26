@@ -2541,10 +2541,12 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     // (is_active=false) blocks the route refresh, leaving IsDirectNeighbor() false.
     if (beacon_nm != node_address_) {
         current_time = GetRTOS().getTickCount();
-        // Use measured link quality if available, otherwise default 200.
-        // Prevents SYNC_BEACON from overriding a degraded direct route
-        // with an artificially high quality=200.
-        uint8_t beacon_quality = routing_table_->GetLinkQuality(beacon_source);
+        // Use direct physical link quality if available, otherwise default 200.
+        // GetDirectLinkQuality returns link_stats.CalculateQuality() (EWMA +
+        // unidirectional penalty), not the route quality which may reflect a
+        // good multi-hop path.
+        uint8_t beacon_quality =
+            routing_table_->GetDirectLinkQuality(beacon_source);
         if (beacon_quality == 0) {
             beacon_quality = 200;  // First beacon, no stats yet
         }

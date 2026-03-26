@@ -511,17 +511,38 @@ TEST_F(RoutingTableMessageTest,
 }
 
 /**
- * @brief Test GetReceptionQualityFor returns 0 for multi-hop entries
- *
- * Multi-hop entries are filtered out to enable unidirectional link detection.
- * The peer knowing us via multi-hop does not prove they can hear us directly.
+ * @brief Test GetReceptionQualityFor returns 0 for multi-hop entries without
+ * reception data
  */
-TEST_F(RoutingTableMessageTest, GetReceptionQualityForMultiHopReturnsZero) {
+TEST_F(RoutingTableMessageTest,
+       GetReceptionQualityForMultiHopNoReceptionReturnsZero) {
     ASSERT_TRUE(msg_ptr != nullptr);
 
-    // 0x2222 has hop_count=2, 0x3333 has hop_count=3
+    // 0x2222 has hop_count=2, 0x3333 has hop_count=3, both with
+    // reception_quality=0 (no direct reception data)
     EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x2222), 0);
     EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x3333), 0);
+}
+
+/**
+ * @brief Test GetReceptionQualityFor returns quality for multi-hop entries
+ * that have direct reception data (reception_quality > 0)
+ *
+ * A node can be routed via multi-hop but still heard directly (lossy link).
+ */
+TEST_F(RoutingTableMessageTest,
+       GetReceptionQualityForMultiHopWithReceptionReturnsQuality) {
+    // Create a hop=2 entry with reception_quality set (lossy but heard)
+    std::vector<RoutingTableEntry> test_entries;
+    RoutingTableEntry lossy_entry(0x4444, 2, 200, 1);
+    lossy_entry.reception_quality = 48;  // Sender hears this node at 48
+    test_entries.push_back(lossy_entry);
+
+    auto opt_msg = RoutingTableMessage::Create(dest, src, network_id,
+                                               table_version, test_entries);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    EXPECT_EQ(opt_msg->GetReceptionQualityFor(0x4444), 48);
 }
 
 /**

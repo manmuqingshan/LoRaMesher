@@ -405,6 +405,17 @@ uint8_t DistanceVectorRoutingTable::GetLinkQuality(
     return 0;
 }
 
+uint8_t DistanceVectorRoutingTable::GetDirectLinkQuality(
+    AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+
+    auto node_it = GetNode(node_address);
+    if (node_it != nodes_.end() && node_it->link_stats.messages_received > 0) {
+        return node_it->link_stats.CalculateQuality();
+    }
+    return 0;
+}
+
 void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     RouteUpdateCallback callback) {
     std::lock_guard<std::mutex> lock(table_mutex_);
