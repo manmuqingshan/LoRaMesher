@@ -2541,11 +2541,18 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     // (is_active=false) blocks the route refresh, leaving IsDirectNeighbor() false.
     if (beacon_nm != node_address_) {
         current_time = GetRTOS().getTickCount();
+        // Use measured link quality if available, otherwise default 200.
+        // Prevents SYNC_BEACON from overriding a degraded direct route
+        // with an artificially high quality=200.
+        uint8_t beacon_quality = routing_table_->GetLinkQuality(beacon_source);
+        if (beacon_quality == 0) {
+            beacon_quality = 200;  // First beacon, no stats yet
+        }
         bool route_updated = routing_table_->UpdateRoute(
             beacon_source,        // next_hop: go through the beacon forwarder
             beacon_nm,            // destination: the network manager
             our_hop_count_to_nm,  // hop_count: beacon's hop_count + 1
-            200,  // link_quality: reasonable default for sync beacon path
+            beacon_quality,       // link_quality: measured or default
             config_.default_data_slots,  // allocated_data_slots
             0,                           // capabilities: unknown
             current_time);

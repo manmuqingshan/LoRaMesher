@@ -549,10 +549,13 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     }
                 }
             }
+        }
 
-            // Step 3: Expect a new message for this superframe
-            //         (EWMA decays, consecutive_missed++ — gives node time to
-            //         respond; ReceivedMessage() resets consecutive_missed)
+        // Step 3: Track expected messages for direct neighbors AND for
+        // nodes we've received from. This prevents the expected counter
+        // from freezing when a route switches from direct to multi-hop.
+        if (node.is_active && (node.routing_entry.hop_count == 1 ||
+                               node.link_stats.messages_received > 0)) {
             node.ExpectRoutingMessage();
         }
     }
