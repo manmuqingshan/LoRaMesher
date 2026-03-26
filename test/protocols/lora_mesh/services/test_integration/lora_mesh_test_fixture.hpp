@@ -482,6 +482,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     /**
+     * @brief Set per-link packet loss rate (one direction)
+     */
+    void SetDirectionalLinkLoss(const TestNode& from, const TestNode& to,
+                                float rate) {
+        virtual_network_.SetDirectionalLinkLoss(from.address, to.address, rate);
+    }
+
+    /**
+     * @brief Set per-link packet loss rate (both directions)
+     */
+    void SetLinkLoss(const TestNode& n1, const TestNode& n2, float rate) {
+        virtual_network_.SetLinkLoss(n1.address, n2.address, rate);
+    }
+
+    /**
      * @brief Send a message from one node to another
      *
      * @param from Source node

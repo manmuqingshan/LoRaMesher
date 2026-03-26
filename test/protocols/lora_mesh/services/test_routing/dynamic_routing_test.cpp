@@ -639,5 +639,102 @@ TEST_F(DynamicRoutingTests, UnidirectionalLinkAvoidance) {
     }
 }
 
+/**
+ * @brief Test that a lossy link causes routing to prefer 2-hop relay.
+ *
+ * Topology: Full mesh 3 nodes (A=NM, B=Relay, C=Edge)
+ *   A ↔ B: good (0% loss)
+ *   B ↔ C: good (0% loss)
+ *   A ↔ C: 80% loss (both directions)
+ *
+ * Verifies:
+ * - Initial full mesh with all 1-hop routes
+ * - After quality degrades on lossy A↔C link, both A and C prefer 2-hop via B
+ * - Data from C reaches A via B (2-hop)
+ * - Data from A reaches C via B (2-hop)
+ *
+ * Uses fixed-seed RNG for deterministic packet drops.
+ */
+TEST_F(DynamicRoutingTests, LossyLinkRoutesViaRelay) {
+    auto nodes = GenerateFullMeshTopology(3, 0x1000, "Node", 0);
+    ASSERT_EQ(nodes.size(), 3);
+
+    auto& nm = *nodes[0];     // A = Network Manager
+    auto& relay = *nodes[1];  // B = Relay
+    auto& edge = *nodes[2];   // C = Edge
+
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 2))
+        << "Network formation failed";
+    ASSERT_TRUE(WaitForFullMeshConvergence(nodes))
+        << "Full mesh did not converge";
+
+    // Verify initial full mesh — all routes are 1-hop
+    EXPECT_EQ(GetHopCount(edge, nm.address), 1);
+    EXPECT_EQ(GetHopCount(nm, edge.address), 1);
+
+    // Apply 80% packet loss on A↔C link (both directions)
+    SetLinkLoss(nm, edge, 0.80f);
+
+    auto superframe_time = GetSuperframeDuration(nm);
+    uint32_t step_ms = 50u;
+
+    // Wait for quality degradation: with 80% loss, EWMA drops rapidly.
+    // After ~5 superframes, quality ≈ 200 * 0.70^4 ≈ 48.
+    // 2-hop cost (2*65536/200=655) < 1-hop cost (1*65536/48=1365).
+    // Allow 20 superframes for full convergence.
+    bool edge_rerouted = AdvanceTime(
+        superframe_time * 20, superframe_time * 20, step_ms, 0, [&]() {
+            return HasRouteTo(edge, nm.address) &&
+                   GetHopCount(edge, nm.address) == 2;
+        });
+
+    std::cout << "=== After lossy link quality degradation ===" << std::endl;
+    for (auto* node : nodes) {
+        PrintRoutingTable(*node);
+    }
+
+    EXPECT_TRUE(edge_rerouted)
+        << "Edge should prefer 2-hop relay over 80% lossy direct link";
+
+    // Check NM side too — A should also prefer 2-hop to C
+    bool nm_rerouted =
+        HasRouteTo(nm, edge.address) && GetHopCount(nm, edge.address) == 2;
+
+    // NM may take longer to reroute; give it more time if needed
+    if (!nm_rerouted) {
+        nm_rerouted = AdvanceTime(superframe_time * 10, superframe_time * 10,
+                                  step_ms, 0, [&]() {
+                                      return HasRouteTo(nm, edge.address) &&
+                                             GetHopCount(nm, edge.address) == 2;
+                                  });
+    }
+    EXPECT_TRUE(nm_rerouted)
+        << "NM should also prefer 2-hop relay to reach Edge";
+
+    // Verify data delivery: Edge → NM via Relay
+    std::vector<uint8_t> payload1 = {0xCA, 0xFE};
+    ASSERT_TRUE(SendMessage(edge, nm, payload1));
+
+    bool nm_received = AdvanceTime(
+        superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(nm, edge.address, MessageType::DATA);
+        });
+    EXPECT_TRUE(nm_received) << "NM should receive data from Edge via Relay";
+
+    // Verify data delivery: NM → Edge via Relay
+    std::vector<uint8_t> payload2 = {0xBE, 0xEF};
+    ASSERT_TRUE(SendMessage(nm, edge, payload2));
+
+    bool edge_received = AdvanceTime(
+        superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(edge, nm.address, MessageType::DATA);
+        });
+    EXPECT_TRUE(edge_received) << "Edge should receive data from NM via Relay";
+}
+
 }  // namespace test
 }  // namespace loramesher

@@ -239,7 +239,12 @@ class VirtualNetwork {
                 continue;
             }
 
-            // Check for packet loss
+            // Check for per-link packet loss
+            if (ShouldDropPacketForLink(source, dest_address)) {
+                continue;
+            }
+
+            // Check for global packet loss
             if (ShouldDropPacket()) {
                 continue;
             }
@@ -436,6 +441,30 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Set per-link packet loss rate (one direction)
+     *
+     * @param from_addr Source node address
+     * @param to_addr Destination node address
+     * @param rate Loss rate (0.0 = no loss, 1.0 = all packets lost)
+     */
+    void SetDirectionalLinkLoss(uint32_t from_addr, uint32_t to_addr,
+                                float rate) {
+        auto it = nodes_.find(from_addr);
+        if (it != nodes_.end()) {
+            it->second.link_loss_rates[to_addr] =
+                std::min(1.0f, std::max(0.0f, rate));
+        }
+    }
+
+    /**
+     * @brief Set per-link packet loss rate (both directions)
+     */
+    void SetLinkLoss(uint32_t node1, uint32_t node2, float rate) {
+        SetDirectionalLinkLoss(node1, node2, rate);
+        SetDirectionalLinkLoss(node2, node1, rate);
+    }
+
+    /**
      * @brief Advance the network simulation time
      * 
      * @param time_ms Time to advance in milliseconds
@@ -466,6 +495,7 @@ class VirtualNetwork {
         IRadioReceiver* radio;
         std::map<uint32_t, bool> active_links;
         std::map<uint32_t, uint32_t> link_delays;
+        std::map<uint32_t, float> link_loss_rates;
         RadioConfig radio_config;
     };
 
@@ -513,6 +543,8 @@ class VirtualNetwork {
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
+    std::mt19937 link_loss_rng_{
+        42};  ///< Fixed seed for deterministic per-link loss
     std::atomic<uint32_t> dropped_message_count_{0};
 
     /**
@@ -534,7 +566,24 @@ class VirtualNetwork {
     }
 
     /**
-     * @brief Check if packet should be dropped based on loss rate
+     * @brief Check if packet should be dropped based on per-link loss rate
+     */
+    bool ShouldDropPacketForLink(uint32_t from_addr, uint32_t to_addr) {
+        auto it = nodes_.find(from_addr);
+        if (it == nodes_.end())
+            return false;
+        auto loss_it = it->second.link_loss_rates.find(to_addr);
+        if (loss_it == it->second.link_loss_rates.end() ||
+            loss_it->second <= 0.0f)
+            return false;
+        if (loss_it->second >= 1.0f)
+            return true;
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+        return dist(link_loss_rng_) < loss_it->second;
+    }
+
+    /**
+     * @brief Check if packet should be dropped based on global loss rate
      */
     bool ShouldDropPacket() {
         if (packet_loss_rate_ <= 0.0f)
