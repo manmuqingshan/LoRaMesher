@@ -937,6 +937,118 @@
         .network-node-circle.selected-node {
             filter: drop-shadow(0 0 6px rgba(52,152,219,0.8));
         }
+        .link-chart-canvas {
+            cursor: pointer;
+        }
+        .link-chart-canvas:hover {
+            box-shadow: 0 0 4px rgba(52,152,219,0.3);
+        }
+        /* ── Chart Overlay ── */
+        .chart-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 30px;
+        }
+        .chart-overlay.open {
+            display: flex;
+        }
+        .chart-overlay-card {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 1200px;
+            height: 100%;
+            max-height: 700px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chart-overlay-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid #dee2e6;
+            background: #f8f9fa;
+            flex-shrink: 0;
+        }
+        .chart-overlay-header span {
+            font-weight: 700;
+            font-size: 15px;
+            color: #2c3e50;
+        }
+        .chart-overlay-header .chart-overlay-buttons {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chart-overlay-header .chart-overlay-buttons button.btn {
+            font-size: 12px;
+            padding: 5px 12px;
+        }
+        .chart-overlay-header .chart-overlay-buttons button.close-btn {
+            background: none;
+            border: none;
+            font-size: 22px;
+            cursor: pointer;
+            color: #7f8c8d;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .chart-overlay-header .chart-overlay-buttons button.close-btn:hover {
+            background: #e9ecef;
+            color: #2c3e50;
+        }
+        .chart-overlay-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 8px 20px;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+        .chart-overlay-hint {
+            color: #adb5bd;
+            font-size: 11px;
+            font-style: italic;
+        }
+        .chart-overlay-canvas-wrap {
+            flex: 1;
+            padding: 16px 20px;
+            position: relative;
+            min-height: 0;
+        }
+        #chartOverlayCanvas {
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        #chartOverlayCanvas.dragging {
+            cursor: grabbing;
+        }
+        .chart-overlay-tooltip {
+            display: none;
+            position: fixed;
+            background: rgba(30,39,46,0.97);
+            color: #ecf0f1;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-family: Menlo, Consolas, monospace;
+            z-index: 10001;
+            pointer-events: none;
+            white-space: pre-line;
+            line-height: 1.5;
+            box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.12);
+        }
         .network-node-circle.multi-selected {
             stroke: #e74c3c !important;
             stroke-width: 3 !important;
@@ -1361,7 +1473,10 @@
                 this.messageFlows    = [];        // built by buildMessageFlows()
                 this.linkStats       = new Map();  // "sender-receiver" -> {sent, received}
                 this.linkRFHistory   = new Map();  // "receiver-sender" -> [{timestamp, rssi, snr}]
-                this.linkQualityHistory = new Map(); // "nodeId-dest" -> [{timestamp, quality, active}]
+                this.linkQualityHistory = new Map(); // "nodeId-dest" -> [{timestamp, quality, active, hops}]
+                this.linkQualityAllHopsHistory = new Map(); // "nodeId-dest" -> [{timestamp, quality, active, hops}] (all hops)
+                this.linkStatsHistory = new Map(); // "observer-peer" -> [{timestamp, ewma, remote, linkQuality, expected, received, missed}]
+                this.linkStatsEntries = [];
                 this._linkPanelOpen  = false;
                 this._linkPanelNode  = null;
                 this._linkPanelExpanded = null; // {from, to} when drilled into a specific link
@@ -1406,9 +1521,10 @@
             }
 
             setupEventListeners() {
-                // Escape key closes link detail panel and clears multi-selection
+                // Escape key closes overlays, link panel, multi-selection
                 document.addEventListener('keydown', (e) => {
                     if (e.key === 'Escape') {
+                        if (this._overlayChart) { this._closeChartOverlay(); return; }
                         if (this._linkPanelOpen) this.closeLinkPanel();
                         if (this._selectedNodes.size > 0) this._clearMultiSelection();
                     }
@@ -1730,6 +1846,7 @@
                 if (document.getElementById('topology').classList.contains('active')) {
                     this.renderNetwork();
                 }
+                this._refreshLinkPanel();
 
                 // Show success message
                 logInfo.style.background = '#d4edda';
@@ -2219,13 +2336,51 @@
                     fileData.routingEntries.push({
                         timestamp,
                         nodeId,
-                        dest:    rtentryMatch[1],
-                        via:     rtentryMatch[2],
+                        dest:    rtentryMatch[1].toUpperCase(),
+                        via:     rtentryMatch[2].toUpperCase(),
                         hops:    parseInt(rtentryMatch[3]),
                         quality: parseInt(rtentryMatch[4]),
                         active:  parseInt(rtentryMatch[5]) !== 0,
                         nm:      rtentryMatch[6] !== undefined ? parseInt(rtentryMatch[6]) !== 0 : false,
                         fileId:  fileData.id
+                    });
+                }
+
+                // ── Source: link quality snapshot on routing table reception
+                const sourceMatch = line.match(
+                    /Source\s+0x([0-9A-Fa-f]+):\s+remote_quality=(\d+)\s+ewma=(\d+)\s+link_quality=(\d+)\s+expected=(\d+)\s+received=(\d+)/
+                );
+                if (sourceMatch && nodeId !== 'unknown') {
+                    if (!fileData.linkStatsEntries) fileData.linkStatsEntries = [];
+                    fileData.linkStatsEntries.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        peer: sourceMatch[1].toUpperCase(),
+                        remote: parseInt(sourceMatch[2]),
+                        ewma: parseInt(sourceMatch[3]),
+                        linkQuality: parseInt(sourceMatch[4]),
+                        expected: parseInt(sourceMatch[5]),
+                        received: parseInt(sourceMatch[6]),
+                        missed: null,
+                        fileId: fileData.id
+                    });
+                }
+
+                // ── LinkStats: periodic quality transition
+                const linkStatsMatch = line.match(
+                    /LinkStats\s+0x([0-9A-Fa-f]+):\s+quality\s+(\d+)\s*->\s*(\d+)\s+\(ewma=(\d+)\s+remote=(\d+)\s+exp=(\d+)\s+recv=(\d+)\s+missed=(\d+)\)/
+                );
+                if (linkStatsMatch && nodeId !== 'unknown') {
+                    if (!fileData.linkStatsEntries) fileData.linkStatsEntries = [];
+                    fileData.linkStatsEntries.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        peer: linkStatsMatch[1].toUpperCase(),
+                        remote: parseInt(linkStatsMatch[5]),
+                        ewma: parseInt(linkStatsMatch[4]),
+                        linkQuality: parseInt(linkStatsMatch[3]),
+                        expected: parseInt(linkStatsMatch[6]),
+                        received: parseInt(linkStatsMatch[7]),
+                        missed: parseInt(linkStatsMatch[8]),
+                        fileId: fileData.id
                     });
                 }
 
@@ -2303,6 +2458,7 @@
                 this.events = [];
                 this.routingEntries = [];
                 this.dataEvents = [];
+                this.linkStatsEntries = [];
                 this.originalTimeMap.clear();
                 this._forceLayoutDone = false;
                 this.nodePositions.clear();
@@ -2334,6 +2490,7 @@
                     this.events = this.events.concat(fileData.events);
                     this.routingEntries = this.routingEntries.concat(fileData.routingEntries || []);
                     this.dataEvents = this.dataEvents.concat(fileData.dataEvents || []);
+                    this.linkStatsEntries = this.linkStatsEntries.concat(fileData.linkStatsEntries || []);
 
                     // Merge originalTimeMap if it exists
                     if (fileData.originalTimeMap) {
@@ -2406,21 +2563,44 @@
                     });
                 }
 
-                // Quality history from routing entries (direct neighbors only)
+                // Quality history from routing entries
+                this.linkQualityAllHopsHistory.clear();
                 for (const entry of this.routingEntries) {
-                    if (entry.hops !== 1) continue;
                     const nodeId = entry.nodeId.toUpperCase();
                     const dest = entry.dest.toUpperCase();
                     const key = `${nodeId}-${dest}`;
+                    // All-hops history (includes multi-hop routing)
+                    if (!this.linkQualityAllHopsHistory.has(key)) this.linkQualityAllHopsHistory.set(key, []);
+                    this.linkQualityAllHopsHistory.get(key).push({
+                        timestamp: entry.timestamp, quality: entry.quality, active: entry.active, hops: entry.hops
+                    });
+                    // Direct-only history (hops=1)
+                    if (entry.hops !== 1) continue;
                     if (!this.linkQualityHistory.has(key)) this.linkQualityHistory.set(key, []);
                     this.linkQualityHistory.get(key).push({
-                        timestamp: entry.timestamp, quality: entry.quality, active: entry.active
+                        timestamp: entry.timestamp, quality: entry.quality, active: entry.active, hops: 1
+                    });
+                }
+
+                // LinkStats history (Source + LinkStats log lines)
+                this.linkStatsHistory.clear();
+                for (const entry of this.linkStatsEntries) {
+                    const key = `${entry.nodeId.toUpperCase()}-${entry.peer}`;
+                    if (!this.linkStatsHistory.has(key)) this.linkStatsHistory.set(key, []);
+                    this.linkStatsHistory.get(key).push({
+                        timestamp: entry.timestamp,
+                        ewma: entry.ewma, remote: entry.remote,
+                        linkQuality: entry.linkQuality,
+                        expected: entry.expected, received: entry.received,
+                        missed: entry.missed
                     });
                 }
 
                 // Sort each array by timestamp
                 this.linkRFHistory.forEach(arr => arr.sort((a, b) => a.timestamp - b.timestamp));
                 this.linkQualityHistory.forEach(arr => arr.sort((a, b) => a.timestamp - b.timestamp));
+                this.linkQualityAllHopsHistory.forEach(arr => arr.sort((a, b) => a.timestamp - b.timestamp));
+                this.linkStatsHistory.forEach(arr => arr.sort((a, b) => a.timestamp - b.timestamp));
             }
 
             toggleFile(fileId) {
@@ -2433,6 +2613,7 @@
                     this.renderTimeline();
                     this.renderMessages();
                     this.renderStats();
+                    this._refreshLinkPanel();
                 }
             }
 
@@ -2443,10 +2624,12 @@
                 this.updateNodeFilterUI();
                 if (this.files.size === 0) {
                     document.getElementById('visualizationContainer').style.display = 'none';
+                    this.closeLinkPanel();
                 } else {
                     this.renderTimeline();
                     this.renderMessages();
                     this.renderStats();
+                    this._refreshLinkPanel();
                 }
             }
 
@@ -4374,6 +4557,17 @@
                 }
             }
 
+            _refreshLinkPanel() {
+                if (!this._linkPanelOpen) return;
+                if (this._linkPanelExpanded) {
+                    const { from, to } = this._linkPanelExpanded;
+                    const reverseCheckbox = document.getElementById('showReverseLink');
+                    this._drawLinkCharts(from, to, reverseCheckbox ? reverseCheckbox.checked : false);
+                } else if (this._linkPanelNode) {
+                    this._renderLinkListView(this._linkPanelNode);
+                }
+            }
+
             closeLinkPanel() {
                 const panel = document.getElementById('linkDetailPanel');
                 panel.classList.remove('open');
@@ -4525,6 +4719,10 @@
                     <canvas class="link-chart-canvas" id="chartSNR"></canvas>
                     <div class="link-chart-label">Quality (0-255)</div>
                     <canvas class="link-chart-canvas" id="chartQuality"></canvas>
+                    <div class="link-chart-label">EWMA & Remote Quality</div>
+                    <canvas class="link-chart-canvas" id="chartEwmaRemote"></canvas>
+                    <div class="link-chart-label">Expected vs Received</div>
+                    <canvas class="link-chart-canvas" id="chartExpRecv"></canvas>
                 `;
                 content.innerHTML = html;
 
@@ -4545,9 +4743,18 @@
                 });
 
                 this._drawLinkCharts(from, to, false);
+
+                // Click to expand charts
+                document.getElementById('chartRSSI').addEventListener('click', () => this._openChartOverlay('rssi', from, to));
+                document.getElementById('chartSNR').addEventListener('click', () => this._openChartOverlay('snr', from, to));
+                document.getElementById('chartQuality').addEventListener('click', () => this._openChartOverlay('quality', from, to));
+                document.getElementById('chartEwmaRemote').addEventListener('click', () => this._openChartOverlay('ewma_remote', from, to));
+                document.getElementById('chartExpRecv').addEventListener('click', () => this._openChartOverlay('exp_recv', from, to));
             }
 
             _drawLinkCharts(from, to, showReverse) {
+                from = from.toUpperCase();
+                to = to.toUpperCase();
                 const rfKey = `${to}-${from}`; // receiver=to sees sender=from
                 const qKey = `${from}-${to}`;  // from's routing table entry for to (quality from observer's perspective)
                 // Actually: quality key should match how buildLinkTimeSeries stores it
@@ -4591,9 +4798,14 @@
                     ]
                 });
 
-                // Quality chart
+                // Quality chart (direct + indirect hops)
                 const qualCanvas = document.getElementById('chartQuality');
-                const qualSeries = [{ data: qData.map(d => ({ x: d.timestamp, y: d.quality })), color: '#9b59b6', label: `${from}\u2192${to}` }];
+                const allHopsData = this.linkQualityAllHopsHistory.get(qKey) || [];
+                const indirectData = allHopsData.filter(d => d.hops > 1);
+                const qualSeries = [{ data: qData.map(d => ({ x: d.timestamp, y: d.quality })), color: '#9b59b6', label: `Direct (h=1)` }];
+                if (indirectData.length > 0) {
+                    qualSeries.push({ data: indirectData.map(d => ({ x: d.timestamp, y: d.quality })), color: '#95a5a6', label: `Indirect (h>1)`, dashed: true });
+                }
                 if (showReverse && reverseQData.length > 0) {
                     qualSeries.push({ data: reverseQData.map(d => ({ x: d.timestamp, y: d.quality })), color: '#e74c3c', label: `${to}\u2192${from}`, dashed: true });
                 }
@@ -4604,6 +4816,41 @@
                         { y: 85, color: 'rgba(243,156,18,0.08)' }
                     ]
                 });
+
+                // EWMA & Remote Quality chart
+                const statsKey = `${from}-${to}`;
+                const statsData = this.linkStatsHistory.get(statsKey) || [];
+                const reverseStatsKey = `${to}-${from}`;
+                const reverseStatsData = showReverse ? (this.linkStatsHistory.get(reverseStatsKey) || []) : [];
+
+                const ewmaCanvas = document.getElementById('chartEwmaRemote');
+                const ewmaSeries = [
+                    { data: statsData.map(d => ({ x: d.timestamp, y: d.ewma })), color: '#3498db', label: 'EWMA' },
+                    { data: statsData.map(d => ({ x: d.timestamp, y: d.remote })), color: '#f39c12', label: 'Remote' },
+                    { data: statsData.map(d => ({ x: d.timestamp, y: d.linkQuality })), color: '#9b59b6', label: 'Combined', dashed: true }
+                ];
+                if (showReverse && reverseStatsData.length > 0) {
+                    ewmaSeries.push({ data: reverseStatsData.map(d => ({ x: d.timestamp, y: d.ewma })), color: '#e74c3c', label: `Rev EWMA`, dashed: true });
+                }
+                this.renderTimeSeriesChart(ewmaCanvas, ewmaSeries, {
+                    yLabel: 'Quality', yMin: 0, yMax: 255, cursorX,
+                    thresholds: [
+                        { y: 170, color: 'rgba(39,174,96,0.08)' },
+                        { y: 85, color: 'rgba(243,156,18,0.08)' }
+                    ]
+                });
+
+                // Expected vs Received chart
+                const expRecvCanvas = document.getElementById('chartExpRecv');
+                const expRecvSeries = [
+                    { data: statsData.map(d => ({ x: d.timestamp, y: d.expected })), color: '#7f8c8d', label: 'Expected' },
+                    { data: statsData.map(d => ({ x: d.timestamp, y: d.received })), color: '#27ae60', label: 'Received' }
+                ];
+                if (showReverse && reverseStatsData.length > 0) {
+                    expRecvSeries.push({ data: reverseStatsData.map(d => ({ x: d.timestamp, y: d.expected })), color: '#e74c3c', label: 'Rev Expected', dashed: true });
+                    expRecvSeries.push({ data: reverseStatsData.map(d => ({ x: d.timestamp, y: d.received })), color: '#c0392b', label: 'Rev Received', dashed: true });
+                }
+                this.renderTimeSeriesChart(expRecvCanvas, expRecvSeries, { yLabel: 'Count', cursorX });
             }
 
             renderTimeSeriesChart(canvas, series, options = {}) {
@@ -4634,7 +4881,8 @@
                     return;
                 }
 
-                const xMin = Math.min(...allX), xMax = Math.max(...allX);
+                const xMin = options.xMin !== undefined ? options.xMin : Math.min(...allX);
+                const xMax = options.xMax !== undefined ? options.xMax : Math.max(...allX);
                 let yMin = options.yMin !== undefined ? options.yMin : Math.min(...allY);
                 let yMax = options.yMax !== undefined ? options.yMax : Math.max(...allY);
                 if (yMin === yMax) { yMin -= 1; yMax += 1; }
@@ -4765,6 +5013,37 @@
                         lx += ctx.measureText(s.label || '').width + 40;
                     });
                 }
+
+                // Highlight point (for overlay hover)
+                if (options.highlightPoint) {
+                    const hp = options.highlightPoint;
+                    const hx = toCanvasX(hp.x), hy = toCanvasY(hp.y);
+                    if (hx >= PAD_L && hx <= PAD_L + plotW) {
+                        const color = series[hp.seriesIndex] ? series[hp.seriesIndex].color : '#333';
+                        // Vertical crosshair
+                        ctx.strokeStyle = 'rgba(44,62,80,0.3)';
+                        ctx.lineWidth = 1;
+                        ctx.setLineDash([2, 2]);
+                        ctx.beginPath();
+                        ctx.moveTo(hx, PAD_T); ctx.lineTo(hx, PAD_T + plotH);
+                        ctx.stroke();
+                        // Horizontal crosshair
+                        ctx.beginPath();
+                        ctx.moveTo(PAD_L, hy); ctx.lineTo(PAD_L + plotW, hy);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        // Large circle
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath(); ctx.arc(hx, hy, 6, 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = color;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.arc(hx, hy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                    }
+                }
+
+                // Return coordinate helpers for external use (overlay hover/zoom)
+                return { toCanvasX, toCanvasY, xMin, xMax, yMin, yMax, PAD_L, PAD_R, PAD_T, PAD_B, plotW, plotH };
             }
 
             renderSparkline(canvas, data, color) {
@@ -4809,6 +5088,297 @@
                     .forEach(el => el.classList.remove('selected-edge'));
                 const edge = document.querySelector(`.network-edge-path[data-from="${from}"][data-to="${to}"]`);
                 if (edge) edge.classList.add('selected-edge');
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // CHART OVERLAY — expanded view with zoom, hover, export
+            // ═══════════════════════════════════════════════════════════════
+
+            _getChartConfig(type) {
+                const configs = {
+                    rssi: { title: 'RSSI', yLabel: 'dBm', unit: 'dBm',
+                        thresholds: [{ y: -85, color: 'rgba(39,174,96,0.08)' }, { y: -100, color: 'rgba(243,156,18,0.08)' }],
+                        getY: d => d.rssi, color: '#3498db', useRF: true },
+                    snr: { title: 'SNR', yLabel: 'dB', unit: 'dB',
+                        thresholds: [{ y: 5, color: 'rgba(39,174,96,0.08)' }, { y: 0, color: 'rgba(243,156,18,0.08)' }],
+                        getY: d => d.snr, color: '#2ecc71', useRF: true },
+                    quality: { title: 'Quality', yLabel: 'Quality', unit: '', yMin: 0, yMax: 255,
+                        thresholds: [{ y: 170, color: 'rgba(39,174,96,0.08)' }, { y: 85, color: 'rgba(243,156,18,0.08)' }],
+                        getY: d => d.quality, color: '#9b59b6', useRF: false },
+                    ewma_remote: { title: 'EWMA & Remote', yLabel: 'Quality', unit: '', yMin: 0, yMax: 255,
+                        thresholds: [{ y: 170, color: 'rgba(39,174,96,0.08)' }, { y: 85, color: 'rgba(243,156,18,0.08)' }],
+                        color: '#3498db', useStats: true, multiSeries: true },
+                    exp_recv: { title: 'Expected vs Received', yLabel: 'Count', unit: '',
+                        thresholds: [], color: '#7f8c8d', useStats: true, multiSeries: true }
+                };
+                return configs[type];
+            }
+
+            _getOverlaySeries(type, from, to, showReverse) {
+                from = from.toUpperCase();
+                to = to.toUpperCase();
+                const cfg = this._getChartConfig(type);
+
+                if (cfg.useStats) {
+                    const statsData = this.linkStatsHistory.get(`${from}-${to}`) || [];
+                    const revStatsData = showReverse ? (this.linkStatsHistory.get(`${to}-${from}`) || []) : [];
+
+                    if (type === 'ewma_remote') {
+                        const series = [
+                            { data: statsData.map(d => ({ x: d.timestamp, y: d.ewma })), color: '#3498db', label: 'EWMA' },
+                            { data: statsData.map(d => ({ x: d.timestamp, y: d.remote })), color: '#f39c12', label: 'Remote' },
+                            { data: statsData.map(d => ({ x: d.timestamp, y: d.linkQuality })), color: '#9b59b6', label: 'Combined', dashed: true }
+                        ];
+                        if (showReverse && revStatsData.length > 0) {
+                            series.push({ data: revStatsData.map(d => ({ x: d.timestamp, y: d.ewma })), color: '#e74c3c', label: 'Rev EWMA', dashed: true });
+                        }
+                        return series;
+                    } else { // exp_recv
+                        const series = [
+                            { data: statsData.map(d => ({ x: d.timestamp, y: d.expected })), color: '#7f8c8d', label: 'Expected' },
+                            { data: statsData.map(d => ({ x: d.timestamp, y: d.received })), color: '#27ae60', label: 'Received' }
+                        ];
+                        if (showReverse && revStatsData.length > 0) {
+                            series.push({ data: revStatsData.map(d => ({ x: d.timestamp, y: d.expected })), color: '#e74c3c', label: 'Rev Expected', dashed: true });
+                            series.push({ data: revStatsData.map(d => ({ x: d.timestamp, y: d.received })), color: '#c0392b', label: 'Rev Received', dashed: true });
+                        }
+                        return series;
+                    }
+                }
+
+                let fwdData, revData;
+                if (cfg.useRF) {
+                    fwdData = this.linkRFHistory.get(`${to}-${from}`) || [];
+                    revData = showReverse ? (this.linkRFHistory.get(`${from}-${to}`) || []) : [];
+                } else {
+                    fwdData = this.linkQualityHistory.get(`${from}-${to}`) || [];
+                    revData = showReverse ? (this.linkQualityHistory.get(`${to}-${from}`) || []) : [];
+                }
+                const series = [{ data: fwdData.map(d => ({ x: d.timestamp, y: cfg.getY(d) })), color: cfg.color, label: `Direct (h=1)` }];
+                // Add indirect hops for quality chart
+                if (!cfg.useRF) {
+                    const allHops = this.linkQualityAllHopsHistory.get(`${from}-${to}`) || [];
+                    const indirect = allHops.filter(d => d.hops > 1);
+                    if (indirect.length > 0) {
+                        series.push({ data: indirect.map(d => ({ x: d.timestamp, y: d.quality })), color: '#95a5a6', label: 'Indirect (h>1)', dashed: true });
+                    }
+                }
+                if (showReverse && revData.length > 0) {
+                    series.push({ data: revData.map(d => ({ x: d.timestamp, y: cfg.getY(d) })), color: '#e74c3c', label: `0x${to}\u21920x${from}`, dashed: true });
+                }
+                return series;
+            }
+
+            _openChartOverlay(type, from, to) {
+                const cfg = this._getChartConfig(type);
+                const series = this._getOverlaySeries(type, from, to, false);
+                const allX = [];
+                series.forEach(s => s.data.forEach(p => allX.push(p.x)));
+                const dataXMin = allX.length > 0 ? Math.min(...allX) : 0;
+                const dataXMax = allX.length > 0 ? Math.max(...allX) : 1;
+
+                this._overlayChart = {
+                    type, from, to,
+                    xMin: dataXMin, xMax: dataXMax,
+                    xMinOrig: dataXMin, xMaxOrig: dataXMax
+                };
+
+                const overlay = document.getElementById('chartOverlay');
+                document.getElementById('chartOverlayTitle').textContent = `${cfg.title} (${cfg.yLabel}) \u2014 0x${from} \u2192 0x${to}`;
+                document.getElementById('chartOverlayReverse').checked = false;
+                overlay.classList.add('open');
+
+                requestAnimationFrame(() => {
+                    this._renderOverlayChart();
+                    this._setupOverlayInteractions();
+                });
+            }
+
+            _closeChartOverlay() {
+                document.getElementById('chartOverlay').classList.remove('open');
+                document.getElementById('chartOverlayTooltip').style.display = 'none';
+                this._overlayChart = null;
+                this._overlayCoords = null;
+                this._overlayHighlight = null;
+            }
+
+            _renderOverlayChart() {
+                if (!this._overlayChart) return;
+                const { type, from, to, xMin, xMax } = this._overlayChart;
+                const cfg = this._getChartConfig(type);
+                const showReverse = document.getElementById('chartOverlayReverse').checked;
+                const series = this._getOverlaySeries(type, from, to, showReverse);
+                const canvas = document.getElementById('chartOverlayCanvas');
+
+                const opts = {
+                    yLabel: cfg.yLabel, cursorX: this.networkCurrentTime,
+                    thresholds: cfg.thresholds,
+                    xMin, xMax,
+                    highlightPoint: this._overlayHighlight || undefined
+                };
+                if (cfg.yMin !== undefined) opts.yMin = cfg.yMin;
+                if (cfg.yMax !== undefined) opts.yMax = cfg.yMax;
+
+                this._overlayCoords = this.renderTimeSeriesChart(canvas, series, opts);
+                this._overlaySeries = series;
+            }
+
+            _setupOverlayInteractions() {
+                const canvas = document.getElementById('chartOverlayCanvas');
+                const tooltip = document.getElementById('chartOverlayTooltip');
+
+                // Clone canvas to remove old listeners
+                const newCanvas = canvas.cloneNode(true);
+                canvas.parentNode.replaceChild(newCanvas, canvas);
+
+                // Hover tooltip
+                newCanvas.addEventListener('mousemove', (e) => {
+                    if (!this._overlayCoords || !this._overlaySeries || this._overlayDragging) {
+                        tooltip.style.display = 'none';
+                        return;
+                    }
+                    const rect = newCanvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const { PAD_L, PAD_T, plotW, plotH, xMin, xMax, yMin, yMax } = this._overlayCoords;
+
+                    if (mx < PAD_L || mx > PAD_L + plotW || my < PAD_T || my > PAD_T + plotH) {
+                        tooltip.style.display = 'none';
+                        this._overlayHighlight = null;
+                        this._renderOverlayChart();
+                        return;
+                    }
+
+                    let nearest = null, nearestDist = Infinity;
+                    this._overlaySeries.forEach((s, si) => {
+                        s.data.forEach(p => {
+                            if (p.x < xMin || p.x > xMax) return;
+                            const px = PAD_L + ((p.x - xMin) / (xMax - xMin || 1)) * plotW;
+                            const py = PAD_T + plotH - ((p.y - yMin) / (yMax - yMin || 1)) * plotH;
+                            const dist = Math.sqrt((mx - px) ** 2 + (my - py) ** 2);
+                            if (dist < nearestDist && dist < 30) {
+                                nearestDist = dist;
+                                nearest = { x: p.x, y: p.y, seriesIndex: si, label: s.label, color: s.color };
+                            }
+                        });
+                    });
+
+                    if (nearest) {
+                        const cfg = this._getChartConfig(this._overlayChart.type);
+                        tooltip.innerHTML = `<b>${nearest.label}</b>\n${this.formatTimestamp(nearest.x)}\n${nearest.y} ${cfg.unit}`;
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = (e.clientX + 14) + 'px';
+                        tooltip.style.top = (e.clientY - 10) + 'px';
+                        this._overlayHighlight = nearest;
+                    } else {
+                        tooltip.style.display = 'none';
+                        this._overlayHighlight = null;
+                    }
+                    this._renderOverlayChart();
+                });
+
+                newCanvas.addEventListener('mouseleave', () => {
+                    tooltip.style.display = 'none';
+                    this._overlayHighlight = null;
+                    this._renderOverlayChart();
+                });
+
+                // Zoom with wheel
+                newCanvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    if (!this._overlayChart || !this._overlayCoords) return;
+                    const oc = this._overlayChart;
+                    const rect = newCanvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const { PAD_L, plotW } = this._overlayCoords;
+
+                    const frac = Math.max(0, Math.min(1, (mx - PAD_L) / plotW));
+                    const dataX = oc.xMin + frac * (oc.xMax - oc.xMin);
+                    const scale = e.deltaY < 0 ? 0.85 : 1.18;
+                    let newMin = dataX - (dataX - oc.xMin) * scale;
+                    let newMax = dataX + (oc.xMax - dataX) * scale;
+                    newMin = Math.max(oc.xMinOrig, newMin);
+                    newMax = Math.min(oc.xMaxOrig, newMax);
+                    if (newMax - newMin < 1000) return;
+                    oc.xMin = newMin;
+                    oc.xMax = newMax;
+                    this._renderOverlayChart();
+                });
+
+                // Pan with drag
+                let dragState = null;
+                newCanvas.addEventListener('mousedown', (e) => {
+                    if (!this._overlayChart) return;
+                    dragState = { startX: e.clientX, xMin: this._overlayChart.xMin, xMax: this._overlayChart.xMax };
+                    newCanvas.classList.add('dragging');
+                    this._overlayDragging = true;
+                });
+
+                const onDragMove = (e) => {
+                    if (!dragState || !this._overlayCoords) return;
+                    const rect = newCanvas.getBoundingClientRect();
+                    const dx = e.clientX - dragState.startX;
+                    const dataRange = dragState.xMax - dragState.xMin;
+                    const dataDx = -(dx / rect.width) * dataRange;
+                    let newMin = dragState.xMin + dataDx;
+                    let newMax = dragState.xMax + dataDx;
+                    const oc = this._overlayChart;
+                    if (newMin < oc.xMinOrig) { newMax += oc.xMinOrig - newMin; newMin = oc.xMinOrig; }
+                    if (newMax > oc.xMaxOrig) { newMin -= newMax - oc.xMaxOrig; newMax = oc.xMaxOrig; }
+                    oc.xMin = newMin;
+                    oc.xMax = newMax;
+                    this._renderOverlayChart();
+                };
+
+                const onDragEnd = () => {
+                    dragState = null;
+                    newCanvas.classList.remove('dragging');
+                    this._overlayDragging = false;
+                };
+
+                document.addEventListener('mousemove', onDragMove);
+                document.addEventListener('mouseup', onDragEnd);
+
+                // Reverse link toggle
+                document.getElementById('chartOverlayReverse').onchange = () => this._renderOverlayChart();
+
+                // Export PNG
+                document.getElementById('chartOverlayExportPNG').onclick = () => {
+                    const c = document.getElementById('chartOverlayCanvas');
+                    const url = c.toDataURL('image/png');
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${this._overlayChart.type}_0x${this._overlayChart.from}_to_0x${this._overlayChart.to}.png`;
+                    a.click();
+                };
+
+                // Export CSV
+                document.getElementById('chartOverlayExportCSV').onclick = () => {
+                    if (!this._overlayChart) return;
+                    const { type, from, to } = this._overlayChart;
+                    const cfg = this._getChartConfig(type);
+                    const showReverse = document.getElementById('chartOverlayReverse').checked;
+                    const series = this._getOverlaySeries(type, from, to, showReverse);
+
+                    const header = `timestamp_ms,timestamp,${cfg.title.toLowerCase()}_${cfg.unit || 'value'},direction`;
+                    const rows = [header];
+                    series.forEach(s => {
+                        s.data.forEach(p => {
+                            rows.push(`${p.x},${this.formatTimestamp(p.x)},${p.y},${s.label}`);
+                        });
+                    });
+
+                    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${type}_0x${from}_to_0x${to}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                };
+
+                // Close button
+                document.getElementById('chartOverlayClose').onclick = () => this._closeChartOverlay();
             }
 
             resetNetworkLayout() {
@@ -5011,5 +5581,27 @@
     </script>
     <div id="timelineTooltip" style="display:none;"></div>
     <div id="copyToast" class="copy-toast">Timestamp copied!</div>
+    <div id="chartOverlay" class="chart-overlay" onclick="if(event.target===this)analyzer._closeChartOverlay()">
+        <div class="chart-overlay-card">
+            <div class="chart-overlay-header">
+                <span id="chartOverlayTitle"></span>
+                <div class="chart-overlay-buttons">
+                    <button class="btn" id="chartOverlayExportPNG">Export PNG</button>
+                    <button class="btn" id="chartOverlayExportCSV">Export CSV</button>
+                    <button class="close-btn" id="chartOverlayClose">&times;</button>
+                </div>
+            </div>
+            <div class="chart-overlay-controls">
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input type="checkbox" id="chartOverlayReverse"> Show reverse link
+                </label>
+                <span class="chart-overlay-hint">Scroll to zoom, drag to pan, hover for values</span>
+            </div>
+            <div class="chart-overlay-canvas-wrap">
+                <canvas id="chartOverlayCanvas"></canvas>
+            </div>
+        </div>
+        <div id="chartOverlayTooltip" class="chart-overlay-tooltip"></div>
+    </div>
 </body>
 </html>
