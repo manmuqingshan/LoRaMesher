@@ -913,6 +913,8 @@ The EWMA formula uses fixed-point arithmetic:
 - On received message: `ewma = α × 255 + (1 − α) × ewma`
 - On missed message (deferred to next `ExpectMessage`): `ewma = (1 − α) × ewma`
 
+Once 8 superframes of data are available, a sliding window PDR (packet delivery ratio over the last 8 superframes) replaces the EWMA for quality calculation and `reception_quality` advertisement, providing a more stable metric on lossy links.
+
 Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
 
 Multi-hop routes via a degraded neighbor have their quality capped to the direct link quality (`min()` cascade), ensuring that indirect routes cannot appear better than the bottleneck link.
