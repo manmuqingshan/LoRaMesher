@@ -411,7 +411,11 @@ uint8_t DistanceVectorRoutingTable::GetDirectLinkQuality(
 
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end() && node_it->link_stats.messages_received > 0) {
-        return node_it->link_stats.CalculateQuality();
+        // Return at least 1 when we have measured data, reserving 0 for
+        // "truly unknown node". This prevents callers from treating a
+        // measured-but-terrible link as "no data available".
+        return std::max(static_cast<uint8_t>(1),
+                        node_it->link_stats.CalculateQuality());
     }
     return 0;
 }

@@ -717,8 +717,10 @@ TEST_F(DynamicRoutingTests, LossyLinkRoutesViaRelay) {
 
     // Send multiple rounds of data in both directions to observe
     // routing stability over time
-    constexpr int kRounds = 3;
+    constexpr int kRounds = 10;
     for (int round = 0; round < kRounds; round++) {
+        ClearAllReceivedMessages();
+
         std::cout << "=== Data round " << (round + 1) << "/" << kRounds
                   << " ===" << std::endl;
         for (auto* node : nodes) {
@@ -752,7 +754,8 @@ TEST_F(DynamicRoutingTests, LossyLinkRoutesViaRelay) {
             << "Round " << (round + 1) << ": Edge should receive data from NM";
 
         // Let the network settle between rounds
-        AdvanceTime(superframe_time * 3, 0, step_ms, 0, nullptr);
+        AdvanceTime(superframe_time * 3, 0, step_ms, 0,
+                    [&]() { return false; });
     }
 
     // Final routing state

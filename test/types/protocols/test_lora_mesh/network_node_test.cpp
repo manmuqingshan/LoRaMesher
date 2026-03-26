@@ -572,11 +572,10 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
     }
-    uint8_t ewma = stats.ewma_quality;
     stats.UpdateRemoteQuality(100);
     uint8_t q = stats.CalculateQuality();
-    // quality = (ewma + remote) / 2
-    EXPECT_EQ(q, static_cast<uint8_t>((static_cast<uint16_t>(ewma) + 100) / 2));
+    // Window PDR = 255 (all received), quality = (255 + 100) / 2 = 177
+    EXPECT_EQ(q, 177);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
