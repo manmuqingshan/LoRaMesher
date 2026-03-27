@@ -1617,5 +1617,89 @@ TEST_F(RoutingTableUnitTest, FindNextHopSelectsGoodQualityDirectNeighbor) {
         << "Good direct neighbor should be preferred over 2-hop route";
 }
 
+// =============================================================================
+// Phantom Direct Neighbor Cleanup Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, PhantomDirectNeighborIsInactivated) {
+    // Simulate sponsor path: AddDirectNeighbor calls UpdateRoute which
+    // creates hop_count=1 with messages_received=0
+    AddDirectNeighbor(kNeighbor1);
+
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_TRUE(it->is_active);
+        EXPECT_EQ(it->link_stats.messages_received, 0u);
+    }
+
+    // inactivation_threshold_ = 10. Each UpdateLinkStatistics call increments
+    // consecutive_missed via ExpectRoutingMessage (Step 3). Step 2 fires when
+    // consecutive_missed >= 10, which happens on the 11th call.
+    for (int i = 0; i < 10; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_TRUE(it->is_active)
+            << "Should still be active after 10 calls (consecutive_missed=10, "
+               "Step 2 checks at start of next call)";
+    }
+
+    // 11th call: Step 2 fires (consecutive_missed == 10 >= threshold)
+    routing_table_->UpdateLinkStatistics();
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_FALSE(it->is_active)
+            << "Phantom neighbor (messages_received=0) should be inactivated "
+               "after consecutive_missed reaches inactivation_threshold";
+    }
+}
+
+TEST_F(RoutingTableUnitTest, RealDirectNeighborStillInactivatedByStep2) {
+    // Add neighbor via ProcessRoutingTableMessage (real reception)
+    ReceiveRoutingMessage(kNeighbor1, {});
+
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_GT(it->link_stats.messages_received, 0u);
+        EXPECT_TRUE(it->is_active);
+    }
+
+    // After enough missed messages, Step 2 should still inactivate
+    for (int i = 0; i < 11; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_FALSE(it->is_active)
+        << "Real neighbor should still be inactivated by Step 2 after "
+           "consecutive_missed reaches threshold";
+}
+
 }  // namespace test
 }  // namespace loramesher

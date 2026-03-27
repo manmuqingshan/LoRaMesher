@@ -544,9 +544,7 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
             }
 
             // Step 2: Hard invalidation after extended unresponsiveness
-            if (node.link_stats.consecutive_missed >= inactivation_threshold_ &&
-                node.link_stats.messages_received >=
-                    kMinMessagesBeforeInvalidation) {
+            if (node.link_stats.consecutive_missed >= inactivation_threshold_) {
                 node.is_active = false;
                 node.link_stats.recovery_counter = 0;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
