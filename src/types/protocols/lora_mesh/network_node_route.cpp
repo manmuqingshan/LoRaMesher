@@ -21,16 +21,21 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
     // Use sliding window PDR when ready, otherwise fall back to EWMA
     uint8_t local_quality = window.IsReady() ? window.GetPDR() : ewma_quality;
 
-    // Bidirectional: use bottleneck (min) — quality can't exceed the
-    // worst direction, matching real ETX delivery probability
+    // Bidirectional: weighted bottleneck — 70% min + 30% average.
+    // Pure min() causes premature abandonment of marginal direct links
+    // (death spiral: route switch → EWMA decay → inactivation →
+    // false UNIDIRECTIONAL → /4 penalty → no recovery).
     if (remote_link_quality > 0) {
-        return std::min(local_quality, remote_link_quality);
+        uint16_t bottleneck = std::min(local_quality, remote_link_quality);
+        uint16_t average =
+            (static_cast<uint16_t>(local_quality) + remote_link_quality) / 2;
+        return static_cast<uint8_t>((bottleneck * 7 + average * 3) / 10);
     }
 
     // Unidirectional link: received 3+ routing tables from peer
     // but peer never lists us — they cannot hear us
     if (messages_expected >= 3) {
-        return local_quality / 8;
+        return local_quality / 4;
     }
 
     return local_quality;

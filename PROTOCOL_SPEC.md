@@ -760,15 +760,28 @@ if (newHops > MAX_HOPS) {
 ```
 
 **Secondary Metric - Link Quality**:
+
+Direct neighbor quality is calculated from the bottleneck direction of the bidirectional link:
+
 ```cpp
-uint8_t combinedQuality = (receivedLinkQuality + localLinkQuality) / 2;
-if (combinedQuality < MIN_QUALITY_THRESHOLD) {
-    // Route below quality threshold
-    return POOR_QUALITY_ROUTE;
+uint8_t local_quality = window.IsReady() ? window.GetPDR() : ewma_quality;
+
+if (remote_link_quality > 0) {
+    // Bidirectional: weighted bottleneck (70% min + 30% average)
+    uint16_t bottleneck = std::min(local_quality, remote_link_quality);
+    uint16_t average = (local_quality + remote_link_quality) / 2;
+    return (bottleneck * 7 + average * 3) / 10;
 }
+
+if (messages_expected >= 3) {
+    // Confirmed unidirectional: penalty
+    return local_quality / 4;
+}
+
+return local_quality;  // Not enough data yet
 ```
 
-When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies instead, penalizing quality to `local_quality / 8` after confirmation.
+When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies instead, penalizing quality to `local_quality / 4` after confirmation.
 
 **Route Comparison** (Weighted Cost Metric):
 
@@ -800,7 +813,7 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
 - Based on Expected Transmission Count (RFC 6551/6719), the industry standard for mesh routing
 - Each hop adds at least 256 to the cost (for a perfect link with quality 255), naturally penalizing longer paths without a tunable weight
 - quality (0-255) maps to delivery ratio: `ETX_per_hop ≈ 255 / quality`
-- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss). For unidirectional links (quality / 8), even 4-hop bidirectional paths are preferred
+- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss). For unidirectional links (quality / 4), 2-hop bidirectional paths are preferred
 - Example rankings (lower cost wins):
   | Route | Hops | Quality | Cost |
   |-------|------|---------|------|
@@ -808,6 +821,7 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
   | B     | 1    | 200     | 327  |
   | C     | 2    | 255     | 514  |
   | D     | 2    | 200     | 655  |
+  | E (unidir) | 1 | 63 (=255/4) | 1040 |
 
 ### 4.2 Loop Prevention
 
@@ -923,7 +937,19 @@ After `consecutive_missed_for_inactivation` (default 10, configurable) consecuti
 
 **Unidirectional Link Detection**:
 
-When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `local_quality / 8`. For bidirectional links, quality uses the bottleneck direction: `min(local_quality, remote_quality)` rather than the average. Both mechanisms ensure multi-hop bidirectional alternatives are strongly preferred over degraded or asymmetric direct links. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
+When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `local_quality / 4`. For bidirectional links, quality uses a weighted bottleneck: `(min(local, remote) × 7 + avg(local, remote) × 3) / 10`. Both mechanisms ensure multi-hop bidirectional alternatives are strongly preferred over degraded or asymmetric direct links. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
+
+**Known Limitation — Direct Neighbor Abandonment Cascade**:
+
+The `min(local, remote)` formula combined with the `/8` unidirectional penalty can create an irreversible cascade on marginal direct links (~50% PDR):
+
+1. The 8-slot sliding window PDR temporarily dips below the multi-hop alternative's cost threshold
+2. The route switches from hop=1 to multi-hop, but routing table messages are broadcast and still depend on the degraded direct radio link
+3. EWMA continues to decay → `consecutive_missed` exceeds the inactivation threshold
+4. The inactivated node is excluded from routing table broadcasts (`is_active` filter in `GetRoutingTableEntries()`)
+5. The peer sees `reception_quality=0` → false UNIDIRECTIONAL classification → `/8` penalty → recovery impossible
+
+This cascade can also prevent downstream nodes that depend on the marginal node as sponsor from ever joining the network.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
@@ -2881,6 +2907,13 @@ See Section 4.1 for details on the `CalculateRouteCost()` function and `IsBetter
 
 EWMA-based link quality tracking and hysteresis-based re-activation are implemented.
 See Section 4.3 for details on EWMA quality calculation, multi-hop quality capping, and the `recovery_counter` mechanism.
+
+**Direct Neighbor Stability Enhancements** (Implemented):
+
+Mitigations for the direct neighbor abandonment cascade (see Section 4.3):
+
+- **Weighted bottleneck quality**: Replaced `min(local, remote)` with `(min × 7 + avg × 3) / 10` for bidirectional links. At local=63, remote=238: result=89 (cost=736) preserves the direct link vs 3-hop (cost=882), while still penalizing true asymmetry
+- **Reduced unidirectional penalty**: Reverted from `/8` to `/4`. The `/4` penalty (cost=1040 at quality=255) already makes 2-hop routes (cost=655) strongly preferred
 
 **Explicit Route Poisoning**:
 ```cpp

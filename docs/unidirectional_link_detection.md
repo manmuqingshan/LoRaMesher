@@ -46,9 +46,9 @@ The detection adds a penalty after confirmation:
 
 2. **Confirmation**: After `messages_expected >= 3` routing table exchanges where the peer still doesn't list us, the link is classified as confirmed unidirectional.
 
-3. **Penalty**: Quality is reduced to `local_quality / 8`. With a typical window PDR of ~255, this produces quality ~31.
+3. **Penalty**: Quality is reduced to `local_quality / 4`. With a typical window PDR of ~255, this produces quality ~63.
 
-For bidirectional links with asymmetric PDR, quality uses the bottleneck direction: `min(local_quality, remote_quality)`. This prevents a node with 100% local reception but 10% reverse link from appearing healthy.
+For bidirectional links with asymmetric PDR, quality uses a weighted bottleneck: `(min(local, remote) × 7 + avg(local, remote) × 3) / 10`. This penalizes asymmetric links without the cliff effect of pure `min()` that causes premature abandonment of marginal direct neighbors.
 
 ### Why Threshold 3
 
@@ -59,22 +59,21 @@ Bidirectional link timeline:
 
 So `remote_link_quality > 0` by superframe 2 for bidirectional links. Threshold 3 provides margin for one dropped packet.
 
-### Why /8
+### Why /4
 
 Route cost comparison (ETX-based: `cost = hop_count × 65536 / quality`):
 
 | Route | Quality | Cost |
 |-------|---------|------|
-| 1-hop unidirectional, PDR=255, penalty=255/8=31 | 31 | 1×65536/31 = 2114 |
+| 1-hop unidirectional, PDR=255, penalty=255/4=63 | 63 | 1×65536/63 = 1040 |
 | 2-hop bidirectional relay, quality=200 | 200 | 2×65536/200 = 655 |
 | 3-hop bidirectional relay, quality=200 | 200 | 3×65536/200 = 983 |
-| 4-hop degraded relay, quality=130 | 130 | 4×65536/130 = 2017 |
 
-Multi-hop bidirectional paths win decisively. Even a 4-hop degraded path beats the unidirectional 1-hop. The previous `/4` divisor gave only 6% margin over 3-hop routes, causing route flapping.
+The 2-hop bidirectional path (cost=655) wins over the unidirectional 1-hop (cost=1040) by 37%. The `/8` divisor was too aggressive (cost=2114), preventing recovery from transient unidirectionality and creating an irreversible death spiral when combined with the inactivation → `reception_quality=0` → false UNIDIRECTIONAL cascade.
 
 ### Recovery
 
-Recovery is automatic. Once the peer starts listing us (`remote_link_quality > 0`), the penalty branch is skipped entirely and quality returns to `(ewma + remote) / 2`. This handles transient unidirectionality (e.g., temporary interference) without permanent damage.
+Recovery is automatic. Once the peer starts listing us (`remote_link_quality > 0`), the penalty branch is skipped entirely and quality returns to the weighted bottleneck formula. This handles transient unidirectionality (e.g., temporary interference) without permanent damage.
 
 ## Topology Example
 
