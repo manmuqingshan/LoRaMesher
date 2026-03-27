@@ -1057,6 +1057,126 @@
         .network-edge-path.selected-edge {
             filter: drop-shadow(0 0 4px rgba(52,152,219,0.7));
         }
+        /* ── Slot Analysis tab ── */
+        .slot-analysis-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .slot-analysis-controls select {
+            padding: 6px 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .slot-analysis-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .slot-analysis-section-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin: 24px 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        .slot-analysis-table-wrapper {
+            overflow-x: auto;
+            margin-bottom: 24px;
+        }
+        .slot-analysis-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .slot-analysis-table th,
+        .slot-analysis-table td {
+            padding: 8px 12px;
+            border: 1px solid #dee2e6;
+            text-align: right;
+        }
+        .slot-analysis-table th {
+            background: #f1f3f5;
+            color: #495057;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .slot-analysis-table th:hover { background: #dee2e6; }
+        .slot-analysis-table td:first-child,
+        .slot-analysis-table th:first-child { text-align: left; }
+        .slot-analysis-table tbody tr:hover { background: #f8f9fa; }
+        .slot-analysis-canvas-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 900px) {
+            .slot-analysis-canvas-row { grid-template-columns: 1fr; }
+        }
+        .slot-analysis-chart-container {
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .slot-analysis-chart-container h4 {
+            margin: 0;
+            padding: 8px 12px;
+            background: #f1f3f5;
+            font-size: 13px;
+            color: #495057;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .slot-analysis-chart-container canvas {
+            width: 100%;
+            height: 300px;
+            display: block;
+        }
+        .slot-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .overrun-highlight { color: #e74c3c; font-weight: 600; }
+        /* ── Global loading overlay ── */
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(255,255,255,0.7);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .loading-overlay.active { display: flex; }
+        .loading-spinner {
+            text-align: center;
+            background: #fff;
+            padding: 28px 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+        }
+        .loading-spinner .spinner {
+            width: 36px; height: 36px;
+            border: 4px solid #dee2e6;
+            border-top-color: #3498db;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-spinner .loading-text {
+            font-size: 14px; color: #495057; font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -1201,6 +1321,7 @@
                 <button class="tab" onclick="showTab('stats', event)">Statistics</button>
                 <button class="tab" onclick="showTab('topology', event)">Topology</button>
                 <button class="tab" onclick="showTab('delivery', event)">Delivery</button>
+                <button class="tab" onclick="showTab('slotAnalysis', event)">Slot Analysis</button>
             </div>
 
             <div id="timeline" class="tab-content active">
@@ -1319,6 +1440,39 @@
                 <div id="deliveryFlowTable" class="delivery-table-wrapper"></div>
                 <div id="deliveryEmpty" style="text-align:center; color:#7f8c8d; padding:40px; display:none;">
                     No data message events found in loaded logs. Ensure logs contain DATA send/receive/forward entries.
+                </div>
+            </div>
+
+            <div id="slotAnalysis" class="tab-content">
+                <h3>Slot Timing Analysis</h3>
+                <div class="slot-analysis-controls">
+                    <label>Device:
+                        <select id="slotAnalysisDeviceFilter" onchange="analyzer.renderSlotAnalysis()">
+                            <option value="">All Devices</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="slotAnalysisSummary" class="slot-analysis-summary"></div>
+                <div class="slot-analysis-section-title">Duration by Slot Type</div>
+                <div id="slotAnalysisByType" class="slot-analysis-table-wrapper"></div>
+                <div class="slot-analysis-section-title">Duration by Slot Number (Superframe Position)</div>
+                <div id="slotAnalysisByNumber" class="slot-analysis-table-wrapper"></div>
+                <div class="slot-analysis-canvas-row">
+                    <div class="slot-analysis-chart-container">
+                        <h4>Duration Distribution</h4>
+                        <canvas id="slotHistogramCanvas"></canvas>
+                    </div>
+                    <div class="slot-analysis-chart-container">
+                        <h4>Duration Over Time</h4>
+                        <canvas id="slotScatterCanvas"></canvas>
+                    </div>
+                </div>
+                <div class="slot-analysis-section-title">Superframe Duration Analysis</div>
+                <div id="slotAnalysisSuperframe" class="slot-analysis-table-wrapper"></div>
+                <div class="slot-analysis-section-title">Top 50 Overrun Slots</div>
+                <div id="slotAnalysisOverruns" class="slot-analysis-table-wrapper"></div>
+                <div id="slotAnalysisEmpty" style="text-align:center; color:#7f8c8d; padding:40px; display:none;">
+                    No slot transition data found in loaded logs.
                 </div>
             </div>
         </div>
@@ -1476,6 +1630,8 @@
                 this.linkQualityHistory = new Map(); // "nodeId-dest" -> [{timestamp, quality, active, hops}]
                 this.linkQualityAllHopsHistory = new Map(); // "nodeId-dest" -> [{timestamp, quality, active, hops}] (all hops)
                 this.linkStatsHistory = new Map(); // "observer-peer" -> [{timestamp, ewma, remote, linkQuality, expected, received, missed}]
+                this._slotAnalysisCache = null;    // { key, result } — memoized computeSlotAnalysis
+                this._loadingCount = 0;            // nesting counter for showLoading/hideLoading
                 this.linkStatsEntries = [];
                 this._linkPanelOpen  = false;
                 this._linkPanelNode  = null;
@@ -1709,6 +1865,7 @@
                 const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 const colorIndex = this.files.size % this.fileColors.length;
 
+                this.showLoading(`Loading ${file.name}...`);
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     try {
@@ -1737,6 +1894,7 @@
                     } catch (error) {
                         this.showError('Error parsing log file: ' + error.message);
                     }
+                    this.hideLoading();
                 };
                 reader.readAsText(file);
             }
@@ -1846,6 +2004,9 @@
                 if (document.getElementById('topology').classList.contains('active')) {
                     this.renderNetwork();
                 }
+                if (document.getElementById('slotAnalysis').classList.contains('active')) {
+                    this.renderSlotAnalysis();
+                }
                 this._refreshLinkPanel();
 
                 // Show success message
@@ -1875,6 +2036,7 @@
                 const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 const colorIndex = this.files.size % this.fileColors.length;
 
+                this.showLoading(`Loading ${file.name}...`);
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     try {
@@ -1900,6 +2062,7 @@
                     } catch (error) {
                         this.showError('Error parsing log file: ' + error.message);
                     }
+                    this.hideLoading();
                 };
                 reader.readAsText(file);
             }
@@ -2429,6 +2592,9 @@
                 if (document.getElementById('topology').classList.contains('active')) {
                     this.renderNetwork();
                 }
+                if (document.getElementById('slotAnalysis').classList.contains('active')) {
+                    this.renderSlotAnalysis();
+                }
             }
 
             updateNodeFilterUI() {
@@ -2453,6 +2619,7 @@
             }
 
             aggregateData() {
+                this._slotAnalysisCache = null;
                 this.nodes.clear();
                 this.messages = [];
                 this.events = [];
@@ -2529,13 +2696,24 @@
                     const nodeSlots = this.events.filter(
                         e => e.nodeId === nodeId && e.type === 'slot_transition'
                     );
-                    node.slots = nodeSlots.map((slot, i, arr) => ({
-                        start:    slot.timestamp,
-                        end:      arr[i + 1] ? arr[i + 1].timestamp : slot.timestamp + 1000,
-                        slotType: slot.slotType,
-                        slotNum:  slot.slotNum,
-                        nodeId:   slot.nodeId,
-                    }));
+                    node.slots = nodeSlots.map((slot, i, arr) => {
+                        const rawEnd = arr[i + 1] ? arr[i + 1].timestamp : slot.timestamp + 1000;
+                        const duration = rawEnd - slot.timestamp;
+                        // Cap at 3x median-ish duration to avoid gap artifacts;
+                        // use 5000ms as a generous hard cap (5x typical 1000ms slot)
+                        const maxReasonable = 5000;
+                        const cappedEnd = duration > maxReasonable
+                            ? slot.timestamp + 1000
+                            : rawEnd;
+                        return {
+                            start:    slot.timestamp,
+                            end:      cappedEnd,
+                            slotType: slot.slotType,
+                            slotNum:  slot.slotNum,
+                            nodeId:   slot.nodeId,
+                            gapAfter: duration > maxReasonable,
+                        };
+                    });
                     node.messages = this.messages.filter(m => m.nodeId === nodeId);
                 });
                 // Detect superframe boundaries (slot 0 transitions)
@@ -2827,6 +3005,9 @@
                 this.networkCurrentTime = null;
                 if (document.getElementById('topology').classList.contains('active')) {
                     this.renderNetwork();
+                }
+                if (document.getElementById('slotAnalysis').classList.contains('active')) {
+                    this.renderSlotAnalysis();
                 }
 
                 // Check if any failures are due to NotReadableError (locked files)
@@ -5427,6 +5608,587 @@
                 a.click();
                 URL.revokeObjectURL(url);
             }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // GLOBAL LOADING OVERLAY
+            // ═══════════════════════════════════════════════════════════════════════
+
+            showLoading(text) {
+                this._loadingCount++;
+                const el = document.getElementById('loadingOverlay');
+                document.getElementById('loadingText').textContent = text || 'Loading...';
+                el.classList.add('active');
+            }
+
+            hideLoading() {
+                if (--this._loadingCount <= 0) {
+                    this._loadingCount = 0;
+                    document.getElementById('loadingOverlay').classList.remove('active');
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════
+            // SLOT ANALYSIS TAB — per-device slot timing statistics
+            // ═══════════════════════════════════════════════════════════════════════
+
+            computeSlotAnalysis(nodeId) {
+                // Check cache
+                const cacheKey = `${nodeId || ''}|${[...this.hiddenNodes].sort().join(',')}`;
+                if (this._slotAnalysisCache && this._slotAnalysisCache.key === cacheKey) {
+                    return this._slotAnalysisCache.result;
+                }
+
+                let allSlots;
+                if (nodeId) {
+                    const node = this.nodes.get(nodeId);
+                    allSlots = node ? (node.slots || []) : [];
+                } else {
+                    allSlots = [];
+                    this.nodes.forEach(node => {
+                        if (!this.hiddenNodes.has(node.id)) {
+                            for (const s of (node.slots || [])) allSlots.push(s);
+                        }
+                    });
+                }
+
+                // Single pass: filter gaps, compute duration, collect stats
+                let gapCount = 0;
+                const slots = [];
+                for (const s of allSlots) {
+                    if (s.gapAfter) { gapCount++; continue; }
+                    const dur = s.end - s.start;
+                    if (dur > 0) slots.push({ start: s.start, end: s.end, slotType: s.slotType, slotNum: s.slotNum, nodeId: s.nodeId, duration: dur });
+                }
+
+                if (slots.length === 0) {
+                    this._slotAnalysisCache = { key: cacheKey, result: null };
+                    return null;
+                }
+
+                // Sort durations for median (only the numbers, not full objects)
+                const durations = new Float64Array(slots.length);
+                for (let i = 0; i < slots.length; i++) durations[i] = slots[i].duration;
+                durations.sort();
+                const expectedDuration = durations[Math.floor(durations.length / 2)];
+                const overrunThreshold = Math.round(expectedDuration * 1.1);
+
+                // Single pass: accumulate everything we need
+                let sumDur = 0, maxDur = 0, maxSlotIdx = 0, overrunCount = 0;
+                const typeAcc = new Map();  // type -> {sum,min,max,sumSq,count,overruns}
+                const numAcc = new Map();   // slotNum -> {sum,min,max,count,overruns,typeFreq}
+                const binSize = 10;
+                const histCounts = new Map(); // binIdx -> { [type]: count }
+
+                for (let i = 0; i < slots.length; i++) {
+                    const s = slots[i];
+                    const d = s.duration;
+                    sumDur += d;
+                    if (d > maxDur) { maxDur = d; maxSlotIdx = i; }
+                    const isOverrun = d > overrunThreshold;
+                    if (isOverrun) overrunCount++;
+
+                    // By type (loop-based min/max instead of spread)
+                    let ta = typeAcc.get(s.slotType);
+                    if (!ta) { ta = { sum: 0, min: d, max: d, sumSq: 0, count: 0, overruns: 0 }; typeAcc.set(s.slotType, ta); }
+                    ta.sum += d; ta.sumSq += d * d; ta.count++;
+                    if (d < ta.min) ta.min = d;
+                    if (d > ta.max) ta.max = d;
+                    if (isOverrun) ta.overruns++;
+
+                    // By slot number
+                    let na = numAcc.get(s.slotNum);
+                    if (!na) { na = { sum: 0, min: d, max: d, count: 0, overruns: 0, typeFreq: {} }; numAcc.set(s.slotNum, na); }
+                    na.sum += d; na.count++;
+                    if (d < na.min) na.min = d;
+                    if (d > na.max) na.max = d;
+                    if (isOverrun) na.overruns++;
+                    na.typeFreq[s.slotType] = (na.typeFreq[s.slotType] || 0) + 1;
+
+                    // Histogram bin
+                    const binIdx = Math.min(199, Math.floor(d / binSize));
+                    let bin = histCounts.get(binIdx);
+                    if (!bin) { bin = {}; histCounts.set(binIdx, bin); }
+                    bin[s.slotType] = (bin[s.slotType] || 0) + 1;
+                }
+
+                const avgDuration = Math.round(sumDur / slots.length);
+                const maxSlot = slots[maxSlotIdx];
+
+                // Build byType array
+                const byType = [];
+                typeAcc.forEach((ta, type) => {
+                    const avg = ta.sum / ta.count;
+                    const variance = (ta.sumSq / ta.count) - avg * avg;
+                    byType.push({
+                        type, count: ta.count, min: ta.min, avg: Math.round(avg), max: ta.max,
+                        stddev: Math.round(Math.sqrt(Math.max(0, variance)) * 10) / 10,
+                        overruns: ta.overruns,
+                        overrunPct: ta.count > 0 ? Math.round(ta.overruns / ta.count * 1000) / 10 : 0
+                    });
+                });
+                byType.sort((a, b) => b.max - a.max);
+
+                // Build bySlotNum array
+                const bySlotNum = [];
+                numAcc.forEach((na, num) => {
+                    let modeType = '', modeCount = 0;
+                    for (const t in na.typeFreq) { if (na.typeFreq[t] > modeCount) { modeCount = na.typeFreq[t]; modeType = t; } }
+                    bySlotNum.push({
+                        slotNum: num, modeType, count: na.count,
+                        min: na.min, avg: Math.round(na.sum / na.count), max: na.max,
+                        overruns: na.overruns
+                    });
+                });
+                bySlotNum.sort((a, b) => a.slotNum - b.slotNum);
+
+                // Build histogram
+                let maxBinIdx = 0;
+                histCounts.forEach((_, idx) => { if (idx > maxBinIdx) maxBinIdx = idx; });
+                const numBins = maxBinIdx + 1;
+                const histogram = [];
+                for (let i = 0; i < numBins; i++) {
+                    histogram.push({ binStart: i * binSize, binEnd: (i + 1) * binSize, counts: histCounts.get(i) || {} });
+                }
+
+                // Scatter (downsample if >5000)
+                let scatter;
+                if (slots.length <= 5000) {
+                    scatter = new Array(slots.length);
+                    for (let i = 0; i < slots.length; i++) {
+                        const s = slots[i];
+                        scatter[i] = { x: s.start, y: s.duration, slotType: s.slotType };
+                    }
+                } else {
+                    const stride = Math.ceil(slots.length / 5000);
+                    scatter = [];
+                    for (let i = 0; i < slots.length; i += stride) {
+                        const s = slots[i];
+                        scatter.push({ x: s.start, y: s.duration, slotType: s.slotType });
+                    }
+                }
+
+                // Superframe analysis — O(n) two-pointer instead of O(n*m) filter
+                let sfBoundaries;
+                if (nodeId) {
+                    const node = this.nodes.get(nodeId);
+                    sfBoundaries = [];
+                    for (const s of (node ? node.slots : [])) { if (s.slotNum === 0) sfBoundaries.push(s.start); }
+                } else {
+                    sfBoundaries = this.superframeBoundaries.slice();
+                }
+                sfBoundaries.sort((a, b) => a - b);
+
+                // Sort slots by start for two-pointer sweep
+                const sortedSlots = slots.slice().sort((a, b) => a.start - b.start);
+                const superframes = [];
+                let cumulDrift = 0;
+                let slotPtr = 0;
+                for (let i = 0; i < sfBoundaries.length - 1; i++) {
+                    const sfStart = sfBoundaries[i];
+                    const sfEnd = sfBoundaries[i + 1];
+                    const actual = sfEnd - sfStart;
+                    // Advance pointer to sfStart
+                    while (slotPtr < sortedSlots.length && sortedSlots[slotPtr].start < sfStart) slotPtr++;
+                    // Count slots in [sfStart, sfEnd)
+                    let slotsInSf = 0;
+                    let tmpPtr = slotPtr;
+                    while (tmpPtr < sortedSlots.length && sortedSlots[tmpPtr].start < sfEnd) { slotsInSf++; tmpPtr++; }
+                    const expectedSf = slotsInSf * expectedDuration;
+                    const delta = actual - expectedSf;
+                    cumulDrift += delta;
+                    superframes.push({ index: i + 1, startTime: sfStart, slotCount: slotsInSf, expected: expectedSf, actual, delta, cumulDrift });
+                }
+
+                // Top overruns — use a bounded insertion sort (top 50) instead of full sort
+                const topOverruns = [];
+                for (const s of slots) {
+                    if (s.duration <= overrunThreshold) continue;
+                    const overrun = s.duration - expectedDuration;
+                    const entry = {
+                        timestamp: s.start, slotNum: s.slotNum, slotType: s.slotType,
+                        duration: s.duration, overrun,
+                        overrunPct: Math.round(overrun / expectedDuration * 1000) / 10
+                    };
+                    if (topOverruns.length < 50) {
+                        topOverruns.push(entry);
+                        if (topOverruns.length === 50) topOverruns.sort((a, b) => b.overrun - a.overrun);
+                    } else if (overrun > topOverruns[49].overrun) {
+                        topOverruns[49] = entry;
+                        topOverruns.sort((a, b) => b.overrun - a.overrun);
+                    }
+                }
+                if (topOverruns.length < 50) topOverruns.sort((a, b) => b.overrun - a.overrun);
+
+                const result = {
+                    totalSlots: slots.length, expectedDuration, avgDuration,
+                    maxDuration: maxSlot.duration, maxDurationSlot: maxSlot,
+                    overrunCount, overrunThreshold, gapCount,
+                    byType, bySlotNum, histogram, scatter, superframes, topOverruns
+                };
+                this._slotAnalysisCache = { key: cacheKey, result };
+                return result;
+            }
+
+            renderSlotAnalysis() {
+                this.showLoading('Analyzing slot timing...');
+                // Yield to let the overlay paint, then compute + render
+                setTimeout(() => { this._renderSlotAnalysisImpl(); }, 20);
+            }
+
+            _renderSlotAnalysisImpl() {
+                try {
+                const emptyEl = document.getElementById('slotAnalysisEmpty');
+                const summaryEl = document.getElementById('slotAnalysisSummary');
+                const byTypeEl = document.getElementById('slotAnalysisByType');
+                const byNumEl = document.getElementById('slotAnalysisByNumber');
+                const sfEl = document.getElementById('slotAnalysisSuperframe');
+                const overrunsEl = document.getElementById('slotAnalysisOverruns');
+
+                // Populate device dropdown (preserve selection)
+                const sel = document.getElementById('slotAnalysisDeviceFilter');
+                const prev = sel.value;
+                const opts = ['<option value="">All Devices</option>'];
+                const sortedNodes = [...this.nodes.keys()].sort();
+                for (const nid of sortedNodes) {
+                    opts.push(`<option value="${nid}"${nid === prev ? ' selected' : ''}>0x${nid}</option>`);
+                }
+                sel.innerHTML = opts.join('');
+
+                const analysis = this.computeSlotAnalysis(sel.value || null);
+                if (!analysis) {
+                    emptyEl.style.display = 'block';
+                    summaryEl.innerHTML = '';
+                    byTypeEl.innerHTML = '';
+                    byNumEl.innerHTML = '';
+                    sfEl.innerHTML = '';
+                    overrunsEl.innerHTML = '';
+                    this.hideLoading();
+                    return;
+                }
+                emptyEl.style.display = 'none';
+
+                // Summary cards
+                const overrunPctTotal = (analysis.overrunCount / analysis.totalSlots * 100).toFixed(1);
+                const cards = [
+                    { label: 'Total Slots', value: analysis.totalSlots },
+                    { label: 'Expected (ms)', value: analysis.expectedDuration },
+                    { label: 'Avg Duration (ms)', value: analysis.avgDuration },
+                    { label: 'Max Duration (ms)', value: `${analysis.maxDuration}`, sub: `${analysis.maxDurationSlot.slotType} #${analysis.maxDurationSlot.slotNum}` },
+                    { label: 'Overrun Slots', value: analysis.overrunCount, color: analysis.overrunCount > 0 ? '#e74c3c' : undefined },
+                    { label: 'Overrun %', value: overrunPctTotal + '%', color: parseFloat(overrunPctTotal) > 5 ? '#e74c3c' : parseFloat(overrunPctTotal) > 1 ? '#f39c12' : '#27ae60' },
+                    { label: 'Gaps Excluded', value: analysis.gapCount, sub: 'slots before logging gaps', color: analysis.gapCount > 0 ? '#f39c12' : undefined },
+                ];
+                summaryEl.innerHTML = cards.map(c => `
+                    <div class="stat-card">
+                        <div class="stat-value" ${c.color ? `style="color:${c.color}"` : ''}>${c.value}</div>
+                        <div class="stat-label">${c.label}</div>
+                        ${c.sub ? `<div style="font-size:11px;color:#7f8c8d;margin-top:2px;">${c.sub}</div>` : ''}
+                    </div>`).join('');
+
+                // By-type table
+                byTypeEl.innerHTML = `<table class="slot-analysis-table">
+                    <thead><tr>
+                        <th>Type</th><th>Count</th><th>Min (ms)</th><th>Avg (ms)</th>
+                        <th>Max (ms)</th><th>Std Dev</th><th>Overruns</th><th>Overrun %</th>
+                    </tr></thead>
+                    <tbody>${analysis.byType.map(r => `<tr>
+                        <td><span class="slot-type-badge" style="background:${slotColor(r.type)}">${r.type}</span></td>
+                        <td>${r.count}</td><td>${r.min}</td><td>${r.avg}</td>
+                        <td class="${r.max > analysis.overrunThreshold ? 'overrun-highlight' : ''}">${r.max}</td>
+                        <td>${r.stddev}</td>
+                        <td class="${r.overruns > 0 ? 'overrun-highlight' : ''}">${r.overruns}</td>
+                        <td>${r.overrunPct}%</td>
+                    </tr>`).join('')}</tbody></table>`;
+
+                // By-slot-number table
+                byNumEl.innerHTML = `<table class="slot-analysis-table">
+                    <thead><tr>
+                        <th>Slot #</th><th>Type (mode)</th><th>Count</th><th>Min (ms)</th>
+                        <th>Avg (ms)</th><th>Max (ms)</th><th>Overruns</th>
+                    </tr></thead>
+                    <tbody>${analysis.bySlotNum.map(r => `<tr${r.overruns > 0 ? ' style="background:#fff5f5"' : ''}>
+                        <td>${r.slotNum}</td>
+                        <td><span class="slot-type-badge" style="background:${slotColor(r.modeType)}">${r.modeType}</span></td>
+                        <td>${r.count}</td><td>${r.min}</td><td>${r.avg}</td>
+                        <td class="${r.max > analysis.overrunThreshold ? 'overrun-highlight' : ''}">${r.max}</td>
+                        <td class="${r.overruns > 0 ? 'overrun-highlight' : ''}">${r.overruns}</td>
+                    </tr>`).join('')}</tbody></table>`;
+
+                // Superframe analysis
+                if (analysis.superframes.length === 0) {
+                    sfEl.innerHTML = '<p style="color:#7f8c8d;">No superframe boundaries detected.</p>';
+                } else {
+                    const sfs = analysis.superframes;
+                    let sfSum = 0, sfMin = Infinity, sfMax = -Infinity;
+                    for (const sf of sfs) { sfSum += sf.actual; if (sf.actual < sfMin) sfMin = sf.actual; if (sf.actual > sfMax) sfMax = sf.actual; }
+                    const sfAvg = Math.round(sfSum / sfs.length);
+                    const lastDrift = sfs[sfs.length - 1].cumulDrift;
+                    const showAll = sfs.length <= 100;
+                    const displayed = showAll ? sfs : sfs.slice(0, 100);
+
+                    sfEl.innerHTML = `
+                        <div style="margin-bottom:12px; font-size:13px; color:#495057;">
+                            Avg superframe: <strong>${sfAvg} ms</strong> |
+                            Min: <strong>${sfMin} ms</strong> |
+                            Max: <strong>${sfMax} ms</strong> |
+                            Cumulative drift: <strong>${Math.round(lastDrift)} ms</strong>
+                        </div>
+                        <table class="slot-analysis-table">
+                        <thead><tr>
+                            <th>#</th><th>Start Time</th><th>Slots</th><th>Expected (ms)</th>
+                            <th>Actual (ms)</th><th>Delta (ms)</th><th>Cumul. Drift (ms)</th>
+                        </tr></thead>
+                        <tbody>${displayed.map(sf => {
+                            const absDelta = Math.abs(sf.delta);
+                            const pct = sf.expected > 0 ? absDelta / sf.expected * 100 : 0;
+                            const clr = pct <= 5 ? '#27ae60' : pct <= 15 ? '#f39c12' : '#e74c3c';
+                            return `<tr>
+                                <td>${sf.index}</td>
+                                <td>${this.formatTimestamp(sf.startTime)}</td>
+                                <td>${sf.slotCount}</td>
+                                <td>${sf.expected}</td>
+                                <td>${sf.actual}</td>
+                                <td style="color:${clr};font-weight:600">${sf.delta > 0 ? '+' : ''}${Math.round(sf.delta)}</td>
+                                <td>${Math.round(sf.cumulDrift)}</td>
+                            </tr>`;
+                        }).join('')}</tbody></table>
+                        ${!showAll ? `<p style="color:#7f8c8d;font-size:12px;">Showing first 100 of ${sfs.length} superframes.</p>` : ''}`;
+                }
+
+                // Top overruns table
+                if (analysis.topOverruns.length === 0) {
+                    overrunsEl.innerHTML = '<p style="color:#27ae60;font-weight:600;">No overrun slots detected.</p>';
+                } else {
+                    overrunsEl.innerHTML = `<table class="slot-analysis-table">
+                        <thead><tr>
+                            <th>#</th><th>Timestamp</th><th>Slot #</th><th>Type</th>
+                            <th>Duration (ms)</th><th>Overrun (ms)</th><th>Overrun %</th>
+                        </tr></thead>
+                        <tbody>${analysis.topOverruns.map((o, i) => `<tr>
+                            <td>${i + 1}</td>
+                            <td style="font-family:monospace;font-size:12px;">${this.formatTimestamp(o.timestamp)}</td>
+                            <td>${o.slotNum}</td>
+                            <td><span class="slot-type-badge" style="background:${slotColor(o.slotType)}">${o.slotType}</span></td>
+                            <td class="overrun-highlight">${o.duration}</td>
+                            <td class="overrun-highlight">+${o.overrun}</td>
+                            <td>${o.overrunPct}%</td>
+                        </tr>`).join('')}</tbody></table>`;
+                }
+
+                // Charts (after DOM is updated)
+                requestAnimationFrame(() => {
+                    this._renderSlotHistogram(analysis);
+                    this._renderSlotScatter(analysis);
+                    this.hideLoading();
+                });
+                } catch (e) { this.hideLoading(); throw e; }
+            }
+
+            _renderSlotHistogram(analysis) {
+                const canvas = document.getElementById('slotHistogramCanvas');
+                if (!canvas) return;
+                const rect = canvas.parentElement.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+                const W = rect.width;
+                const H = 300;
+                canvas.width = W * dpr;
+                canvas.height = H * dpr;
+                canvas.style.width = W + 'px';
+                canvas.style.height = H + 'px';
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+
+                const PAD_L = 50, PAD_R = 15, PAD_T = 20, PAD_B = 35;
+                const plotW = W - PAD_L - PAD_R;
+                const plotH = H - PAD_T - PAD_B;
+
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, W, H);
+
+                const bins = analysis.histogram;
+                // Trim trailing empty bins
+                let lastNonEmpty = bins.length - 1;
+                while (lastNonEmpty > 0 && !Object.keys(bins[lastNonEmpty].counts).length) lastNonEmpty--;
+                const trimmed = bins.slice(0, lastNonEmpty + 1);
+                if (trimmed.length === 0) return;
+
+                const typeOrder = Object.keys(SLOT_COLORS_MAP);
+                let maxBinTotal = 0;
+                for (const bin of trimmed) {
+                    let total = 0;
+                    for (const t of typeOrder) total += bin.counts[t] || 0;
+                    if (total > maxBinTotal) maxBinTotal = total;
+                }
+                if (maxBinTotal === 0) return;
+
+                const barW = plotW / trimmed.length;
+
+                // Draw bars
+                for (let i = 0; i < trimmed.length; i++) {
+                    const bin = trimmed[i];
+                    const x = PAD_L + i * barW;
+                    let yOffset = 0;
+                    for (const t of typeOrder) {
+                        const count = bin.counts[t] || 0;
+                        if (count === 0) continue;
+                        const barH = (count / maxBinTotal) * plotH;
+                        ctx.fillStyle = slotColor(t);
+                        ctx.fillRect(x, PAD_T + plotH - yOffset - barH, Math.max(1, barW - 1), barH);
+                        yOffset += barH;
+                    }
+                }
+
+                // Expected duration line
+                const expBin = analysis.expectedDuration / 10;
+                if (expBin < trimmed.length) {
+                    const expX = PAD_L + expBin * barW;
+                    ctx.strokeStyle = '#e74c3c';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(expX, PAD_T);
+                    ctx.lineTo(expX, PAD_T + plotH);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Expected ${analysis.expectedDuration}ms`, expX, PAD_T - 4);
+                }
+
+                // Axes
+                ctx.strokeStyle = '#adb5bd';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(PAD_L, PAD_T);
+                ctx.lineTo(PAD_L, PAD_T + plotH);
+                ctx.lineTo(PAD_L + plotW, PAD_T + plotH);
+                ctx.stroke();
+
+                // X labels
+                ctx.fillStyle = '#495057';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'center';
+                const xLabelStep = Math.max(1, Math.floor(trimmed.length / 10));
+                for (let i = 0; i < trimmed.length; i += xLabelStep) {
+                    ctx.fillText(`${trimmed[i].binStart}`, PAD_L + (i + 0.5) * barW, PAD_T + plotH + 14);
+                }
+
+                // Y labels
+                ctx.textAlign = 'right';
+                for (let i = 0; i <= 5; i++) {
+                    const val = Math.round(maxBinTotal * i / 5);
+                    const y = PAD_T + plotH - (i / 5) * plotH;
+                    ctx.fillText(`${val}`, PAD_L - 6, y + 3);
+                    if (i > 0) { ctx.strokeStyle = '#f1f3f5'; ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + plotW, y); ctx.stroke(); }
+                }
+
+                // Axis labels
+                ctx.fillStyle = '#6c757d';
+                ctx.font = '11px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Duration (ms)', PAD_L + plotW / 2, H - 2);
+                ctx.save(); ctx.translate(12, PAD_T + plotH / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('Count', 0, 0); ctx.restore();
+
+                // Mini legend
+                const legendTypes = analysis.byType.map(t => t.type);
+                const legendX = PAD_L + plotW - legendTypes.length * 70;
+                ctx.font = '10px sans-serif';
+                legendTypes.forEach((t, i) => {
+                    const lx = legendX + i * 70;
+                    ctx.fillStyle = slotColor(t);
+                    ctx.fillRect(lx, PAD_T + 2, 10, 10);
+                    ctx.fillStyle = '#495057'; ctx.textAlign = 'left';
+                    ctx.fillText(t, lx + 13, PAD_T + 11);
+                });
+            }
+
+            _renderSlotScatter(analysis) {
+                const canvas = document.getElementById('slotScatterCanvas');
+                if (!canvas) return;
+                const rect = canvas.parentElement.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+                const W = rect.width;
+                const H = 300;
+                canvas.width = W * dpr;
+                canvas.height = H * dpr;
+                canvas.style.width = W + 'px';
+                canvas.style.height = H + 'px';
+                const ctx = canvas.getContext('2d');
+                ctx.scale(dpr, dpr);
+
+                const PAD_L = 50, PAD_R = 15, PAD_T = 20, PAD_B = 35;
+                const plotW = W - PAD_L - PAD_R;
+                const plotH = H - PAD_T - PAD_B;
+
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, W, H);
+
+                const pts = analysis.scatter;
+                if (pts.length === 0) return;
+
+                const xMin = this.timeRange.start;
+                const xMax = this.timeRange.end;
+                const yMax = Math.max(analysis.maxDuration * 1.1, analysis.expectedDuration * 1.5);
+                const xRange = xMax - xMin || 1;
+
+                // Horizontal reference lines
+                const drawHLine = (val, color, label) => {
+                    const y = PAD_T + plotH - (val / yMax) * plotH;
+                    if (y < PAD_T || y > PAD_T + plotH) return;
+                    ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash([6, 3]);
+                    ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + plotW, y); ctx.stroke();
+                    ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+                    ctx.fillText(label, PAD_L + 4, y - 4);
+                };
+                drawHLine(analysis.expectedDuration, '#3498db', `Expected ${analysis.expectedDuration}ms`);
+                drawHLine(analysis.overrunThreshold, '#e74c3c', `110% (${analysis.overrunThreshold}ms)`);
+
+                // Batch dots by type to minimize fillStyle changes
+                const byTypeMap = new Map();
+                for (const pt of pts) {
+                    if (!byTypeMap.has(pt.slotType)) byTypeMap.set(pt.slotType, []);
+                    byTypeMap.get(pt.slotType).push(pt);
+                }
+                ctx.globalAlpha = 0.5;
+                const TWO_PI = Math.PI * 2;
+                byTypeMap.forEach((typePts, type) => {
+                    ctx.fillStyle = slotColor(type);
+                    for (const pt of typePts) {
+                        const x = PAD_L + ((pt.x - xMin) / xRange) * plotW;
+                        const y = PAD_T + plotH - (pt.y / yMax) * plotH;
+                        ctx.beginPath(); ctx.arc(x, y, 2.5, 0, TWO_PI); ctx.fill();
+                    }
+                });
+                ctx.globalAlpha = 1.0;
+
+                // Axes
+                ctx.strokeStyle = '#adb5bd'; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(PAD_L, PAD_T); ctx.lineTo(PAD_L, PAD_T + plotH); ctx.lineTo(PAD_L + plotW, PAD_T + plotH); ctx.stroke();
+
+                // X labels (time)
+                ctx.fillStyle = '#495057'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+                for (let i = 0; i <= 6; i++) {
+                    const ts = xMin + (xRange * i / 6);
+                    const x = PAD_L + (i / 6) * plotW;
+                    const label = this.formatTimestamp(Math.round(ts));
+                    ctx.fillText(label.length > 12 ? label.slice(-12) : label, x, PAD_T + plotH + 14);
+                }
+
+                // Y labels
+                ctx.textAlign = 'right';
+                for (let i = 0; i <= 5; i++) {
+                    const val = Math.round(yMax * i / 5);
+                    const y = PAD_T + plotH - (i / 5) * plotH;
+                    ctx.fillText(`${val}`, PAD_L - 6, y + 3);
+                    if (i > 0) { ctx.strokeStyle = '#f1f3f5'; ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + plotW, y); ctx.stroke(); }
+                }
+
+                // Axis labels
+                ctx.fillStyle = '#6c757d'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('Time', PAD_L + plotW / 2, H - 2);
+                ctx.save(); ctx.translate(12, PAD_T + plotH / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('Duration (ms)', 0, 0); ctx.restore();
+            }
         }
 
         function showTab(tabName, event) {
@@ -5440,6 +6202,9 @@
             }
             if (tabName === 'delivery') {
                 analyzer.renderDelivery();
+            }
+            if (tabName === 'slotAnalysis') {
+                analyzer.renderSlotAnalysis();
             }
         }
 
@@ -5581,6 +6346,12 @@
     </script>
     <div id="timelineTooltip" style="display:none;"></div>
     <div id="copyToast" class="copy-toast">Timestamp copied!</div>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loadingText">Loading...</div>
+        </div>
+    </div>
     <div id="chartOverlay" class="chart-overlay" onclick="if(event.target===this)analyzer._closeChartOverlay()">
         <div class="chart-overlay-card">
             <div class="chart-overlay-header">
