@@ -574,8 +574,8 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
     }
     stats.UpdateRemoteQuality(100);
     uint8_t q = stats.CalculateQuality();
-    // Window PDR = 255 (all received), quality = (255 + 100) / 2 = 177
-    EXPECT_EQ(q, 177);
+    // Window PDR = 255 (all received), quality = min(255, 100) = 100
+    EXPECT_EQ(q, 100);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
@@ -587,8 +587,8 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
     }
     EXPECT_GE(stats.messages_expected, 3u);
     EXPECT_EQ(stats.remote_link_quality, 0);
-    // Unidirectional penalty: quality = ewma / 4
-    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality / 4);
+    // Unidirectional penalty: quality = ewma / 8
+    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality / 8);
 }
 
 TEST_F(NetworkNodeRouteTest,
@@ -613,14 +613,14 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalRecovery) {
         stats.ReceivedMessage(i * 1000);
     }
     uint8_t penalized = stats.CalculateQuality();
-    EXPECT_EQ(penalized, stats.ewma_quality / 4);
+    EXPECT_EQ(penalized, stats.ewma_quality / 8);
 
     // Peer starts hearing us — recovery
     stats.UpdateRemoteQuality(200);
     uint8_t recovered = stats.CalculateQuality();
+    // Bidirectional: min(local, remote). Window not ready (5 < 8), uses ewma.
     EXPECT_EQ(recovered,
-              static_cast<uint8_t>(
-                  (static_cast<uint16_t>(stats.ewma_quality) + 200) / 2));
+              std::min(stats.ewma_quality, static_cast<uint8_t>(200)));
     EXPECT_GT(recovered, penalized);
 }
 

@@ -768,7 +768,7 @@ if (combinedQuality < MIN_QUALITY_THRESHOLD) {
 }
 ```
 
-When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies instead, penalizing quality to `ewma / 4` after confirmation.
+When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies instead, penalizing quality to `local_quality / 8` after confirmation.
 
 **Route Comparison** (Weighted Cost Metric):
 
@@ -800,7 +800,7 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
 - Based on Expected Transmission Count (RFC 6551/6719), the industry standard for mesh routing
 - Each hop adds at least 256 to the cost (for a perfect link with quality 255), naturally penalizing longer paths without a tunable weight
 - quality (0-255) maps to delivery ratio: `ETX_per_hop ≈ 255 / quality`
-- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss)
+- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss). For unidirectional links (quality / 8), even 4-hop bidirectional paths are preferred
 - Example rankings (lower cost wins):
   | Route | Hops | Quality | Cost |
   |-------|------|---------|------|
@@ -923,7 +923,7 @@ After `consecutive_missed_for_inactivation` (default 10, configurable) consecuti
 
 **Unidirectional Link Detection**:
 
-When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `ewma_quality / 4`. This makes multi-hop bidirectional alternatives preferred. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
+When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `local_quality / 8`. For bidirectional links, quality uses the bottleneck direction: `min(local_quality, remote_quality)` rather than the average. Both mechanisms ensure multi-hop bidirectional alternatives are strongly preferred over degraded or asymmetric direct links. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
