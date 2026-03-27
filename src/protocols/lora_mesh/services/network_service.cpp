@@ -96,6 +96,8 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
             node_address, battery_level, is_network_manager, capabilities,
             allocated_data_slots);
 
+        slot_table_dirty_ = true;
+
         // If node became network manager, update network manager
         if (is_network_manager) {
             network_manager_ = node_address;
@@ -160,6 +162,7 @@ size_t NetworkService::RemoveInactiveNodes() {
     if (nodes_removed > 0) {
         LOG_INFO("Removed %zu inactive nodes from routing table",
                  nodes_removed);
+        slot_table_dirty_ = true;
         UpdateNetworkTopology();
     }
 
@@ -233,6 +236,7 @@ Result NetworkService::ProcessRoutingTableMessage(
 
     // Update network topology if needed
     if (routing_changed) {
+        slot_table_dirty_ = true;
         UpdateNetworkTopology();
     }
 
@@ -326,6 +330,7 @@ void NetworkService::SetLocalAllocatedDataSlots(uint8_t data_slots) {
     }
 
     local_allocated_data_slots_ = data_slots;
+    slot_table_dirty_ = true;
     LOG_INFO("Updated local node data slots to %d", data_slots);
 }
 
@@ -718,8 +723,6 @@ Result NetworkService::PerformTimingSynchronization(
             "Superframe service not available for timing synchronization");
     }
 
-    sync_beacon.Print();
-
     // Compensate for processing delay between radio DIO interrupt and timestamp capture
     // This delay includes: task switch (~5-10ms) + SPI read (~10-20ms) +
     // deserialization (~5-10ms) + logging (~10-15ms) = ~40-50ms total
@@ -790,7 +793,7 @@ Result NetworkService::PerformTimingSynchronization(
 
         return sync_result;
     } else {
-        LOG_INFO(
+        LOG_DEBUG(
             "%s: Synchronized superframe with Network Manager timing (slot %d)",
             context_name.c_str(), nm_current_slot);
     }
@@ -1258,6 +1261,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
     if (status == JoinResponseStatus::ACCEPTED) {
         // Store the assigned control slot index
         my_control_slot_index_ = join_response_opt->GetControlSlotIndex();
+        slot_table_dirty_ = true;
         LOG_INFO("Received control slot index %d from NM",
                  my_control_slot_index_);
 
@@ -2042,6 +2046,7 @@ Result NetworkService::UpdateSlotTable() {
         return result;
     }
 
+    slot_table_dirty_ = false;
     return Result::Success();
 }
 
@@ -2403,8 +2408,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     // We never synchronize to another node's superframe when we are the NM,
     // but we do need to detect and respond to foreign networks.
     if (state_ == ProtocolState::NETWORK_MANAGER) {
-        auto nm_beacon_opt =
-            SyncBeaconMessage::CreateFromSerialized(*message.Serialize());
+        auto nm_beacon_opt = SyncBeaconMessage::CreateFromBaseMessage(message);
         if (nm_beacon_opt.has_value()) {
             const auto& sb = nm_beacon_opt.value();
             uint16_t bid = sb.GetNetworkId();
@@ -2427,8 +2431,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     }
 
     // Deserialize sync beacon message
-    auto sync_beacon_opt =
-        SyncBeaconMessage::CreateFromSerialized(*message.Serialize());
+    auto sync_beacon_opt = SyncBeaconMessage::CreateFromBaseMessage(message);
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to deserialize sync beacon message");
         return Result::Error(LoraMesherErrorCode::kSerializationError);
@@ -2436,9 +2439,9 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
     const auto& sync_beacon = sync_beacon_opt.value();
 
-    LOG_INFO("Received sync beacon from 0x%04X, hop count %d at timestamp %u",
-             sync_beacon.GetSource(), sync_beacon.GetHopCount(),
-             reception_timestamp);
+    LOG_DEBUG("Received sync beacon from 0x%04X, hop count %d at timestamp %u",
+              sync_beacon.GetSource(), sync_beacon.GetHopCount(),
+              reception_timestamp);
 
     uint32_t current_time = GetRTOS().getTickCount();
     if (current_time < last_sync_beacon_received_ +
@@ -2458,7 +2461,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         if (network_id_ != 0 && bid != 0 && bid != network_id_) {
             if (state_ == ProtocolState::NORMAL_OPERATION ||
                 state_ == ProtocolState::JOINING) {
-                LOG_INFO(
+                LOG_DEBUG(
                     "Ignoring foreign SYNC_BEACON (net 0x%04X vs ours "
                     "0x%04X)",
                     bid, network_id_);
@@ -2471,10 +2474,13 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
     {
         std::lock_guard<std::mutex> lock(network_mutex_);
+        bool params_changed = false;
+
         // Update network manager from the sync beacon header
         AddressType beacon_nm = sync_beacon.GetNetworkManager();
         if (network_manager_ != beacon_nm) {
             network_manager_ = beacon_nm;
+            params_changed = true;
             LOG_INFO("Updated network manager to 0x%04X from sync beacon",
                      beacon_nm);
         }
@@ -2500,14 +2506,16 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         uint8_t beacon_max_hops = sync_beacon.GetMaxHops();
         if (beacon_max_hops != current_network_depth_) {
             SetMaxHopCount(beacon_max_hops);
-            LOG_INFO("Updated network max_hops to %d from sync beacon",
-                     current_network_depth_);
+            params_changed = true;
+            LOG_DEBUG("Updated network max_hops to %d from sync beacon",
+                      current_network_depth_);
         }
 
         uint8_t total_slots = sync_beacon.GetTotalSlots();
         if (total_slots != number_of_slots_per_superframe_) {
             SetNumberOfSlotsPerSuperframe(total_slots);
-            LOG_INFO(
+            params_changed = true;
+            LOG_DEBUG(
                 "Updated number_of_slots_per_superframe_ to %d from sync "
                 "beacon",
                 number_of_slots_per_superframe_);
@@ -2517,8 +2525,13 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         uint8_t node_count = sync_beacon.GetNodeCount();
         if (node_count != beacon_node_count_) {
             beacon_node_count_ = node_count;
-            LOG_INFO("Updated beacon_node_count_ to %d from sync beacon",
-                     beacon_node_count_);
+            params_changed = true;
+            LOG_DEBUG("Updated beacon_node_count_ to %d from sync beacon",
+                      beacon_node_count_);
+        }
+
+        if (params_changed) {
+            slot_table_dirty_ = true;
         }
     }
 
@@ -2560,8 +2573,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
             current_time);
 
         if (route_updated) {
-            LOG_INFO("Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
-                     beacon_nm, beacon_source, our_hop_count_to_nm);
+            LOG_DEBUG("Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
+                      beacon_nm, beacon_source, our_hop_count_to_nm);
         }
     }
 
@@ -2611,11 +2624,13 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         return join_result;
     }
 
-    Result result = UpdateSlotTable();
-    if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to update slot table for joining: %s",
-                  result.GetErrorMessage().c_str());
-        return result;
+    if (slot_table_dirty_) {
+        Result result = UpdateSlotTable();
+        if (!result.IsSuccess()) {
+            LOG_ERROR("Failed to update slot table: %s",
+                      result.GetErrorMessage().c_str());
+            return result;
+        }
     }
 
     // Capture forwarding decision and slot duration before stopping the

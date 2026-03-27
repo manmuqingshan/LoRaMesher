@@ -1188,6 +1188,10 @@ class NetworkService : public INetworkService {
     uint8_t message_seq_ =
         0;  ///< Per-node sequence counter (shared by unicast + broadcast)
 
+    // Slot table dirty flag — set when any input to UpdateSlotTable() changes.
+    // Only read/written on the protocol task, no synchronization needed.
+    bool slot_table_dirty_ = true;
+
     // Thread safety
     mutable std::mutex network_mutex_;
 };

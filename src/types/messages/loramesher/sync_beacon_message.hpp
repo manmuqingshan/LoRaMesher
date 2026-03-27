@@ -67,13 +67,26 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
 
     /**
      * @brief Creates a sync beacon message from serialized data
-     * 
+     *
      * @param data Serialized message data
      * @return std::optional<SyncBeaconMessage> Deserialized message if successful,
      *         std::nullopt otherwise
      */
     static std::optional<SyncBeaconMessage> CreateFromSerialized(
         const std::vector<uint8_t>& data);
+
+    /**
+     * @brief Creates a sync beacon message directly from a BaseMessage
+     *
+     * Avoids the Serialize()+deserialize round-trip of CreateFromSerialized
+     * by reading the payload in-place.
+     *
+     * @param msg The base message to extract sync beacon data from
+     * @return std::optional<SyncBeaconMessage> Deserialized message if successful,
+     *         std::nullopt otherwise
+     */
+    static std::optional<SyncBeaconMessage> CreateFromBaseMessage(
+        const BaseMessage& msg);
 
     // Core synchronization field getters (optimized)
     uint16_t GetNetworkId() const;
