@@ -240,28 +240,28 @@ RadioState RadioLibRadio::getState() {
     return current_state_;
 }
 
-int8_t RadioLibRadio::getRSSI() {
+float RadioLibRadio::getRSSI() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return -128;  // Invalid RSSI value
+        return -255.0f;
     }
-    return static_cast<int8_t>(current_module_->getRSSI());
+    return current_module_->getRSSI();
 }
 
-int8_t RadioLibRadio::getSNR() {
+float RadioLibRadio::getSNR() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return -128;  // Invalid SNR value
+        return -128.0f;
     }
-    return static_cast<int8_t>(current_module_->getSNR());
+    return current_module_->getSNR();
 }
 
-int8_t RadioLibRadio::getLastPacketRSSI() {
+float RadioLibRadio::getLastPacketRSSI() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     return last_packet_rssi_;
 }
 
-int8_t RadioLibRadio::getLastPacketSNR() {
+float RadioLibRadio::getLastPacketSNR() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     return last_packet_snr_;
 }
@@ -482,12 +482,12 @@ void RadioLibRadio::HandleInterrupt() {
     }
 
     LOG_INFO(
-        "PKT_RX src=0x%04X dst=0x%04X type=0x%02X size=%u rssi=%d snr=%d",
+        "PKT_RX src=0x%04X dst=0x%04X type=0x%02X size=%u rssi=%.1f snr=%.1f",
         static_cast<unsigned>(message_optional->GetHeader().GetSource()),
         static_cast<unsigned>(message_optional->GetHeader().GetDestination()),
         static_cast<int>(message_optional->GetHeader().GetType()),
-        static_cast<unsigned>(length), static_cast<int>(last_packet_rssi_),
-        static_cast<int>(last_packet_snr_));
+        static_cast<unsigned>(length), static_cast<double>(last_packet_rssi_),
+        static_cast<double>(last_packet_snr_));
 
     // Add to queue if there's space
     if (GetRTOS().getQueueMessagesWaiting(receive_queue_) >= kMaxQueueSize) {

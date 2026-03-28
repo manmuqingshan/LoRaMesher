@@ -115,8 +115,8 @@ class IRadioReceiver {
      * @param rssi Signal strength (-dBm)
      * @param snr Signal-to-noise ratio (dB)
      */
-    virtual void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
-                                int8_t snr) = 0;
+    virtual void ReceiveMessage(const std::vector<uint8_t>& data, float rssi,
+                                float snr) = 0;
 
     /**
      * @brief Check if the radio can currently receive messages
@@ -191,7 +191,7 @@ class VirtualNetwork {
      * @param snr Signal-to-noise ratio to simulate (dB)
      */
     void TransmitMessage(uint32_t source, const std::vector<uint8_t>& data,
-                         int8_t rssi = -65, int8_t snr = 8) {
+                         float rssi = -65.0f, float snr = 8.0f) {
         // Store the sent message for testing purposes
         {
             std::lock_guard<std::mutex> lock(sent_messages_mutex_);
@@ -509,8 +509,8 @@ class VirtualNetwork {
         uint32_t transmission_start_time;  ///< When transmission started
         uint32_t time_on_air;              ///< Duration of transmission in ms
         uint32_t delivery_time;            ///< transmission_start + delay + toa
-        int8_t rssi;
-        int8_t snr;
+        float rssi;
+        float snr;
 
         /**
          * @brief Get the end time of this transmission's on-air window
@@ -602,7 +602,7 @@ class VirtualNetwork {
                               const std::vector<uint8_t>& data,
                               uint32_t transmission_start_time,
                               uint32_t time_on_air, uint32_t delivery_time,
-                              int8_t rssi, int8_t snr) {
+                              float rssi, float snr) {
         PendingMessage msg;
         msg.source = source;
         msg.destination = destination;
@@ -1075,8 +1075,8 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         network_.UnregisterNode(address_);
     }
 
-    void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
-                        int8_t snr) override {
+    void ReceiveMessage(const std::vector<uint8_t>& data, float rssi,
+                        float snr) override {
         // Queue the message to prevent race conditions with multiple simultaneous messages
         QueuedMessage msg;
         msg.data = data;
@@ -1125,8 +1125,8 @@ class RadioToNetworkAdapter : public IRadioReceiver {
    private:
     struct QueuedMessage {
         std::vector<uint8_t> data;
-        int8_t rssi;
-        int8_t snr;
+        float rssi;
+        float snr;
     };
 
     radio::test::MockRadio* radio_;
