@@ -895,8 +895,9 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         }
     }
 
-    LOG_INFO("Slot %d transition: type=%s%s", current_slot,
+    LOG_INFO("Slot %d transition: type=%s start=%u%s", current_slot,
              slot_utils::SlotTypeToString(slot_type).c_str(),
+             superframe_service_->GetSlotStartTime(current_slot),
              new_superframe ? " (new superframe)" : "");
 
     // Process messages based on slot type
@@ -1090,22 +1091,24 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             // subslots.
             auto state = network_service_->GetState();
 
-            // Compute subslot timing using ADDRESS_MODULO strategy
-            auto subslot_timing = lora_mesh::SubslotScheduler::ComputeTiming(
-                superframe_service_->GetSlotDuration(),
-                config_.getSyncBeaconSubslotConfig(), node_address_);
-
-            // Start in RX to catch beacons from earlier subslots
-            result = hardware_->setState(radio::RadioState::kReceive);
-            if (!result) {
-                LOG_WARNING(
-                    "Failed to set radio to receive for sync beacon: %s",
-                    result.GetErrorMessage().c_str());
-            }
-            in_subslotted_slot_ = true;
+            uint8_t subslot = 0;
 
             if (state ==
                 lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
+                // Skip TX if the slot callback arrived too late
+                {
+                    uint32_t time_in_slot = current_slot_arrival_time_ms_;
+                    uint32_t slot_duration =
+                        superframe_service_->GetSlotDuration();
+                    if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
+                        LOG_WARNING(
+                            "SYNC_BEACON_TX (NM): arrived too late (%u ms), "
+                            "skipping TX",
+                            time_in_slot);
+                        break;
+                    }
+                }
+
                 // Network Manager: queue the sync beacon
                 result = network_service_->SendSyncBeacon();
                 if (!result) {
@@ -1113,12 +1116,28 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                               result.GetErrorMessage().c_str());
                     break;
                 }
-            }
 
-            // Extract the message (NM's own beacon or forwarded beacon)
-            auto message =
-                message_queue_service_->ExtractMessageOfType(slot_type);
-            if (message) {
+                // Guard time delay for receivers to switch to RX
+                uint32_t guard_time_ms = config_.getGuardTime();
+                if (guard_time_ms > 0) {
+                    GetRTOS().delay(guard_time_ms);
+                }
+            } else {
+                // Compute subslot timing using ADDRESS_MODULO strategy
+                auto subslot_timing =
+                    lora_mesh::SubslotScheduler::ComputeTiming(
+                        superframe_service_->GetSlotDuration(),
+                        config_.getSyncBeaconSubslotConfig(), node_address_);
+
+                // Start in RX to catch beacons from earlier subslots
+                result = hardware_->setState(radio::RadioState::kReceive);
+                if (!result) {
+                    LOG_WARNING(
+                        "Failed to set radio to receive for sync beacon: %s",
+                        result.GetErrorMessage().c_str());
+                }
+                in_subslotted_slot_ = true;
+
                 // Skip TX if the slot callback arrived too late to complete
                 // transmission before the slot boundary. Radio is already in
                 // kReceive from above, so it is safe to bail out here.
@@ -1148,7 +1167,13 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                         GetRTOS().delay(delay_ms);
                     }
                 }
+                subslot = subslot_timing.assigned_subslot;
+            }
 
+            // Extract the message (NM's own beacon or forwarded beacon)
+            auto message =
+                message_queue_service_->ExtractMessageOfType(slot_type);
+            if (message) {
                 // Invoke pre-send callback to update time-sensitive fields
                 message->InvokePreSendCallback();
 
@@ -1158,11 +1183,12 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                               result.GetErrorMessage().c_str());
                 } else {
                     LOG_DEBUG("Sent sync beacon in subslot %d (addr=0x%04X)",
-                              subslot_timing.assigned_subslot, node_address_);
+                              subslot, node_address_);
                 }
             } else {
                 LOG_DEBUG("No sync beacon to send/forward");
             }
+
             break;
         }
 
@@ -1193,7 +1219,8 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                         superframe_service_->GetSlotDuration();
                     if (time_in_slot + kLateArrivalMarginMs > slot_duration) {
                         LOG_WARNING(
-                            "DISCOVERY_RX fallback TX: arrived too late (%u "
+                            "DISCOVERY_RX fallback TX: arrived too late "
+                            "(%u "
                             "ms), skipping TX",
                             time_in_slot);
                         hardware_->setState(radio::RadioState::kReceive);
@@ -1236,7 +1263,8 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                               result.GetErrorMessage().c_str());
                 } else {
                     LOG_DEBUG(
-                        "Sent discovery message in subslot %d (addr=0x%04X) "
+                        "Sent discovery message in subslot %d "
+                        "(addr=0x%04X) "
                         "from DISCOVERY_RX fallback",
                         subslot_timing.assigned_subslot, node_address_);
                 }
