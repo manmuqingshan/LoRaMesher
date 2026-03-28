@@ -2194,10 +2194,11 @@
 
             parseLineForFile(line, timestamp, nodeId, fileData, pendingTransmission) {
                 // Parse slot transitions
-                const slotMatch = line.match(/Slot (\d+) transition: type=(\w+)/);
+                const slotMatch = line.match(/Slot (\d+) transition: type=(\w+)(?:\s+start=(\d+))?/);
                 if (slotMatch) {
                     const slotNum = parseInt(slotMatch[1]);
                     const slotType = slotMatch[2];
+                    const slotStart = slotMatch[3] ? parseInt(slotMatch[3]) : null;
 
                     fileData.events.push({
                         timestamp,
@@ -2205,6 +2206,7 @@
                         type: 'slot_transition',
                         slotNum,
                         slotType,
+                        slotStart,
                         fileId: fileData.id
                     });
                 }
@@ -2287,13 +2289,13 @@
 
                 // Parse message reception — PKT_RX (new format)
                 const pktRxMatch = line.match(
-                    /PKT_RX src=0x([0-9A-Fa-f]+) dst=0x([0-9A-Fa-f]+) type=0x([0-9A-Fa-f]+) size=(\d+) rssi=(-?\d+) snr=(-?\d+)/);
+                    /PKT_RX src=0x([0-9A-Fa-f]+) dst=0x([0-9A-Fa-f]+) type=0x([0-9A-Fa-f]+) size=(\d+) rssi=(-?\d+\.?\d*) snr=(-?\d+\.?\d*)/);
                 if (pktRxMatch) {
                     const src  = pktRxMatch[1].toUpperCase();
                     const dst  = pktRxMatch[2].toUpperCase();
                     const size = parseInt(pktRxMatch[4]);
-                    const rssi = parseInt(pktRxMatch[5]);
-                    const snr  = parseInt(pktRxMatch[6]);
+                    const rssi = parseFloat(pktRxMatch[5]);
+                    const snr  = parseFloat(pktRxMatch[6]);
                     const messageTypeInfo = getMessageTypeInfo('0x' + pktRxMatch[3], 'received');
                     fileData.messages.push({
                         timestamp, from: src, to: dst,
@@ -2697,8 +2699,18 @@
                         e => e.nodeId === nodeId && e.type === 'slot_transition'
                     );
                     node.slots = nodeSlots.map((slot, i, arr) => {
-                        const rawEnd = arr[i + 1] ? arr[i + 1].timestamp : slot.timestamp + 1000;
-                        const duration = rawEnd - slot.timestamp;
+                        // Prefer deterministic start= timestamps from firmware when available;
+                        // fall back to log timestamps for older log formats.
+                        const hasSlotStart = slot.slotStart != null;
+                        const nextHasSlotStart = arr[i + 1] && arr[i + 1].slotStart != null;
+                        let rawEnd, duration;
+                        if (hasSlotStart && nextHasSlotStart) {
+                            rawEnd = arr[i + 1].timestamp;
+                            duration = arr[i + 1].slotStart - slot.slotStart;
+                        } else {
+                            rawEnd = arr[i + 1] ? arr[i + 1].timestamp : slot.timestamp + 1000;
+                            duration = rawEnd - slot.timestamp;
+                        }
                         // Cap at 3x median-ish duration to avoid gap artifacts;
                         // use 5000ms as a generous hard cap (5x typical 1000ms slot)
                         const maxReasonable = 5000;
@@ -2711,6 +2723,8 @@
                             slotType: slot.slotType,
                             slotNum:  slot.slotNum,
                             nodeId:   slot.nodeId,
+                            slotStart: slot.slotStart,
+                            slotDuration: duration,
                             gapAfter: duration > maxReasonable,
                         };
                     });
@@ -5656,7 +5670,7 @@
                 const slots = [];
                 for (const s of allSlots) {
                     if (s.gapAfter) { gapCount++; continue; }
-                    const dur = s.end - s.start;
+                    const dur = (s.slotDuration != null) ? s.slotDuration : (s.end - s.start);
                     if (dur > 0) slots.push({ start: s.start, end: s.end, slotType: s.slotType, slotNum: s.slotNum, nodeId: s.nodeId, duration: dur });
                 }
 
