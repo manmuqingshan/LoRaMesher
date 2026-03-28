@@ -1150,7 +1150,7 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsMultiHopNode) {
     EXPECT_EQ(it_after->link_stats.messages_expected, expected_before);
 }
 
-TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
+TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsProbesInactiveNeighbor) {
     AddDirectNeighbor(kNeighbor1);
 
     // Mark inactive
@@ -1163,8 +1163,10 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
                          return n.routing_entry.destination == kNeighbor1;
                      });
     ASSERT_NE(it_before, nodes_before.end());
+    ASSERT_FALSE(it_before->is_active);
     uint32_t expected_before = it_before->link_stats.messages_expected;
 
+    // Inactive direct neighbor should still be probed (expectations increment)
     routing_table_->UpdateLinkStatistics();
 
     const auto& nodes_after = routing_table_->GetNodes();
@@ -1173,8 +1175,26 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
             return n.routing_entry.destination == kNeighbor1;
         });
     ASSERT_NE(it_after, nodes_after.end());
-    // Inactive neighbor should NOT have expected incremented
-    EXPECT_EQ(it_after->link_stats.messages_expected, expected_before);
+    EXPECT_EQ(it_after->link_stats.messages_expected, expected_before + 1);
+    EXPECT_EQ(it_after->link_stats.inactive_probe_count, 1);
+
+    // After kMaxInactiveProbes (32) probes, expectations should stop
+    for (int i = 1; i < 32; i++) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    auto it_final = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    uint32_t expected_at_limit = it_final->link_stats.messages_expected;
+
+    routing_table_->UpdateLinkStatistics();
+    auto it_past = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    // Probe limit reached — expectations should stop incrementing
+    EXPECT_EQ(it_past->link_stats.messages_expected, expected_at_limit);
 }
 
 // =============================================================================

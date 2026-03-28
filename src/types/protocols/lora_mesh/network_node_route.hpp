@@ -38,8 +38,10 @@ class NetworkNodeRoute {
         uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
         uint8_t ewma_quality = 200;    ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
-        uint8_t ewma_alpha = 77;       ///< EWMA alpha fixed-point (0.30 * 256)
-        SlidingWindowPDR<8> window;    ///< Sliding window PDR tracker
+        uint8_t inactive_probe_count =
+            0;                        ///< Superframes probed since inactivation
+        uint8_t ewma_alpha = 77;      ///< EWMA alpha fixed-point (0.30 * 256)
+        SlidingWindowPDR<16> window;  ///< Sliding window PDR tracker
 
         /**
          * @brief Calculate link quality (0-255)

@@ -114,6 +114,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                     node_it->is_active = true;
                 }
                 node_it->link_stats.recovery_counter = 0;
+                node_it->link_stats.inactive_probe_count = 0;
                 route_changed = true;
                 NotifyRouteUpdate(true, destination, node_it->next_hop,
                                   node_it->routing_entry.hop_count);
@@ -504,7 +505,15 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
     for (auto& node : nodes_) {
-        if (node.routing_entry.hop_count == 1 && node.is_active) {
+        // Determine if this is an inactivated direct neighbor still being
+        // probed for recovery
+        bool is_probing =
+            !node.is_active && node.routing_entry.hop_count == 1 &&
+            node.link_stats.inactive_probe_count > 0 &&
+            node.link_stats.inactive_probe_count < kMaxInactiveProbes;
+
+        if (node.routing_entry.hop_count == 1 &&
+            (node.is_active || is_probing)) {
             // Step 1: Read EWMA quality (updated by ReceivedMessage/ExpectMessage)
             constexpr uint32_t kMinExpectedForDegradation = 5;
             if (node.link_stats.messages_expected >=
@@ -517,34 +526,53 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                 if (node.routing_entry.link_quality != old_quality) {
                     LOG_DEBUG(
                         "LinkStats 0x%04X: quality %d -> %d "
-                        "(ewma=%d remote=%d exp=%d recv=%d missed=%d)",
+                        "(ewma=%d remote=%d exp=%d recv=%d missed=%d%s)",
                         node.routing_entry.destination, old_quality,
                         node.routing_entry.link_quality,
                         node.link_stats.ewma_quality,
                         node.link_stats.remote_link_quality,
                         node.link_stats.messages_expected,
                         node.link_stats.messages_received,
-                        node.link_stats.consecutive_missed);
+                        node.link_stats.consecutive_missed,
+                        is_probing ? " PROBING" : "");
                 }
                 LogRouteEntry(node);
 
+                // Re-activate probing neighbor if quality recovered
+                if (is_probing && node.routing_entry.link_quality >=
+                                      kReactivationQualityThreshold) {
+                    node.is_active = true;
+                    node.link_stats.recovery_counter = 0;
+                    node.link_stats.inactive_probe_count = 0;
+                    NotifyRouteUpdate(true, node.routing_entry.destination,
+                                      node.routing_entry.destination, 1);
+                    LogRouteEntry(node);
+                    LOG_DEBUG(
+                        "Re-activated probing neighbor 0x%04X (quality=%d)",
+                        node.routing_entry.destination,
+                        node.routing_entry.link_quality);
+                }
+
                 // Cascade: cap multi-hop routes through this neighbor
-                AddressType via = node.routing_entry.destination;
-                for (auto& other : nodes_) {
-                    if (other.next_hop == via && other.is_active &&
-                        other.routing_entry.hop_count > 1) {
-                        if (other.routing_entry.link_quality >
-                            node.routing_entry.link_quality) {
-                            other.routing_entry.link_quality =
-                                node.routing_entry.link_quality;
-                            LogRouteEntry(other);
+                if (node.is_active) {
+                    AddressType via = node.routing_entry.destination;
+                    for (auto& other : nodes_) {
+                        if (other.next_hop == via && other.is_active &&
+                            other.routing_entry.hop_count > 1) {
+                            if (other.routing_entry.link_quality >
+                                node.routing_entry.link_quality) {
+                                other.routing_entry.link_quality =
+                                    node.routing_entry.link_quality;
+                                LogRouteEntry(other);
+                            }
                         }
                     }
                 }
             }
 
-            // Step 2: Hard invalidation after extended unresponsiveness
-            if (node.link_stats.consecutive_missed >= inactivation_threshold_) {
+            // Step 2: Hard invalidation — only for active nodes
+            if (node.is_active &&
+                node.link_stats.consecutive_missed >= inactivation_threshold_) {
                 node.is_active = false;
                 node.link_stats.recovery_counter = 0;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
@@ -565,10 +593,17 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
         }
 
         // Step 3: Track expected messages for direct neighbors AND for
-        // nodes we've received from. This prevents the expected counter
-        // from freezing when a route switches from direct to multi-hop.
-        if (node.is_active && (node.routing_entry.hop_count == 1 ||
-                               node.link_stats.messages_received > 0)) {
+        // nodes we've received from.
+        if (node.routing_entry.hop_count == 1) {
+            if (node.is_active) {
+                node.link_stats.inactive_probe_count = 0;
+                node.ExpectRoutingMessage();
+            } else if (node.link_stats.inactive_probe_count <
+                       kMaxInactiveProbes) {
+                node.link_stats.inactive_probe_count++;
+                node.ExpectRoutingMessage();
+            }
+        } else if (node.is_active && node.link_stats.messages_received > 0) {
             node.ExpectRoutingMessage();
         }
     }
@@ -659,6 +694,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         if (was_inactive) {
             source_node_it->is_active = true;
             source_node_it->link_stats.recovery_counter = 0;
+            source_node_it->link_stats.inactive_probe_count = 0;
             routing_changed = true;
         }
     } else {
@@ -760,6 +796,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                         node_it->is_active = true;
                     }
                     node_it->link_stats.recovery_counter = 0;
+                    node_it->link_stats.inactive_probe_count = 0;
                     routing_changed = true;
                     NotifyRouteUpdate(true, dest, node_it->next_hop,
                                       node_it->routing_entry.hop_count);

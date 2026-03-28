@@ -189,6 +189,10 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     static constexpr uint8_t kMinMessagesBeforeInvalidation = 1;
     /// Consecutive receptions required to re-activate an inactive route
     uint8_t reactivation_threshold_ = 2;
+    /// Max superframes to keep probing an inactivated direct neighbor
+    static constexpr uint8_t kMaxInactiveProbes = 32;
+    /// Minimum quality to re-activate a probing neighbor (~25% PDR)
+    static constexpr uint8_t kReactivationQualityThreshold = 64;
 
     // Member variables
 

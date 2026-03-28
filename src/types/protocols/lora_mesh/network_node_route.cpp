@@ -46,6 +46,7 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
     messages_received = 0;
     ewma_quality = 200;
     recovery_counter = 0;
+    inactive_probe_count = 0;
     window.Reset();
     // Don't reset last_message_time or remote_link_quality
 }
