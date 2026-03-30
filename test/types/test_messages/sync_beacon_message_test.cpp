@@ -517,5 +517,25 @@ TEST_F(SyncBeaconMessageTest, PreSendCallbackUpdatesMessage) {
     EXPECT_EQ(beacon->GetPropagationDelay(), injected_delay);
 }
 
+/**
+ * @brief Test that beacons can be forwarded by nodes at non-adjacent hop layers
+ *
+ * A hop-2 node that hears the NM's hop-0 beacon directly (due to radio
+ * conditions or node mobility) should still forward it.
+ */
+TEST_F(SyncBeaconMessageTest, ForwardingAllowsNonAdjacentHopLayers) {
+    ASSERT_TRUE(original_msg.has_value());  // hop=0 beacon
+
+    // Hop-2 node should forward a hop-0 beacon (heard NM directly)
+    EXPECT_TRUE(original_msg->ShouldBeForwardedBy(2));
+
+    // Hop-3 node should also forward a hop-0 beacon
+    EXPECT_TRUE(original_msg->ShouldBeForwardedBy(3));
+
+    // Forwarded beacon (hop=2) should be forwardable by hop-4 node
+    ASSERT_TRUE(forwarded_msg.has_value());
+    EXPECT_TRUE(forwarded_msg->ShouldBeForwardedBy(4));
+}
+
 }  // namespace test
 }  // namespace loramesher

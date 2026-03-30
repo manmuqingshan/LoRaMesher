@@ -135,7 +135,7 @@ class SyncBeaconHeader : public BaseHeader {
      * @return bool True if the node should forward this beacon
      */
     bool ShouldBeForwardedBy(uint8_t node_hop_count) const {
-        return (node_hop_count == hop_count_ + 1) && (hop_count_ < max_hops_);
+        return (node_hop_count > hop_count_) && (hop_count_ < max_hops_);
     }
 
     /**
