@@ -1085,6 +1085,16 @@ class NetworkService : public INetworkService {
      */
     Result ForwardBroadcastMessage(const BroadcastMessage& original);
 
+    /**
+     * @brief Check if an address has an allocated RX slot in the TDMA schedule
+     *
+     * Must be called while holding network_mutex_.
+     *
+     * @param address Node address to check
+     * @return true if we have an RX slot for this address
+     */
+    bool IsTDMANeighbor(AddressType address) const;
+
     // Member variables
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
@@ -1180,6 +1190,8 @@ class NetworkService : public INetworkService {
         0xFF;  ///< Our election priority (lower = higher priority)
     uint32_t nm_election_start_time_ =
         0;  ///< Tick count when NM_ELECTION began
+    bool surrendered_in_election_ =
+        false;  ///< True if this node yielded to a higher-priority claimant
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
     uint16_t network_id_ = 0;

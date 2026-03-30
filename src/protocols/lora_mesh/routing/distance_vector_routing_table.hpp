@@ -85,6 +85,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     uint8_t GetDirectLinkQuality(AddressType node_address) const override;
 
+    bool HasUnidirectionalRisk(AddressType node_address) const override;
+
     // Configuration and callbacks
 
     void SetRouteUpdateCallback(RouteUpdateCallback callback) override;

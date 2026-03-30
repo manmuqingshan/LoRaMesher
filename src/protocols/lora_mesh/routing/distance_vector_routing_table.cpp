@@ -421,6 +421,19 @@ uint8_t DistanceVectorRoutingTable::GetDirectLinkQuality(
     return 0;
 }
 
+bool DistanceVectorRoutingTable::HasUnidirectionalRisk(
+    AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    for (const auto& node : nodes_) {
+        if (node.routing_entry.destination == node_address &&
+            node.routing_entry.hop_count == 1 && node.is_active) {
+            return node.link_stats.messages_received >= 2 &&
+                   node.link_stats.remote_link_quality == 0;
+        }
+    }
+    return false;
+}
+
 void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     RouteUpdateCallback callback) {
     std::lock_guard<std::mutex> lock(table_mutex_);

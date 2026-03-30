@@ -189,6 +189,18 @@ class IRoutingTable {
      */
     virtual uint8_t GetDirectLinkQuality(AddressType node_address) const = 0;
 
+    /**
+     * @brief Check if a hop-1 neighbor has confirmed unidirectional link
+     *
+     * Returns true when we have received routing messages from the neighbor
+     * but their routing table never lists us — meaning the link is
+     * asymmetric (we hear them but they cannot hear us).
+     *
+     * @param node_address Neighbor address to check
+     * @return true if confirmed unidirectional (they cannot hear us)
+     */
+    virtual bool HasUnidirectionalRisk(AddressType node_address) const = 0;
+
     // Configuration and callbacks
 
     /**

@@ -259,9 +259,74 @@ Result NetworkService::SendRoutingTableUpdate() {
     return Result::Success();
 }
 
+bool NetworkService::IsTDMANeighbor(AddressType address) const {
+    for (size_t i = 0; i < slot_count_; ++i) {
+        if (slot_table_[i].type == SlotAllocation::SlotType::RX &&
+            slot_table_[i].target_address == address) {
+            return true;
+        }
+    }
+    return false;
+}
+
 AddressType NetworkService::FindNextHop(AddressType destination) const {
     std::lock_guard<std::mutex> lock(network_mutex_);
-    return routing_table_->FindNextHop(destination);
+
+    AddressType best = routing_table_->FindNextHop(destination);
+
+    // No slot table yet (discovery phase) — use routing table as-is
+    if (slot_count_ == 0 || best == 0) {
+        return best;
+    }
+
+    // Best next_hop is reachable: TDMA neighbor with confirmed bidirectional
+    // link (or too few messages to determine directionality yet)
+    if (IsTDMANeighbor(best) && !routing_table_->HasUnidirectionalRisk(best)) {
+        return best;
+    }
+
+    // Best next_hop is NOT reachable — either not a TDMA neighbor (overheard
+    // from outside the network) or confirmed unidirectional (they cannot
+    // hear us). Find the best route among reachable next_hops.
+    auto nodes = routing_table_->GetNodesCopy();
+    AddressType fallback = 0;
+    uint16_t best_cost = UINT16_MAX;
+    uint8_t best_hops = UINT8_MAX;
+
+    for (const auto& node : nodes) {
+        if (node.routing_entry.destination == destination && node.is_active &&
+            IsTDMANeighbor(node.next_hop) &&
+            !routing_table_->HasUnidirectionalRisk(node.next_hop)) {
+            uint16_t cost = types::protocols::lora_mesh::NetworkNodeRoute::
+                CalculateRouteCost(node.routing_entry.hop_count,
+                                   node.routing_entry.link_quality);
+            if (cost < best_cost ||
+                (cost == best_cost &&
+                 node.routing_entry.hop_count < best_hops)) {
+                best_cost = cost;
+                best_hops = node.routing_entry.hop_count;
+                fallback = node.next_hop;
+            }
+        }
+    }
+
+    if (fallback != 0) {
+        LOG_WARNING(
+            "Next hop 0x%04X for dest 0x%04X is unreachable "
+            "(non-TDMA or unidirectional), using 0x%04X instead",
+            best, destination, fallback);
+        return fallback;
+    }
+
+    // No valid alternative exists — use the original route as last resort.
+    // The message may not be delivered, but dropping it is worse: the
+    // opportunistic forwarding mechanism or natural routing convergence
+    // via the unidirectional quality penalty can still salvage it.
+    LOG_WARNING(
+        "Next hop 0x%04X for dest 0x%04X is unreachable "
+        "and no valid alternative found, using as last resort",
+        best, destination);
+    return best;
 }
 
 bool NetworkService::UpdateRouteEntry(AddressType source,
@@ -654,6 +719,7 @@ Result NetworkService::CreateNetwork() {
     // comparisons work correctly even when the node was configured as
     // NETWORK_MANAGER from boot (never went through StartElectionBackoff).
     election_priority_ = ComputeElectionPriority();
+    surrendered_in_election_ = false;
 
     // Generate stable network_id_ if not already set (e.g. from a prior beacon)
     if (network_id_ == 0) {
@@ -754,6 +820,37 @@ Result NetworkService::PerformTimingSynchronization(
     LOG_DEBUG(
         "%s sync beacon timing: duration %d ms, slots %d, slot_duration %d ms",
         context_name.c_str(), superframe_duration, total_slots, slot_duration);
+
+    // Skip the disruptive stop/sync/start cycle when drift is small and config
+    // unchanged. The stop/start truncates the active slot to ~5ms, causing 9.7%
+    // outlier rate on SYNC_BEACON_RX. Normal crystal drift (~0.3ms/superframe)
+    // is well within the guard_time/2 threshold.
+    bool config_unchanged =
+        (total_slots == number_of_slots_per_superframe_) &&
+        (slot_duration == superframe_service_->GetSlotDuration());
+
+    if (superframe_service_->IsSynchronized() && config_unchanged) {
+        uint32_t current_time_check = GetRTOS().getTickCount();
+        uint32_t current_sf_start =
+            current_time_check -
+            superframe_service_->GetTimeSinceSuperframeStart();
+        int32_t drift =
+            static_cast<int32_t>(estimated_nm_time - current_sf_start);
+        uint32_t abs_drift = static_cast<uint32_t>(std::abs(drift));
+        uint32_t drift_threshold = config_.guard_time_ms / 2;
+
+        if (abs_drift < drift_threshold) {
+            LOG_DEBUG(
+                "%s: drift %dms < threshold %ums (guard_time/2), skipping "
+                "resync",
+                context_name.c_str(), drift, drift_threshold);
+
+            if (pre_start_action) {
+                pre_start_action();
+            }
+            return Result::Success();
+        }
+    }
 
     // Stop the superframe now that all radio-dependent computations are done.
     superframe_service_->StopSuperframe();
@@ -1431,6 +1528,55 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     // packets must not poison the dedup table or legitimate forwarded
     // copies addressed to us will be falsely dropped)
     if (next_hop != node_address_) {
+        // Opportunistic forwarding: salvage a DATA message that we
+        // overheard from a TDMA neighbor but that was addressed to a
+        // different next_hop (which may not have received it due to
+        // SLEEP or unidirectional link).
+        //
+        // Guards:
+        //  - sender is our TDMA neighbor (we legitimately received this)
+        //  - we have a forward route that doesn't loop back to sender
+        //  - dedup at downstream nodes catches duplicates if the
+        //    intended next_hop also received and forwarded
+        //
+        // LORAMESHER_OPPORTUNISTIC_FORWARD_RELAXED (default):
+        //   Forward whenever the sender is our TDMA neighbor,
+        //   regardless of whether the intended next_hop is also ours.
+        //   Needed when the next_hop IS in our network but has SLEEP
+        //   during the sender's TX slot (asymmetric TDMA from
+        //   overheard routing).
+        //
+        // Strict mode (undef RELAXED):
+        //   Only forward when the intended next_hop is NOT our TDMA
+        //   neighbor — covers the case where the next_hop is entirely
+        //   outside the network's TDMA schedule.
+        bool should_forward = false;
+        {
+            std::lock_guard<std::mutex> lock(network_mutex_);
+            if (slot_count_ > 0 && IsTDMANeighbor(original_src) &&
+                final_dest != node_address_ && ttl > 1) {
+#ifndef LORAMESHER_OPPORTUNISTIC_FORWARD_RELAXED
+                // Strict: only when next_hop is outside our TDMA schedule
+                if (!IsTDMANeighbor(next_hop)) {
+                    should_forward = true;
+                }
+#else
+                // Relaxed: always forward from TDMA neighbors
+                should_forward = true;
+#endif
+            }
+        }
+        if (should_forward) {
+            AddressType our_route = FindNextHop(final_dest);
+            if (our_route != 0 && our_route != original_src) {
+                LOG_INFO(
+                    "Opportunistic forward: src=0x%04X, dest=0x%04X, "
+                    "seq=%u (next_hop 0x%04X, we use 0x%04X)",
+                    original_src, final_dest, seq_num, next_hop, our_route);
+                AddToMessageCache(original_src, seq_num);
+                return ForwardDataMessage(data_msg);
+            }
+        }
         LOG_DEBUG("DATA not for this node (next_hop=0x%04X), ignoring",
                   next_hop);
         return Result::Success();
@@ -2230,19 +2376,32 @@ Result NetworkService::BroadcastSlotAllocation() {
 // Discovery implementation
 
 Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
-    // NODE_ONLY and NETWORK_MANAGER nodes never create a network on timeout.
-    // NODE_ONLY always waits for an existing network.
-    // NETWORK_MANAGER-role nodes that reach DISCOVERY surrendered via
-    // ProcessNMClaim; re-creating on timeout causes a yield-recreate cycle.
-    if (node_role_ == NodeRole::NODE_ONLY ||
-        node_role_ == NodeRole::NETWORK_MANAGER) {
+    // NODE_ONLY nodes never create a network.
+    if (node_role_ == NodeRole::NODE_ONLY) {
         return Result::Success();
     }
 
     uint32_t current_time = GetRTOS().getTickCount();
     uint32_t end_time = discovery_start_time_ + timeout_ms;
 
-    // Check if discovery timeout has elapsed (AUTO role only)
+    // NETWORK_MANAGER-role nodes that surrendered in an election enter
+    // DISCOVERY to listen for the winner's beacon. If the winner is alive,
+    // the beacon triggers JOINING before the timeout. If the winner is dead
+    // (no beacon received), clear the surrender flag and restart election
+    // via FAULT_RECOVERY so the node can create its own network.
+    if (node_role_ == NodeRole::NETWORK_MANAGER && surrendered_in_election_) {
+        if (current_time >= end_time) {
+            LOG_INFO(
+                "Discovery timeout after surrender — clearing flag and "
+                "entering FAULT_RECOVERY for fresh election");
+            surrendered_in_election_ = false;
+            SetState(ProtocolState::FAULT_RECOVERY);
+            StartElectionBackoff();
+        }
+        return Result::Success();
+    }
+
+    // Check if discovery timeout has elapsed (AUTO and unsurrendered NM roles)
     if (current_time >= end_time) {
         LOG_INFO("Discovery timeout - creating new network");
         return CreateNetwork();
@@ -2286,6 +2445,21 @@ Result NetworkService::PerformNMElection() {
         return Result::Success();
     }
     if (GetNMElectionTimeout() == 0) {
+        // A node that surrendered to a higher-priority claimant must not
+        // re-create a network — the winner is still out there. Enter
+        // DISCOVERY to keep listening for the winner's sync beacon.
+        if (surrendered_in_election_) {
+            LOG_INFO(
+                "NM_ELECTION deadline reached but previously surrendered — "
+                "entering DISCOVERY instead of creating network");
+            network_found_ = false;
+            network_creator_ = false;
+            selected_sponsor_ = 0;
+            discovery_start_time_ = GetRTOS().getTickCount();
+            SetDiscoverySlots();
+            SetState(ProtocolState::DISCOVERY);
+            return Result::Success();
+        }
         LOG_INFO("NM_ELECTION deadline reached, creating network");
         return CreateNetwork();
     }
@@ -3438,6 +3612,7 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             if (claim.GetNetworkId() != 0) {
                 network_id_ = claim.GetNetworkId();
             }
+            surrendered_in_election_ = true;
             // Enter DISCOVERY directly — cannot call StartDiscovery() because
             // NETWORK_MANAGER-role nodes skip discovery and re-create a network.
             // By setting state to DISCOVERY we stop broadcasting sync beacons
@@ -3470,6 +3645,7 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             "ours=%d)",
             claimant, their_priority, election_priority_);
         election_end_time_ = 0;  // cancel our election
+        surrendered_in_election_ = true;
 
         // Store network_id from the claimant's beacon if available
         if (claim.GetNetworkId() != 0) {
