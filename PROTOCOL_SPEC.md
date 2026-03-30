@@ -1556,6 +1556,8 @@ for (hop_layer = 0; hop_layer < max_hops; hop_layer++) {
 - **Controlled same-hop collisions**: LoRa's capture effect handles simultaneous same-hop forwards
 - **Predictable timing**: Each hop knows when to forward based on distance from Network Manager
 
+> **Forwarding eligibility**: While slot assignment uses strict hop-layer matching (TX only in `my_hop_distance` slot), forwarding eligibility is broader: a node forwards any received sync beacon where `beacon_hop_count < my_hop_distance` (not just `beacon_hop_count == my_hop_distance - 1`). This handles variable radio conditions and mobile nodes that can occasionally hear beacons from non-adjacent layers. The forwarded beacon's hop count is set to `beacon_hop_count + 1`, reflecting the actual number of hops traveled.
+
 #### 5.5.3 Intra-Slot Collision Mitigation (Subslot Scheduling)
 
 While Section 5.5.2 eliminates inter-hop collisions by assigning different hops to different slots, nodes at the **same hop distance** still transmit in the same slot. This section describes the deterministic subslot division mechanism that mitigates collisions among same-hop forwarders and among discovering nodes.
@@ -1918,7 +1920,9 @@ auto mesher = LoraMesher::Builder()
 
 ### 5.9 Network Manager Election Sequence
 
-Implemented. When a node misses `kMaxNoReceivedSyncBeacons` (5) consecutive sync beacons it enters FAULT_RECOVERY and starts a weighted staggered-backoff timer:
+Implemented. When a node misses `kExpandListeningThreshold` (2) consecutive sync beacons, all sync beacon SLEEP and TX slots are temporarily converted to SYNC_BEACON_RX. This allows the node to hear beacons from any hop layer, recovering from cases where a hop-distance change left the slot table with wrong RX assignments (e.g., a node heard the NM directly, updated to hop=1, then lost the direct link). Normal slot allocation is restored automatically when the next beacon is received and triggers `UpdateSlotTable()`.
+
+If missed beacons reach `kMaxNoReceivedSyncBeacons` (5) the node enters FAULT_RECOVERY and starts a weighted staggered-backoff timer:
 
 ```
 election_delay = kElectionListenWindowMs (5 000 ms)           // mandatory anti-flap window
@@ -2658,10 +2662,11 @@ void ResetNetworkState();
 
 Recovery flow when sync is lost:
 1. Node detects sync beacon timeout
-2. Transitions to `FAULT_RECOVERY` state
-3. Clears stale routing information via `RemoveInactiveNodes()`
-4. Resets synchronization state
-5. Returns to `DISCOVERY` state to rejoin network
+2. After 2 missed beacons: expands all sync beacon slots to SYNC_BEACON_RX (may recover here)
+3. After 5 missed beacons: transitions to `FAULT_RECOVERY` state
+4. Clears stale routing information via `RemoveInactiveNodes()`
+5. Resets synchronization state
+6. Returns to `DISCOVERY` state to rejoin network
 
 
 ---
