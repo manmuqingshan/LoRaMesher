@@ -2161,6 +2161,29 @@ Result NetworkService::SetJoiningSlots() {
     return Result::Success();
 }
 
+void NetworkService::ExpandSyncBeaconListening() {
+    uint8_t sync_beacon_slots =
+        static_cast<uint8_t>(current_network_depth_ + 1);
+    uint16_t limit =
+        std::min(static_cast<uint16_t>(sync_beacon_slots), slot_count_);
+
+    for (uint16_t i = 0; i < limit; i++) {
+        auto& slot = slot_table_[i];
+        if (slot.type ==
+                types::protocols::lora_mesh::SlotAllocation::SlotType::SLEEP ||
+            slot.type == types::protocols::lora_mesh::SlotAllocation::SlotType::
+                             SYNC_BEACON_TX) {
+            slot.type = types::protocols::lora_mesh::SlotAllocation::SlotType::
+                SYNC_BEACON_RX;
+        }
+    }
+
+    LOG_WARNING(
+        "Expanded sync beacon listening to all %d sync slots after %d "
+        "missed beacons",
+        limit, no_received_sync_beacon_count_);
+}
+
 Result NetworkService::BroadcastSlotAllocation() {
     // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
     // Only network manager broadcasts
@@ -2904,6 +2927,9 @@ Result NetworkService::HandleSuperframeStart() {
                 kMaxNoReceivedSyncBeacons);
             SetState(ProtocolState::FAULT_RECOVERY);
             StartElectionBackoff();
+        } else if (no_received_sync_beacon_count_ >=
+                   kExpandListeningThreshold) {
+            ExpandSyncBeaconListening();
         }
     } else if (state_ == ProtocolState::FAULT_RECOVERY) {
         // Decrement election backoff if one is pending

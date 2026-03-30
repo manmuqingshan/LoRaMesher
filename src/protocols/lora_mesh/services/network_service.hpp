@@ -39,6 +39,9 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons
 
+static const uint8_t kExpandListeningThreshold =
+    2;  ///< Missed beacons before expanding all sync slots to RX
+
 /// Minimum listen window before election fires (ms). 2 superframes @ 500ms ea.
 static constexpr uint32_t kElectionListenWindowMs = 5000;
 
@@ -618,6 +621,16 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result HandleSuperframeStart();
+
+    /**
+     * @brief Expand all sync beacon slots to RX after missed beacons
+     *
+     * When beacons are missed (e.g., because the node's hop distance changed
+     * and the slot table no longer covers the right layer), this converts all
+     * sync beacon SLEEP and TX slots to SYNC_BEACON_RX so the node can hear
+     * beacons from any hop layer and recover synchronization.
+     */
+    void ExpandSyncBeaconListening();
 
     /**
      * @brief Apply pending join request at superframe boundary
