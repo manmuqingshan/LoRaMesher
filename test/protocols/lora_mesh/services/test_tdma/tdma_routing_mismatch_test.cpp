@@ -91,10 +91,9 @@ TEST_F(TDMARoutingMismatchTests, UnidirectionalLinkConvergesToIndirectRoute) {
     // Edge1 needs 3+ expected messages with remote_quality=0 to confirm
     // unidirectional (quality=0, cost=65535). Then the entries loop from
     // NM's routing table provides a 2-hop route to GW via NM.
-    bool route_converged = AdvanceTime(
-        superframe_ms * 12, superframe_ms * 12, step_ms, 0, [&]() {
-            return GetHopCount(edge1, gw.address) > 1;
-        });
+    bool route_converged =
+        AdvanceTime(superframe_ms * 12, superframe_ms * 12, step_ms, 0,
+                    [&]() { return GetHopCount(edge1, gw.address) > 1; });
 
     std::cout << "=== After unidirectional detection ===" << std::endl;
     PrintRoutingTable(edge1);
@@ -148,8 +147,7 @@ TEST_F(TDMARoutingMismatchTests, UnidirectionalLinkConvergesToIndirectRoute) {
  *    NORMAL_OPERATION), re-establish routes, and deliver data again.
  */
 TEST_F(TDMARoutingMismatchTests, LinkOutageRecoveryAfterFaultRecovery) {
-    using ProtocolState =
-        protocols::lora_mesh::INetworkService::ProtocolState;
+    using ProtocolState = protocols::lora_mesh::INetworkService::ProtocolState;
 
     auto& nm = CreateNode("NM", 0x1000, NodeRole::NETWORK_MANAGER);
     auto& gw = CreateNode("GW", 0x2000, NodeRole::NODE_ONLY);
@@ -191,8 +189,8 @@ TEST_F(TDMARoutingMismatchTests, LinkOutageRecoveryAfterFaultRecovery) {
     SetLinkStatus(nm, edge1, false);
 
     // Wait until Edge1 enters FAULT_RECOVERY (5 missed beacons + margin)
-    bool entered_fault = AdvanceTime(
-        superframe_ms * 10, superframe_ms * 10, step_ms, 0, [&]() {
+    bool entered_fault =
+        AdvanceTime(superframe_ms * 10, superframe_ms * 10, step_ms, 0, [&]() {
             auto state = edge1.protocol->GetState();
             return state == ProtocolState::FAULT_RECOVERY ||
                    state == ProtocolState::NM_ELECTION ||
@@ -200,8 +198,8 @@ TEST_F(TDMARoutingMismatchTests, LinkOutageRecoveryAfterFaultRecovery) {
         });
 
     auto fault_state = edge1.protocol->GetState();
-    std::cout << "Edge1 state after outage: "
-              << static_cast<int>(fault_state) << std::endl;
+    std::cout << "Edge1 state after outage: " << static_cast<int>(fault_state)
+              << std::endl;
     ASSERT_TRUE(entered_fault)
         << "Edge1 should enter FAULT_RECOVERY/DISCOVERY after link outage";
 
@@ -215,8 +213,8 @@ TEST_F(TDMARoutingMismatchTests, LinkOutageRecoveryAfterFaultRecovery) {
     std::cout << "=== Link restored, waiting for rejoin ===" << std::endl;
 
     // Wait for Edge1 to rejoin and reach NORMAL_OPERATION
-    bool rejoined = AdvanceTime(
-        superframe_ms * 20, superframe_ms * 20, step_ms, 0, [&]() {
+    bool rejoined =
+        AdvanceTime(superframe_ms * 20, superframe_ms * 20, step_ms, 0, [&]() {
             return edge1.protocol->GetState() ==
                    ProtocolState::NORMAL_OPERATION;
         });
@@ -245,8 +243,7 @@ TEST_F(TDMARoutingMismatchTests, LinkOutageRecoveryAfterFaultRecovery) {
 
     bool any_received =
         AdvanceTime(superframe_ms * 10, superframe_ms * 10, step_ms, 0, [&]() {
-            return CountReceivedMessages(gw, edge1.address,
-                                         MessageType::DATA) >
+            return CountReceivedMessages(gw, edge1.address, MessageType::DATA) >
                    before_recovery;
         });
 
@@ -258,9 +255,8 @@ TEST_F(TDMARoutingMismatchTests, LinkOutageRecoveryAfterFaultRecovery) {
 
     EXPECT_TRUE(any_received)
         << "Edge1 should deliver DATA to GW after link recovery";
-    EXPECT_GE(post_recovery, 1u)
-        << "At least 1 of " << kNumMessages
-        << " should reach GW after recovery";
+    EXPECT_GE(post_recovery, 1u) << "At least 1 of " << kNumMessages
+                                 << " should reach GW after recovery";
 }
 
 /**
