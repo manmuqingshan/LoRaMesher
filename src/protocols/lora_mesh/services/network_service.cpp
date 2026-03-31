@@ -1528,55 +1528,6 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     // packets must not poison the dedup table or legitimate forwarded
     // copies addressed to us will be falsely dropped)
     if (next_hop != node_address_) {
-        // Opportunistic forwarding: salvage a DATA message that we
-        // overheard from a TDMA neighbor but that was addressed to a
-        // different next_hop (which may not have received it due to
-        // SLEEP or unidirectional link).
-        //
-        // Guards:
-        //  - sender is our TDMA neighbor (we legitimately received this)
-        //  - we have a forward route that doesn't loop back to sender
-        //  - dedup at downstream nodes catches duplicates if the
-        //    intended next_hop also received and forwarded
-        //
-        // LORAMESHER_OPPORTUNISTIC_FORWARD_RELAXED (default):
-        //   Forward whenever the sender is our TDMA neighbor,
-        //   regardless of whether the intended next_hop is also ours.
-        //   Needed when the next_hop IS in our network but has SLEEP
-        //   during the sender's TX slot (asymmetric TDMA from
-        //   overheard routing).
-        //
-        // Strict mode (undef RELAXED):
-        //   Only forward when the intended next_hop is NOT our TDMA
-        //   neighbor — covers the case where the next_hop is entirely
-        //   outside the network's TDMA schedule.
-        bool should_forward = false;
-        {
-            std::lock_guard<std::mutex> lock(network_mutex_);
-            if (slot_count_ > 0 && IsTDMANeighbor(original_src) &&
-                final_dest != node_address_ && ttl > 1) {
-#ifndef LORAMESHER_OPPORTUNISTIC_FORWARD_RELAXED
-                // Strict: only when next_hop is outside our TDMA schedule
-                if (!IsTDMANeighbor(next_hop)) {
-                    should_forward = true;
-                }
-#else
-                // Relaxed: always forward from TDMA neighbors
-                should_forward = true;
-#endif
-            }
-        }
-        if (should_forward) {
-            AddressType our_route = FindNextHop(final_dest);
-            if (our_route != 0 && our_route != original_src) {
-                LOG_INFO(
-                    "Opportunistic forward: src=0x%04X, dest=0x%04X, "
-                    "seq=%u (next_hop 0x%04X, we use 0x%04X)",
-                    original_src, final_dest, seq_num, next_hop, our_route);
-                AddToMessageCache(original_src, seq_num);
-                return ForwardDataMessage(data_msg);
-            }
-        }
         LOG_DEBUG("DATA not for this node (next_hop=0x%04X), ignoring",
                   next_hop);
         return Result::Success();

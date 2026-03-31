@@ -33,9 +33,13 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
     }
 
     // Unidirectional link: received 3+ routing tables from peer
-    // but peer never lists us — they cannot hear us
+    // but peer never lists us — they cannot hear us.
+    // Return 1 (minimum quality): a link we cannot transmit on has
+    // maximum ETX cost (65535). This lets the entries loop find an
+    // indirect route via relay. Using 1 instead of 0 avoids the
+    // "unknown/unset" semantics of quality=0.
     if (messages_expected >= 3) {
-        return local_quality / 4;
+        return 1;
     }
 
     return local_quality;

@@ -774,14 +774,14 @@ if (remote_link_quality > 0) {
 }
 
 if (messages_expected >= 3) {
-    // Confirmed unidirectional: penalty
-    return local_quality / 4;
+    // Confirmed unidirectional: link cannot carry data
+    return 1;  // Minimum quality (cost=65535)
 }
 
 return local_quality;  // Not enough data yet
 ```
 
-When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies instead, penalizing quality to `local_quality / 4` after confirmation.
+When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies. After confirmation (3+ expected messages with no remote acknowledgment), quality is set to **1** (minimum) — a link that cannot carry unicast data has maximum ETX cost (65535). This causes the ETX cost comparison in the direct neighbor section to yield to indirect routes found by the entries loop, allowing the network to route around the broken link.
 
 **Route Comparison** (Weighted Cost Metric):
 
@@ -813,7 +813,7 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
 - Based on Expected Transmission Count (RFC 6551/6719), the industry standard for mesh routing
 - Each hop adds at least 256 to the cost (for a perfect link with quality 255), naturally penalizing longer paths without a tunable weight
 - quality (0-255) maps to delivery ratio: `ETX_per_hop ≈ 255 / quality`
-- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss). For unidirectional links (quality / 4), 2-hop bidirectional paths are preferred
+- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss). For confirmed unidirectional links (quality = 0), any indirect route is preferred
 - Example rankings (lower cost wins):
   | Route | Hops | Quality | Cost |
   |-------|------|---------|------|
@@ -821,7 +821,7 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
   | B     | 1    | 200     | 327  |
   | C     | 2    | 255     | 514  |
   | D     | 2    | 200     | 655  |
-  | E (unidir) | 1 | 63 (=255/4) | 1040 |
+  | E (unidir) | 1 | 1 | 65535 |
 
 ### 4.2 Loop Prevention
 
@@ -937,19 +937,13 @@ After `consecutive_missed_for_inactivation` (default 10, configurable) consecuti
 
 **Unidirectional Link Detection**:
 
-When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `local_quality / 4`. For bidirectional links, quality uses a weighted bottleneck: `(min(local, remote) × 7 + avg(local, remote) × 3) / 10`. Both mechanisms ensure multi-hop bidirectional alternatives are strongly preferred over degraded or asymmetric direct links. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
+When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetReceptionQualityFor(A)`. This reads the dedicated `reception_quality` field, which carries B's raw EWMA reception rate for A — not the combined bidirectional quality, avoiding circular feedback. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as **confirmed unidirectional** and quality is set to **0** (infinite ETX cost). This causes the direct neighbor section's ETX cost comparison to yield (`direct_cost=65535 > current_cost`), preserving any indirect route found by the entries loop.
 
-**Known Limitation — Direct Neighbor Abandonment Cascade**:
+For bidirectional links, quality uses a weighted bottleneck: `(min(local, remote) × 7 + avg(local, remote) × 3) / 10`.
 
-The `min(local, remote)` formula combined with the `/8` unidirectional penalty can create an irreversible cascade on marginal direct links (~50% PDR):
+**Source Quality Calculation**: When evaluating routes through a neighbor (entries loop), the source link quality uses the **measured physical link quality** (`link_stats.CalculateQuality()`), not the stored route quality (`routing_entry.link_quality`). This prevents a node with a stale indirect route quality from inflating the apparent quality of routes through it. For confirmed unidirectional neighbors, this returns 1 (minimum), ensuring no route through them can overwrite a working direct route.
 
-1. The 8-slot sliding window PDR temporarily dips below the multi-hop alternative's cost threshold
-2. The route switches from hop=1 to multi-hop, but routing table messages are broadcast and still depend on the degraded direct radio link
-3. EWMA continues to decay → `consecutive_missed` exceeds the inactivation threshold
-4. The inactivated node is excluded from routing table broadcasts (`is_active` filter in `GetRoutingTableEntries()`)
-5. The peer sees `reception_quality=0` → false UNIDIRECTIONAL classification → `/8` penalty → recovery impossible
-
-This cascade can also prevent downstream nodes that depend on the marginal node as sponsor from ever joining the network.
+Recovery is automatic once the peer starts listing us (`remote_link_quality > 0`). See `docs/unidirectional_link_detection.md` for full analysis.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
@@ -1200,35 +1194,13 @@ public:
 - **Statistics collection**: Performance monitoring and debugging support
 - **Versioned table updates**: Efficient change detection and propagation
 
-**Route Selection Logic** (Current):
-```cpp
-AddressType FindNextHop(AddressType destination) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+**Route Selection Logic**:
 
-    AddressType best_next_hop = 0;
-    uint8_t best_hop_count = UINT8_MAX;
-    uint8_t best_link_quality = 0;
+The routing table selects the active route with the lowest ETX-inspired cost (`hop_count × 65536 / link_quality`), with hop count as tie-breaker. The network service layer then validates the result:
 
-    for (const auto& node : nodes_) {
-        if (node.address == destination) {
-            // Direct route available
-            return destination;
-        }
-
-        // Find best intermediate route
-        for (const auto& route : node.routes) {
-            if (route.destination == destination &&
-                route.hop_count < best_hop_count) {
-                best_next_hop = node.address;
-                best_hop_count = route.hop_count;
-                best_link_quality = route.link_quality;
-            }
-        }
-    }
-
-    return best_next_hop;
-}
-```
+1. **TDMA check** (`IsTDMANeighbor`): the next_hop must have an allocated RX slot in the local TDMA schedule. Nodes overheard from outside the network (no slot allocated) are skipped.
+2. **Bidirectional check** (`HasUnidirectionalRisk`): the next_hop must not be a confirmed-unidirectional neighbor (received ≥2 routing messages from them, but their routing table never lists us — `remote_link_quality == 0`).
+3. **Fallback**: if the best route fails validation, scan all routes for the destination and select the best TDMA-valid bidirectional alternative. If none exists, use the original route as last resort (natural quality convergence via unidirectional detection will eventually correct the routing table).
 
 #### 4.5.3 Future Advanced Routing Algorithm (Planned)
 

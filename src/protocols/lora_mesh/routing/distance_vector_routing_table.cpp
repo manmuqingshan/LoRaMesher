@@ -981,6 +981,14 @@ uint8_t DistanceVectorRoutingTable::CalculateComprehensiveLinkQuality(
     AddressType node_address) const {
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end()) {
+        // Use measured physical link quality when we have direct
+        // observations. This prevents a stale routing_entry.link_quality
+        // (from an indirect route) from inflating source quality in the
+        // entries loop, which would create phantom routes through
+        // unidirectional neighbors.
+        if (node_it->link_stats.messages_received > 0) {
+            return node_it->link_stats.CalculateQuality();
+        }
         return node_it->GetLinkQuality();
     }
     return 128;  // Default medium quality for unknown nodes
