@@ -726,11 +726,17 @@ class VirtualNetwork {
      *         radio was busy (message dropped)
      */
     bool DeliverMessage(const PendingMessage& msg) {
+        // Set thread address to destination node for correct log attribution
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", msg.destination);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+
         auto it = nodes_.find(msg.destination);
         if (it == nodes_.end()) {
             LOG_ERROR(
                 "Message delivery failed - Node 0x%04X not found in network",
                 msg.destination);
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
@@ -738,6 +744,7 @@ class VirtualNetwork {
         if (!radio) {
             LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
                       msg.destination);
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
@@ -750,10 +757,12 @@ class VirtualNetwork {
                 current_time_, msg.source, msg.destination,
                 static_cast<int>(radio->GetRadioState()));
             ++dropped_message_count_;
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
         radio->ReceiveMessage(msg.data, msg.rssi, msg.snr);
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
         return true;
     }
 };
