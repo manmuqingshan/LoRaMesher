@@ -440,16 +440,16 @@ void RadioLibRadio::HandleInterrupt() {
     uint8_t length = current_module_->getPacketLength();
     if (length == 0) {
         LOG_DEBUG("No data received");
-        lock.unlock();
         current_module_->StartReceive();
+        lock.unlock();
         return;
     }
 
     Result result = current_module_->readData(rx_buffer_, length);
     if (!result) {
         LOG_WARNING(result.GetErrorMessage().c_str());
-        lock.unlock();
         current_module_->StartReceive();
+        lock.unlock();
         return;
     }
 
@@ -476,8 +476,8 @@ void RadioLibRadio::HandleInterrupt() {
             std::span<const uint8_t>(rx_buffer_, length));
     if (!message_optional) {
         LOG_ERROR("Failed to deserialize message");
-        lock.unlock();
         current_module_->StartReceive();
+        lock.unlock();
         return;
     }
 
@@ -492,8 +492,8 @@ void RadioLibRadio::HandleInterrupt() {
     // Add to queue if there's space
     if (GetRTOS().getQueueMessagesWaiting(receive_queue_) >= kMaxQueueSize) {
         LOG_ERROR("Receive queue full");
-        lock.unlock();
         current_module_->StartReceive();
+        lock.unlock();
         return;
     }
 
@@ -504,9 +504,10 @@ void RadioLibRadio::HandleInterrupt() {
         receive_callback_(std::move(event));
     }
 
-    lock.unlock();
-    // Restart receive mode
+    // Restart receive mode under lock to prevent SuspendTask() in Sleep()
+    // from freezing this task mid-SPI-transfer (SPI bus mutex deadlock)
     current_module_->StartReceive();
+    lock.unlock();
 }
 
 void RadioLibRadio::ProcessEvents(void* parameters) {
