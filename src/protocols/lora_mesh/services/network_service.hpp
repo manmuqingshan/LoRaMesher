@@ -841,9 +841,14 @@ class NetworkService : public INetworkService {
 
    private:
     /**
+     * @brief Log a compact grid visualization of the current slot table
+     */
+    void LogSlotTable() const;
+
+    /**
      * @brief Get comprehensive link quality for a node
-     * 
-     * @param node_address Target node address  
+     *
+     * @param node_address Target node address
      * @return uint8_t Link quality (0-255)
      */
     uint8_t GetNodeLinkQuality(AddressType node_address) const;

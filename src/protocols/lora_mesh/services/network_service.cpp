@@ -6,6 +6,7 @@
 #include "network_service.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <numeric>
 #include <set>
 
@@ -2077,8 +2078,6 @@ Result NetworkService::UpdateSlotTable() {
 
     // Determine our hop distance from Network Manager
     uint8_t our_hop_distance = GetHopDistanceToNM();
-    LOG_DEBUG("Our hop distance from NM (0x%04X) is %d", network_manager_,
-              our_hop_distance);
 
     // ── Phase 1: Sync beacon slots (hop-layered forwarding) ──────────────────
     for (size_t hop_layer = 0;
@@ -2097,8 +2096,6 @@ Result NetworkService::UpdateSlotTable() {
         } else {
             sync_type = SlotAllocation::SlotType::SLEEP;
         }
-        LOG_DEBUG("Allocated slot %zu as %d for sync hop_layer %zu", slot_index,
-                  static_cast<int>(sync_type), hop_layer);
         AllocateSlot(sync_type, kBroadcastAddress);
     }
 
@@ -2107,14 +2104,8 @@ Result NetworkService::UpdateSlotTable() {
          i++) {
         if (my_control_slot_index_ != 0xFF && i == my_control_slot_index_ &&
             network_manager_ != 0) {
-            LOG_DEBUG(
-                "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
-                "%d)",
-                slot_index, node_address_, my_control_slot_index_);
             AllocateSlot(SlotAllocation::SlotType::CONTROL_TX, node_address_);
         } else {
-            LOG_DEBUG("Allocated CONTROL_RX slot %zu (index %zu)", slot_index,
-                      i);
             AllocateSlot(SlotAllocation::SlotType::CONTROL_RX,
                          kBroadcastAddress);
         }
@@ -2133,13 +2124,8 @@ Result NetworkService::UpdateSlotTable() {
                               "Slot index out of bounds");
             }
             if (node_address_ == addr) {
-                LOG_DEBUG("Allocated DATA TX slot %zu for local node 0x%04X",
-                          slot_index, addr);
                 AllocateSlot(SlotAllocation::SlotType::TX, addr);
             } else if (node.IsDirectNeighbor()) {
-                LOG_DEBUG(
-                    "Allocated DATA RX slot %zu for direct neighbor 0x%04X",
-                    slot_index, addr);
                 AllocateSlot(SlotAllocation::SlotType::RX, addr);
             } else {
                 AllocateSlot(SlotAllocation::SlotType::SLEEP, addr);
@@ -2169,6 +2155,8 @@ Result NetworkService::UpdateSlotTable() {
         AllocateSlot(SlotAllocation::SlotType::DISCOVERY_RX, 0);
     }
 
+    LogSlotTable();
+
     LOG_INFO(
         "Updated slot table: %d total (%d active: %d sync + %d ctrl + %d disc "
         "+ %d data, %d sleep, %.1f%% TX duty cycle)",
@@ -2192,6 +2180,109 @@ Result NetworkService::UpdateSlotTable() {
 
     slot_table_dirty_ = false;
     return Result::Success();
+}
+
+void NetworkService::LogSlotTable() const {
+#if LORAMESHER_LOG_LEVEL > 0
+    return;
+#else
+    // 256 slots * 3 chars + row prefixes + header + detail ≈ 1024 max
+    static char buf[1024];
+    constexpr size_t kSlotsPerRow = 20;
+    constexpr size_t kBufSize = sizeof(buf);
+
+    auto Abbrev = [](SlotAllocation::SlotType t) -> const char* {
+        switch (t) {
+            case SlotAllocation::SlotType::SYNC_BEACON_TX:
+                return "ST";
+            case SlotAllocation::SlotType::SYNC_BEACON_RX:
+                return "SR";
+            case SlotAllocation::SlotType::CONTROL_TX:
+                return "CT";
+            case SlotAllocation::SlotType::CONTROL_RX:
+                return "CR";
+            case SlotAllocation::SlotType::TX:
+                return "TX";
+            case SlotAllocation::SlotType::RX:
+                return "RX";
+            case SlotAllocation::SlotType::SLEEP:
+                return "..";
+            case SlotAllocation::SlotType::DISCOVERY_RX:
+                return "DR";
+            case SlotAllocation::SlotType::DISCOVERY_TX:
+                return "DT";
+            default:
+                return "??";
+        }
+    };
+
+    size_t off = 0;
+    auto Append = [&](const char* fmt,
+                      ...) __attribute__((format(printf, 2, 3))) {
+        if (off >= kBufSize)
+            return;
+        va_list args;
+        va_start(args, fmt);
+        int n = vsnprintf(buf + off, kBufSize - off, fmt, args);
+        va_end(args);
+        if (n > 0)
+            off += std::min(static_cast<size_t>(n), kBufSize - off);
+    };
+
+    Append("SlotTable[%u] NM=%04X hop=%u:\n", slot_count_, network_manager_,
+           GetHopDistanceToNM());
+
+    // Grid rows, 20 slots per row
+    for (size_t row_start = 0; row_start < slot_count_;
+         row_start += kSlotsPerRow) {
+        Append("%02zu|", row_start);
+        size_t row_end = std::min(row_start + kSlotsPerRow,
+                                  static_cast<size_t>(slot_count_));
+        for (size_t i = row_start; i < row_end; i++) {
+            Append(i > row_start ? " %s" : "%s", Abbrev(slot_table_[i].type));
+        }
+        Append("\n");
+    }
+
+    // Data slot detail: group consecutive same-type slots with addresses
+    bool has_detail = false;
+    size_t i = 0;
+    while (i < slot_count_) {
+        const auto& slot = slot_table_[i];
+        if (slot.type != SlotAllocation::SlotType::TX &&
+            slot.type != SlotAllocation::SlotType::RX) {
+            i++;
+            continue;
+        }
+
+        size_t run_start = i;
+        while (i + 1 < slot_count_ && slot_table_[i + 1].type == slot.type &&
+               slot_table_[i + 1].target_address == slot.target_address) {
+            i++;
+        }
+
+        if (!has_detail)
+            Append("  ");
+        else
+            Append(" ");
+        has_detail = true;
+
+        if (slot.type == SlotAllocation::SlotType::TX) {
+            if (run_start == i)
+                Append("TX:#%zu(self)", run_start);
+            else
+                Append("TX:#%zu-%zu(self)", run_start, i);
+        } else {
+            if (run_start == i)
+                Append("RX:#%zu(%04X)", run_start, slot.target_address);
+            else
+                Append("RX:#%zu-%zu(%04X)", run_start, i, slot.target_address);
+        }
+        i++;
+    }
+
+    loramesher::LOG.LogRaw(LogLevel::kDebug, buf);
+#endif
 }
 
 Result NetworkService::SetDiscoverySlots() {
