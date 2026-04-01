@@ -455,43 +455,83 @@ TEST_F(RoutingTableMessageTest, GetSize) {
 }
 
 // =============================================================================
-// RoutingTableMessage(const BaseMessage&) constructor — error branches
+// CreateFromBaseMessage — factory method (replaces throwing constructor)
 // =============================================================================
 
-/**
- * @brief Test constructing RoutingTableMessage from a BaseMessage with wrong type throws
- *
- * Covers lines 26-30: LOG_ERROR + throw invalid_argument when type != ROUTE_TABLE.
- */
-TEST_F(RoutingTableMessageTest, ConstructFromBaseMessageWrongTypeThrows) {
-    // Create a DATA message (wrong type)
+TEST_F(RoutingTableMessageTest, CreateFromBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::ROUTE_TABLE);
+
+    auto result = RoutingTableMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetDestination(), dest);
+    EXPECT_EQ(result->GetSource(), src);
+    EXPECT_EQ(result->GetEntries().size(), entries.size());
+    EXPECT_EQ(result->GetNetworkManager(), network_id);
+    EXPECT_EQ(result->GetTableVersion(), table_version);
+}
+
+TEST_F(RoutingTableMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
     std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
     BaseMessage wrong_type_msg(dest, src, MessageType::DATA,
                                std::span<const uint8_t>(payload));
 
-    EXPECT_THROW(
-        { RoutingTableMessage rt(wrong_type_msg); }, std::invalid_argument);
+    auto result = RoutingTableMessage::CreateFromBaseMessage(wrong_type_msg);
+    EXPECT_FALSE(result.has_value());
 }
 
-/**
- * @brief Test constructing RoutingTableMessage from a valid BaseMessage succeeds
- *
- * Exercises the BaseMessage constructor happy path (lines 23-50).
- */
-TEST_F(RoutingTableMessageTest, ConstructFromValidBaseMessageSucceeds) {
+TEST_F(RoutingTableMessageTest, CreateFromBaseMessageTruncatedReturnsNullopt) {
     ASSERT_TRUE(msg_ptr != nullptr);
 
-    // Convert to BaseMessage then construct back
-    BaseMessage base = msg_ptr->ToBaseMessage();
-    ASSERT_EQ(base.GetType(), MessageType::ROUTE_TABLE);
+    // Serialize the message, then truncate so only 1 of 3 entries fits
+    auto serialized = msg_ptr->Serialize();
+    ASSERT_TRUE(serialized.has_value());
 
-    // This should succeed without throwing
-    EXPECT_NO_THROW({
-        RoutingTableMessage rt(base);
-        EXPECT_EQ(rt.GetDestination(), dest);
-        EXPECT_EQ(rt.GetSource(), src);
-        EXPECT_EQ(rt.GetEntries().size(), entries.size());
-    });
+    size_t truncated_size = BaseHeader::Size() +
+                            RoutingTableHeader::RoutingTableFieldsSize() +
+                            1 * RoutingTableEntry::Size();
+    ASSERT_LT(truncated_size, serialized->size());
+
+    std::vector<uint8_t> truncated(serialized->begin(),
+                                   serialized->begin() + truncated_size);
+
+    // Reconstruct a BaseMessage from truncated data
+    auto truncated_base =
+        BaseMessage::CreateFromSerialized(std::span<const uint8_t>(truncated));
+    // BaseMessage::CreateFromSerialized checks payload_size vs buffer, so this
+    // will fail because the header's payload_size field claims more bytes than
+    // available.  Build the BaseMessage manually instead.
+    // Manually construct: use the truncated payload with correct payload_size.
+    size_t truncated_payload_size = truncated_size - BaseHeader::Size();
+    BaseMessage manual_msg(
+        dest, src, MessageType::ROUTE_TABLE,
+        std::span<const uint8_t>(truncated.data() + BaseHeader::Size(),
+                                 truncated_payload_size));
+
+    auto result = RoutingTableMessage::CreateFromBaseMessage(manual_msg);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(RoutingTableMessageTest, CreateFromSerializedEntryCountExceedsBuffer) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // Serialize the full message (3 entries), then truncate to fit only 1 entry
+    auto serialized = msg_ptr->Serialize();
+    ASSERT_TRUE(serialized.has_value());
+
+    size_t truncated_size = BaseHeader::Size() +
+                            RoutingTableHeader::RoutingTableFieldsSize() +
+                            1 * RoutingTableEntry::Size();
+    ASSERT_LT(truncated_size, serialized->size());
+
+    std::vector<uint8_t> truncated(serialized->begin(),
+                                   serialized->begin() + truncated_size);
+
+    // entry_count in the header still says 3, but only 1 entry of data exists
+    auto result = RoutingTableMessage::CreateFromSerialized(truncated);
+    EXPECT_FALSE(result.has_value());
 }
 
 // =============================================================================

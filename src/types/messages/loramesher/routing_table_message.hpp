@@ -26,9 +26,18 @@ namespace loramesher {
 class RoutingTableMessage : public IConvertibleToBaseMessage {
    public:
     /**
-     * @brief Default constructor
+     * @brief Creates a RoutingTableMessage from a received BaseMessage
+     *
+     * Reads directly from the BaseMessage payload without an intermediate
+     * Serialize/CreateFromSerialized round-trip.  Returns std::nullopt on
+     * type mismatch, truncated payload, or any deserialization error.
+     *
+     * @param message The received base message
+     * @return std::optional<RoutingTableMessage> Deserialized message if successful,
+     *         std::nullopt otherwise
      */
-    RoutingTableMessage(const BaseMessage& message);
+    static std::optional<RoutingTableMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
 
     /**
      * @brief Creates a new routing table message

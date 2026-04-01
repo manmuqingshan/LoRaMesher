@@ -20,33 +20,69 @@ RoutingTableMessage::RoutingTableMessage(
               entries_.begin());
 }
 
-RoutingTableMessage::RoutingTableMessage(const BaseMessage& message) {
-    // Ensure the message type is correct
+std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromBaseMessage(
+    const BaseMessage& message) {
     if (message.GetType() != MessageType::ROUTE_TABLE) {
         LOG_ERROR("Invalid message type for RoutingTableMessage: %d",
                   static_cast<int>(message.GetType()));
-        throw std::invalid_argument(
-            "Invalid message type for RoutingTableMessage");
+        return std::nullopt;
     }
 
-    auto opt_serialized = message.Serialize();
-    if (!opt_serialized) {
-        LOG_ERROR("Failed to serialize routing message");
-        throw std::runtime_error("Failed to serialize routing message");
+    auto payload = message.GetPayload();
+    if (payload.size() < RoutingTableHeader::RoutingTableFieldsSize()) {
+        LOG_ERROR("Payload too small for routing table fields: %zu < %zu",
+                  payload.size(), RoutingTableHeader::RoutingTableFieldsSize());
+        return std::nullopt;
     }
 
-    auto routing_msg =
-        RoutingTableMessage::CreateFromSerialized(*opt_serialized);
-    if (!routing_msg) {
-        LOG_ERROR("Failed to deserialize routing message");
-        throw std::runtime_error("Failed to deserialize routing message");
+    utils::ByteDeserializer deserializer(payload);
+
+    auto network_manager = deserializer.ReadUint16();
+    auto table_version = deserializer.ReadUint8();
+    auto entry_count_opt = deserializer.ReadUint8();
+    auto source_capabilities = deserializer.ReadUint8();
+    auto source_allocated_data_slots = deserializer.ReadUint8();
+
+    if (!network_manager || !table_version || !entry_count_opt ||
+        !source_capabilities || !source_allocated_data_slots) {
+        LOG_ERROR("Failed to read routing table header fields");
+        return std::nullopt;
     }
 
-    // Set the header and entries from the deserialized message
-    header_ = routing_msg->GetHeader();
-    auto entries_span = routing_msg->GetEntries();
-    entry_count_ = static_cast<uint8_t>(entries_span.size());
-    std::copy(entries_span.begin(), entries_span.end(), entries_.begin());
+    uint8_t entry_count = *entry_count_opt;
+    if (entry_count > kMaxRoutingEntries) {
+        LOG_ERROR("Entry count %d exceeds maximum %d", entry_count,
+                  kMaxRoutingEntries);
+        return std::nullopt;
+    }
+
+    size_t required_payload = RoutingTableHeader::RoutingTableFieldsSize() +
+                              entry_count * RoutingTableEntry::Size();
+    if (payload.size() < required_payload) {
+        LOG_ERROR(
+            "Truncated routing table: %zu payload bytes but need %zu for %d "
+            "entries",
+            payload.size(), required_payload, entry_count);
+        return std::nullopt;
+    }
+
+    std::array<RoutingTableEntry, kMaxRoutingEntries> entries{};
+    for (uint8_t i = 0; i < entry_count; i++) {
+        auto entry = RoutingTableEntry::Deserialize(deserializer);
+        if (!entry) {
+            LOG_ERROR("Failed to deserialize network node route %d", i);
+            return std::nullopt;
+        }
+        entries[i] = *entry;
+    }
+
+    RoutingTableHeader header(message.GetDestination(), message.GetSource(),
+                              *network_manager, *table_version, entry_count,
+                              *source_capabilities,
+                              *source_allocated_data_slots);
+
+    return RoutingTableMessage(header, std::span<const RoutingTableEntry>(
+                                           entries.data(), entry_count));
 }
 
 std::optional<RoutingTableMessage> RoutingTableMessage::Create(
@@ -105,6 +141,15 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromSerialized(
     if (entry_count > kMaxRoutingEntries) {
         LOG_ERROR("Entry count %d exceeds maximum %d", entry_count,
                   kMaxRoutingEntries);
+        return std::nullopt;
+    }
+
+    size_t required_size =
+        kMinHeaderSize + entry_count * RoutingTableEntry::Size();
+    if (data.size() < required_size) {
+        LOG_ERROR(
+            "Truncated routing table: %zu bytes but need %zu for %d entries",
+            data.size(), required_size, entry_count);
         return std::nullopt;
     }
 

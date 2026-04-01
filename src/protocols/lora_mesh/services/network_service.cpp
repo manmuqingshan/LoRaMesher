@@ -172,7 +172,13 @@ size_t NetworkService::RemoveInactiveNodes() {
 Result NetworkService::ProcessRoutingTableMessage(
     const BaseMessage& message, uint32_t reception_timestamp) {
     // Deserialize routing table message
-    RoutingTableMessage routing_msg(message);
+    auto routing_msg_opt = RoutingTableMessage::CreateFromBaseMessage(message);
+    if (!routing_msg_opt.has_value()) {
+        LOG_ERROR("Failed to deserialize routing table from 0x%04X",
+                  message.GetSource());
+        return Result::Error(LoraMesherErrorCode::kSerializationError);
+    }
+    const auto& routing_msg = routing_msg_opt.value();
 
     auto source = message.GetSource();
     auto network_manager = routing_msg.GetNetworkManager();
