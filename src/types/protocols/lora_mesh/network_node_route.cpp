@@ -318,6 +318,7 @@ bool NetworkNodeRoute::UpdateCapabilities(uint8_t new_capabilities,
 RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
     RoutingTableEntry entry = routing_entry;
     entry.control_slot_index = control_slot_index;
+    entry.next_hop = next_hop;
     if (link_stats.messages_received > 0) {
         entry.reception_quality = link_stats.window.IsReady()
                                       ? link_stats.window.GetPDR()

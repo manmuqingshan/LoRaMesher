@@ -434,6 +434,16 @@ bool DistanceVectorRoutingTable::HasUnidirectionalRisk(
     return false;
 }
 
+void DistanceVectorRoutingTable::DegradeRouteQuality(AddressType destination,
+                                                     uint8_t quality) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto node_it = GetNode(destination);
+    if (node_it != nodes_.end() &&
+        node_it->routing_entry.link_quality > quality) {
+        node_it->routing_entry.link_quality = quality;
+    }
+}
+
 void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     RouteUpdateCallback callback) {
     std::lock_guard<std::mutex> lock(table_mutex_);
@@ -752,12 +762,32 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     uint8_t source_link_quality =
         CalculateComprehensiveLinkQuality(source_address);
 
+    // Cascade: degrade routes through this source when physical link
+    // quality has dropped. Prevents stale high-quality entries from
+    // persisting after a source becomes unidirectional or degrades.
+    for (auto& node : nodes_) {
+        if (node.next_hop == source_address && node.is_active &&
+            node.routing_entry.hop_count > 1 &&
+            node.routing_entry.link_quality > source_link_quality) {
+            node.routing_entry.link_quality = source_link_quality;
+            routing_changed = true;
+        }
+    }
+
     // Process each routing entry from the message
     for (const auto& entry : entries) {
         auto dest = entry.destination;
 
         // Skip entries for ourselves or invalid addresses
         if (dest == node_address_ || dest == 0) {
+            continue;
+        }
+
+        // Receiver-side split horizon: skip entries where the sender
+        // routes through us. Accepting would create a loop:
+        // us → source → us → ... The wire format carries next_hop
+        // so we can detect this deterministically.
+        if (entry.next_hop == node_address_) {
             continue;
         }
 

@@ -29,6 +29,8 @@ struct RoutingTableEntry {
         0xFF;  ///< Assigned control slot index (0xFF = unassigned)
     uint8_t reception_quality =
         0;  ///< Sender's raw EWMA reception quality for direct neighbors
+    AddressType next_hop =
+        0;  ///< Sender's next_hop for this destination (loop prevention)
 
     /**
      * @brief Constructor with all fields
@@ -67,7 +69,8 @@ struct RoutingTableEntry {
                sizeof(uint8_t) +      // Allocated slots
                sizeof(uint8_t) +      // Capabilities
                sizeof(uint8_t) +      // Control slot index
-               sizeof(uint8_t);       // Reception quality
+               sizeof(uint8_t) +      // Reception quality
+               sizeof(AddressType);   // Next hop (loop prevention)
     }
 
     /**
@@ -84,6 +87,7 @@ struct RoutingTableEntry {
         serializer.WriteUint8(capabilities);
         serializer.WriteUint8(control_slot_index);
         serializer.WriteUint8(reception_quality);
+        serializer.WriteUint16(next_hop);
         return Result::Success();
     }
 
@@ -103,15 +107,17 @@ struct RoutingTableEntry {
         auto caps = deserializer.ReadUint8();
         auto ctrl_slot = deserializer.ReadUint8();
         auto rx_quality = deserializer.ReadUint8();
+        auto nh = deserializer.ReadUint16();
 
         if (!dest || !hops || !quality || !data_slots || !caps || !ctrl_slot ||
-            !rx_quality) {
+            !rx_quality || !nh) {
             return std::nullopt;
         }
 
         RoutingTableEntry entry(*dest, *hops, *quality, *data_slots, *caps,
                                 *ctrl_slot);
         entry.reception_quality = *rx_quality;
+        entry.next_hop = *nh;
         return entry;
     }
 };

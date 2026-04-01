@@ -133,6 +133,146 @@ TEST_F(TDMARoutingMismatchTests, UnidirectionalLinkConvergesToIndirectRoute) {
 }
 
 /**
+ * @brief Routes THROUGH a unidirectional neighbor retain stale quality
+ *        and must be degraded so alternative routes can win.
+ *
+ * Topology (mirrors real experiment 0x3428 ↔ 0x77A4):
+ *
+ *   NM (0x1000) ─── Target (0x2000)
+ *        |
+ *   Edge1 (0x3000) ··· Broadcaster (0x4000) ─── Target (0x2000)
+ *         (broadcast-only: Edge1 hears Broadcaster but can't send)
+ *
+ * 1. Network forms with Edge1↔Broadcaster bidirectional.
+ *    Edge1 learns route to Target via Broadcaster (hop=2, quality ~200).
+ * 2. CUT Edge1→Broadcaster (unidirectional: Broadcaster→Edge1 only).
+ *    Edge1 still receives Broadcaster's routing tables (broadcasts).
+ * 3. After 3+ messages: unidirectional detected (quality=1).
+ *    BUT the route to Target via Broadcaster retains stale quality ~200.
+ *    NM offers Target at quality ~150 (via marginal NM link), cost > stale.
+ * 4. The cascade fix should degrade Target's quality through Broadcaster,
+ *    letting the NM route win.
+ */
+TEST_F(TDMARoutingMismatchTests, StaleRouteThroughUnidirectionalNeighbor) {
+    auto& nm = CreateNode("NM", 0x1000, NodeRole::NETWORK_MANAGER);
+    auto& target = CreateNode("Target", 0x2000, NodeRole::NODE_ONLY);
+    auto& edge1 = CreateNode("Edge1", 0x3000, NodeRole::NODE_ONLY);
+    auto& broadcaster = CreateNode("Broadcaster", 0x4000, NodeRole::NODE_ONLY);
+    auto& edge2 = CreateNode("Edge2", 0x5000, NodeRole::NODE_ONLY);
+
+    // Full connectivity initially
+    SetLinkStatus(nm, target, true);
+    SetLinkStatus(nm, edge1, true);
+    SetLinkStatus(edge1, broadcaster, true);
+    SetLinkStatus(broadcaster, target, true);
+    SetLinkStatus(edge1, edge2, true);
+
+    std::vector<TestNode*> all_nodes = {&nm, &target, &edge1, &broadcaster,
+                                        &edge2};
+    for (auto* node : all_nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+    ASSERT_TRUE(WaitForNetworkFormation(all_nodes, 4))
+        << "Network formation failed";
+    ASSERT_TRUE(WaitForRoutingStabilization(all_nodes))
+        << "Routing stabilization failed";
+
+    auto superframe_ms = GetSuperframeDuration(nm);
+    auto step_ms = 15u;
+
+    // Let routing converge — Edge1 should have route to Target via
+    // Broadcaster (hop=2) since Broadcaster↔Target is a direct link
+    AdvanceTime(superframe_ms * 5, superframe_ms * 5, step_ms, 0,
+                [&]() { return false; });
+
+    // Verify Edge1 can deliver to Target before degradation
+    std::vector<uint8_t> payload = {0xAA, 0xBB};
+    SendMessage(edge1, target, payload);
+    AdvanceTime(superframe_ms * 5, superframe_ms * 5, step_ms, 0, [&]() {
+        return CountReceivedMessages(target, edge1.address,
+                                     MessageType::DATA) >= 1;
+    });
+    ASSERT_GE(CountReceivedMessages(target, edge1.address, MessageType::DATA),
+              1u)
+        << "Edge1 should deliver to Target before link cut";
+
+    // ── Degrade NM↔Edge1 to ~50% PDR (mimics marginal link) ───────────
+    // This makes the NM route marginal but still functional for data.
+    // The stale Broadcaster route (quality ~200) would normally beat
+    // the NM route (quality ~128) without proactive degradation.
+    SetLinkLoss(nm, edge1, 0.5f);
+
+    // Let quality stabilize with the loss
+    AdvanceTime(superframe_ms * 5, superframe_ms * 5, step_ms, 0,
+                [&]() { return false; });
+
+    std::cout << "=== Before link cut (NM link degraded) ===" << std::endl;
+    std::cout << "Edge1 next_hop to Target: 0x" << std::hex
+              << GetNextHop(edge1, target.address) << std::dec << std::endl;
+    PrintRoutingTable(edge1);
+
+    // ── CUT Edge1→Broadcaster (unidirectional) ──────────────────────────
+    // Edge1 still hears Broadcaster's broadcasts (routing tables) but
+    // cannot send unicast data to Broadcaster.
+    SetDirectionalLink(edge1, broadcaster, false);
+
+    // With proactive degradation in FindNextHop: the first DATA attempt
+    // to Broadcaster fails TDMA check → route quality degraded to 1 →
+    // entries loop from NM overwrites on next superframe. Fast convergence.
+    bool route_switched =
+        AdvanceTime(superframe_ms * 15, superframe_ms * 15, step_ms, 0, [&]() {
+            AddressType nh = GetNextHop(edge1, target.address);
+            return nh != broadcaster.address && nh != 0;
+        });
+
+    std::cout << "=== After unidirectional detection ===" << std::endl;
+    AddressType nh = GetNextHop(edge1, target.address);
+    std::cout << "Edge1 next_hop to Target: 0x" << std::hex << nh << std::dec
+              << std::endl;
+    PrintRoutingTable(edge1);
+
+    // Routing table check: route to Target should no longer go through
+    // Broadcaster. The cascade fix should degrade the stale quality,
+    // allowing the NM route to win.
+    EXPECT_TRUE(route_switched)
+        << "Route to Target should switch away from unidirectional "
+           "Broadcaster";
+    EXPECT_NE(nh, broadcaster.address)
+        << "Edge1 should NOT route to Target via Broadcaster";
+
+    // Data delivery: verify end-to-end through the corrected route.
+    // With 50% PDR on NM↔Edge1, not all messages will arrive, but
+    // at least some should get through the 2-hop path via NM.
+    size_t before =
+        CountReceivedMessages(target, edge1.address, MessageType::DATA);
+
+    constexpr int kNumMessages = 15;
+    for (int i = 0; i < kNumMessages; i++) {
+        payload[0] = static_cast<uint8_t>(i + 0x20);
+        SendMessage(edge1, target, payload);
+    }
+
+    size_t expected = before + kNumMessages / 4;
+
+    bool any_received =
+        AdvanceTime(superframe_ms * 15, superframe_ms * 15, step_ms, 0, [&]() {
+            return CountReceivedMessages(target, edge1.address,
+                                         MessageType::DATA) >= expected;
+        });
+
+    size_t delivered =
+        CountReceivedMessages(target, edge1.address, MessageType::DATA) -
+        before;
+    std::cout << "Delivered " << delivered << "/" << kNumMessages
+              << " from Edge1 to Target (via NM, 50% PDR link)" << std::endl;
+
+    EXPECT_TRUE(any_received)
+        << "Edge1 should deliver to Target via NM after route correction";
+    EXPECT_GE(delivered, 1u) << "At least 1 of " << kNumMessages
+                             << " should reach Target via NM despite 50% PDR";
+}
+
+/**
  * @brief Link outage causes FAULT_RECOVERY, then recovery restores routing
  *        and data delivery.
  *

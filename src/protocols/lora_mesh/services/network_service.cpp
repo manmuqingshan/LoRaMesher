@@ -319,9 +319,6 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
     }
 
     // No valid alternative exists — use the original route as last resort.
-    // The message may not be delivered, but dropping it is worse: the
-    // opportunistic forwarding mechanism or natural routing convergence
-    // via the unidirectional quality penalty can still salvage it.
     LOG_WARNING(
         "Next hop 0x%04X for dest 0x%04X is unreachable "
         "and no valid alternative found, using as last resort",
@@ -914,6 +911,19 @@ Result NetworkService::PerformTimingSynchronization(
 void NetworkService::ScheduleRoutingMessageExpectations() {
     // Delegate to routing table to update link statistics
     routing_table_->UpdateLinkStatistics();
+
+    // Degrade routes through next_hops that are not TDMA-reachable.
+    if (slot_count_ > 0) {
+        auto nodes = routing_table_->GetNodesCopy();
+        for (const auto& node : nodes) {
+            if (node.is_active && node.routing_entry.hop_count > 1 &&
+                (!IsTDMANeighbor(node.next_hop) ||
+                 routing_table_->HasUnidirectionalRisk(node.next_hop))) {
+                routing_table_->DegradeRouteQuality(
+                    node.routing_entry.destination, 1);
+            }
+        }
+    }
 }
 
 void NetworkService::ResetLinkQualityStats() {

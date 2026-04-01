@@ -201,6 +201,16 @@ class IRoutingTable {
      */
     virtual bool HasUnidirectionalRisk(AddressType node_address) const = 0;
 
+    /**
+     * @brief Degrade route quality for a destination
+     *
+     * Sets quality to the given value if current quality is higher.
+     * Used by FindNextHop to proactively degrade routes through
+     * unreachable next_hops so the entries loop can replace them.
+     */
+    virtual void DegradeRouteQuality(AddressType destination,
+                                     uint8_t quality) = 0;
+
     // Configuration and callbacks
 
     /**

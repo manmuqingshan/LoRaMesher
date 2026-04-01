@@ -434,6 +434,7 @@ struct RoutingTableEntry {
     uint8_t capabilities;            // Node capability flags (1 byte)
     uint8_t control_slot_index;      // Assigned control slot, 0xFF=unassigned (1 byte)
     uint8_t reception_quality;       // Sender's raw EWMA reception quality (1 byte)
+    AddressType next_hop;            // Sender's next_hop for loop prevention (2 bytes)
 };
 ```
 
@@ -441,7 +442,8 @@ struct RoutingTableEntry {
 - **Versioned Updates**: Table version enables efficient change detection
 - **Modular Architecture**: Clean separation from legacy ROUTING_UPDATE format
 - **Bidirectional Link Quality**: Separate `link_quality` (route cost) and `reception_quality` (raw EWMA) fields prevent circular feedback in quality estimation
-- **Compact Format**: 8 bytes per route entry for efficient transmission
+- **Compact Format**: 10 bytes per route entry (max 24 entries per message)
+- **Loop Prevention**: `next_hop` field enables receiver-side split horizon on broadcast updates
 
 **Usage in Distance-Vector Protocol**:
 1. Each node broadcasts routing table during CONTROL_TX slots
@@ -825,27 +827,23 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
 
 ### 4.2 Loop Prevention
 
-**Split Horizon** (Actual Implementation):
+**Receiver-Side Split Horizon**:
 
-The implementation filters routing entries when sending updates:
+Since routing tables are broadcast (not per-neighbor unicast), traditional sender-side split horizon cannot filter per-receiver. Instead, each `RoutingTableEntry` carries the sender's `next_hop` for that destination. The receiver checks:
+
 ```cpp
-// From protocols/lora_mesh/routing/distance_vector_routing_table.cpp
-std::vector<RoutingTableEntry> GetRoutingEntries(AddressType exclude_address) const {
-    std::vector<RoutingTableEntry> entries;
-    for (const auto& node : nodes_) {
-        if (node.is_active &&
-            node.routing_entry.destination != exclude_address) {
-            entries.push_back(node.ToRoutingTableEntry());
-        }
-    }
-    return entries;
+// In ProcessRoutingTableMessage entries loop:
+if (entry.next_hop == node_address_) {
+    continue;  // Sender routes through us — accepting creates a loop
 }
-
-// Usage: exclude own address when broadcasting
-routing_table_->GetRoutingEntries(node_address_);
 ```
 
-> **Note**: The current implementation excludes routes by destination address rather than by next_hop. This prevents advertising self-routes but doesn't implement traditional split horizon (filtering by next_hop).
+This prevents the classic distance-vector loop: if node B routes to destination D through node A, B's entry for D carries `next_hop=A`. When A receives this entry, it skips it because `entry.next_hop == A`.
+
+The sender also excludes self-entries when broadcasting:
+```cpp
+routing_table_->GetRoutingEntries(node_address_);  // Excludes own address
+```
 
 **Capability Update Loop Prevention**:
 
