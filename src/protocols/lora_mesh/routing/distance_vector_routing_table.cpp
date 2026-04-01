@@ -697,8 +697,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
                 prev_hop_count, prev_quality);
 
-        bool use_direct = was_inactive || prev_next_hop == source_address ||
-                          direct_cost <= current_cost;
+        // A confirmed-unidirectional direct link should not replace an
+        // existing indirect route: the indirect path may still deliver
+        // packets while the direct one never will.
+        bool direct_confirmed_unidirectional =
+            source_node_it->link_stats.remote_link_quality == 0 &&
+            source_node_it->link_stats.messages_expected >= 3;
+
+        bool use_direct =
+            was_inactive || prev_next_hop == source_address ||
+            (direct_cost <= current_cost && !direct_confirmed_unidirectional);
 
         if (use_direct) {
             source_node_it->routing_entry.link_quality = direct_quality;
