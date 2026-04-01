@@ -1536,7 +1536,7 @@ for (hop_layer = 0; hop_layer < max_hops; hop_layer++) {
 - **Controlled same-hop collisions**: LoRa's capture effect handles simultaneous same-hop forwards
 - **Predictable timing**: Each hop knows when to forward based on distance from Network Manager
 
-> **Forwarding eligibility**: While slot assignment uses strict hop-layer matching (TX only in `my_hop_distance` slot), forwarding eligibility is broader: a node forwards any received sync beacon where `beacon_hop_count < my_hop_distance` (not just `beacon_hop_count == my_hop_distance - 1`). This handles variable radio conditions and mobile nodes that can occasionally hear beacons from non-adjacent layers. The forwarded beacon's hop count is set to `beacon_hop_count + 1`, reflecting the actual number of hops traveled.
+> **Forwarding eligibility**: While slot assignment uses strict hop-layer matching (TX only in `my_hop_distance` slot), forwarding eligibility is broader: a node forwards any received sync beacon where `beacon_hop_count < max_hops`. The rate limiter (one beacon per superframe/2) ensures only the first-heard beacon is processed, making hop-layer filtering unnecessary and supporting mobile nodes whose routing-table distance may be stale. The forwarded beacon's hop count is set to `beacon_hop_count + 1`, reflecting the actual number of hops traveled.
 
 #### 5.5.3 Intra-Slot Collision Mitigation (Subslot Scheduling)
 
