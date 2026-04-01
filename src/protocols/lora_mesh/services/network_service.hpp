@@ -921,6 +921,17 @@ class NetworkService : public INetworkService {
                                  uint8_t nm_data_slots) const;
 
     /**
+     * @brief Calculate minimum slot duration from radio parameters
+     *
+     * Returns ToA(max_packet_size) + guard_time + processing margin,
+     * rounded up to the nearest 50 ms. Falls back to DEFAULT_SLOT_DURATION_MS
+     * when the hardware manager is unavailable.
+     *
+     * @return uint32_t Minimum slot duration in milliseconds
+     */
+    uint32_t CalculateMinSlotDuration() const;
+
+    /**
      * @brief Calculate link stability metric
      * 
      * @param node Node to evaluate

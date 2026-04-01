@@ -1314,13 +1314,13 @@ struct Superframe {
     uint32_t superframe_start_time = 0; // Start time of current superframe cycle
 };
 
-// Default configuration
+// Default configuration (discovery phase only; see auto-calculation below)
 Superframe defaultSuperframe = {
     .total_slots = 100,
     .data_slots = 60,
     .discovery_slots = 20,
     .control_slots = 20,
-    .slot_duration_ms = 1000,      // 1 second per slot
+    .slot_duration_ms = 1000,      // Fallback for discovery phase
     .superframe_start_time = 0
 };
 ```
@@ -1332,6 +1332,16 @@ uint8_t max_hops_ = 10;           // Maximum number of hops for routing (1-16)
 uint32_t guard_time_ms_ = 50;     // TX guard time for RX readiness (10-500ms)
 float target_duty_cycle_ = 0.01f;  // Target TX duty cycle (0.001–1.0, default 1%)
 ```
+
+**Automatic Slot Duration Calculation:**
+
+When the Network Manager creates a network (`CreateNetwork()`), the slot duration is auto-calculated from the radio's time-on-air parameters:
+
+```
+slot_duration_ms = ceil_50(ToA(max_packet_size) + guard_time_ms + 50ms)
+```
+
+Where `ceil_50` rounds up to the nearest 50 ms and the 50 ms margin covers superframe detection latency and task scheduling. The 1000 ms default is only used during the discovery phase before the radio configuration is available. The NM broadcasts the computed slot duration to all nodes via the sync beacon.
 
 *Note: `sync_tolerance_ms` is a planned feature (see Section 10 Future Work).*
 
@@ -1613,12 +1623,16 @@ Nodes at the same hop distance map to the same subslot. This is an accepted desi
 - LoRa's **capture effect** means the stronger signal is received successfully (3-6 dB advantage typical)
 - For denser networks, a secondary address-based subdivision can be added within each hop-based subslot as a future enhancement
 
+**Subslot Fallback:**
+
+Before transmitting, the protocol checks whether the message's ToA fits within the assigned subslot window using `CanFitInSlot(message_size, subslot_delay)`. If the subslot offset pushes the transmission past the slot boundary, the node falls back to immediate (non-subslotted) TX. If the message still does not fit in the remaining slot time, the TX is skipped entirely.
+
 **Validation:**
 
 The `SubslotScheduler::ValidateConfig()` method checks feasibility:
 1. Guard times must not exceed total slot duration
 2. Each subslot TX window must accommodate the estimated time-on-air (ToA)
-3. At higher spreading factors (SF12), packets may exceed subslot windows — increase `slot_duration_ms` accordingly
+3. At higher spreading factors (SF12), packets may exceed subslot windows — the NM auto-calculates `slot_duration_ms` accordingly
 
 ### 5.6 Control Slot Allocation Strategy
 
@@ -1763,6 +1777,24 @@ void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_ty
 - **Increased Latency**: Additional delay in slot processing
 - **Power Consumption**: Longer active periods during guard time
 - **Complexity**: Additional timing calculations and compensation logic
+
+#### 5.7.7 Per-Message Time-on-Air Check
+
+Before every transmission, the protocol verifies that the specific message's time-on-air fits within the remaining slot time using `CanFitInSlot()`:
+
+```
+fits = (time_in_slot + pre_tx_delay + ToA(message_size) + kRxProcessingMarginMs) <= slot_duration
+```
+
+Where:
+- `time_in_slot`: current elapsed time within the slot (real-time)
+- `pre_tx_delay`: pending delay before TX (guard time for non-subslotted, subslot offset for subslotted)
+- `ToA(message_size)`: hardware-computed time-on-air for the actual message
+- `kRxProcessingMarginMs` (20 ms): margin for the receiver to finish processing before the slot ends
+
+**Non-subslotted TX** (CONTROL_TX, TX, SYNC_BEACON_TX for NM): the guard time is passed as `pre_tx_delay`. If the check fails, the message is not transmitted.
+
+**Subslotted TX** (DISCOVERY_TX, SYNC_BEACON_TX for non-NM): if the check fails with the subslot offset, the node retries with `pre_tx_delay = 0` (immediate TX, bypassing the subslot). If it still does not fit, the TX is skipped.
 
 ### 5.8 Power-Aware Slot Allocation
 
@@ -2647,7 +2679,7 @@ Recovery flow when sync is lost:
 
 | Parameter | Minimum | Typical | Maximum | Units |
 |-----------|---------|---------|---------|-------|
-| Slot Duration | 500 | 1000 | 5000 | ms |
+| Slot Duration | 500 | auto-calculated | 5000 | ms |
 | Superframe Duration | 4000 | 8000 | 40000 | ms |
 | Route Update Interval | 5000 | 10000 | 30000 | ms |
 | Join Timeout | 5000 | 10000 | 30000 | ms |

@@ -765,6 +765,23 @@ Result NetworkService::CreateNetwork() {
     // }
     // LOG_INFO("Added network manager node 0x%04X", node_address_);
 
+    // Auto-calculate slot duration from radio ToA parameters
+    uint32_t min_slot_duration = CalculateMinSlotDuration();
+    if (superframe_service_) {
+        LOG_INFO(
+            "Auto-calculated slot duration: %u ms "
+            "(ToA(%u)=%u ms + guard=%u ms + margin)",
+            min_slot_duration, config_.max_packet_size,
+            CalculateTimeOnAir(config_.max_packet_size), config_.guard_time_ms);
+        uint16_t current_slots =
+            static_cast<uint16_t>(superframe_service_->GetSuperframeDuration() /
+                                  superframe_service_->GetSlotDuration());
+        if (current_slots == 0)
+            current_slots = ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+        superframe_service_->UpdateSuperframeConfig(current_slots,
+                                                    min_slot_duration, false);
+    }
+
     // Initialize slot table as network manager
     result = UpdateSlotTable();
     if (!result) {
@@ -1022,6 +1039,22 @@ uint32_t NetworkService::CalculateNMTxTimeMs(uint8_t rt_node_count,
         static_cast<size_t>(255)));
     return CalculateTimeOnAir(sync_size) + CalculateTimeOnAir(rt_size) +
            nm_data_slots * CalculateTimeOnAir(config_.max_packet_size);
+}
+
+uint32_t NetworkService::CalculateMinSlotDuration() const {
+    uint32_t max_toa = CalculateTimeOnAir(config_.max_packet_size);
+    if (max_toa == 0) {
+        return ISuperframeService::DEFAULT_SLOT_DURATION_MS;
+    }
+
+    // Slot must fit: guard_time + ToA(max_packet) + processing margin.
+    // Margin covers superframe detection latency (20 ms) + task scheduling.
+    static constexpr uint32_t kProcessingMarginMs = 50;
+    uint32_t raw = max_toa + config_.guard_time_ms + kProcessingMarginMs;
+
+    // Round up to the nearest 50 ms
+    static constexpr uint32_t kRoundMs = 50;
+    return ((raw + kRoundMs - 1) / kRoundMs) * kRoundMs;
 }
 
 uint8_t NetworkService::CalculateLinkStability(const NetworkNodeRoute& node) {
@@ -2929,6 +2962,10 @@ Result NetworkService::ForwardSyncBeacon(
     // which naturally includes any subslot delay that has elapsed.
     SetSyncBeaconPreSendCallback(base_msg);
 
+    // Clear any stale beacon before queuing the fresh one
+    message_queue_service_->ClearQueue(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX);
+
     // Add to sync beacon TX queue for forwarding
     auto base_msg_ptr = std::make_unique<BaseMessage>(std::move(base_msg));
     message_queue_service_->AddMessageToQueue(
@@ -2944,31 +2981,22 @@ Result NetworkService::ForwardSyncBeacon(
 }
 
 bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
-    // Don't forward if we're the network manager (we generate original beacons)
     if (state_ != ProtocolState::NORMAL_OPERATION) {
         return false;
     }
 
-    // TODO: Program this
-    // // Don't forward if hop count would exceed maximum
-    // if (beacon.GetHopCount() >= beacon.GetMaxHops()) {
-    //     LOG_DEBUG("Not forwarding: hop count %d >= max %d",
-    //               beacon.GetHopCount(), beacon.GetMaxHops());
-    //     return false;
-    // }
-
-    // Find our hop distance from the network manager
-    uint8_t our_hop_distance = GetHopDistanceToNM();
-
-    // Use hop-layered forwarding: only forward if beacon is from previous layer
-    bool should_forward = beacon.ShouldBeForwardedBy(our_hop_distance);
+    // Forward any beacon that hasn't exceeded max propagation distance.
+    // The rate limiter in ProcessSyncBeacon ensures only the first beacon per
+    // superframe is processed, so hop-layer filtering is unnecessary and
+    // harmful for mobile nodes whose routing-table distance may be stale.
+    bool should_forward = beacon.GetHopCount() < beacon.GetMaxHops();
 
     if (should_forward) {
-        LOG_DEBUG("Will forward sync beacon: our distance %d, beacon hop %d",
-                  our_hop_distance, beacon.GetHopCount());
+        LOG_DEBUG("Will forward sync beacon: beacon hop %d, max_hops %d",
+                  beacon.GetHopCount(), beacon.GetMaxHops());
     } else {
-        LOG_DEBUG("Not forwarding: wrong hop layer (our: %d, beacon: %d)",
-                  our_hop_distance, beacon.GetHopCount());
+        LOG_DEBUG("Not forwarding: hop count %d reached max_hops %d",
+                  beacon.GetHopCount(), beacon.GetMaxHops());
     }
 
     return should_forward;
