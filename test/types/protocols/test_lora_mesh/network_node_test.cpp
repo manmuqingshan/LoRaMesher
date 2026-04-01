@@ -567,8 +567,8 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityHalf) {
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // Simulate 10 superframes with perfect reception
-    for (int i = 0; i < 10; i++) {
+    // Simulate 16 superframes with perfect reception (fills sliding window)
+    for (int i = 0; i < 16; i++) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
     }
@@ -588,8 +588,8 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
     }
     EXPECT_GE(stats.messages_expected, 3u);
     EXPECT_EQ(stats.remote_link_quality, 0);
-    // Unidirectional penalty: quality = ewma / 4
-    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality / 4);
+    // Unidirectional penalty: minimum quality (1)
+    EXPECT_EQ(stats.CalculateQuality(), 1);
 }
 
 TEST_F(NetworkNodeRouteTest,
@@ -614,12 +614,12 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalRecovery) {
         stats.ReceivedMessage(i * 1000);
     }
     uint8_t penalized = stats.CalculateQuality();
-    EXPECT_EQ(penalized, stats.ewma_quality / 4);
+    EXPECT_EQ(penalized, 1);
 
     // Peer starts hearing us — recovery
     stats.UpdateRemoteQuality(200);
     uint8_t recovered = stats.CalculateQuality();
-    // Bidirectional: weighted bottleneck. Window not ready (5 < 8), uses ewma.
+    // Bidirectional: weighted bottleneck. Window not ready (5 < 16), uses ewma.
     uint16_t bottleneck =
         std::min(stats.ewma_quality, static_cast<uint8_t>(200));
     uint16_t average = (static_cast<uint16_t>(stats.ewma_quality) + 200) / 2;
