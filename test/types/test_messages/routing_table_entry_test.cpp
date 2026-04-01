@@ -30,6 +30,7 @@ TEST_F(RoutingTableEntryTest, DefaultConstructor) {
     EXPECT_EQ(entry.capabilities, 0u);
     EXPECT_EQ(entry.control_slot_index, 0xFF);
     EXPECT_EQ(entry.reception_quality, 0u);
+    EXPECT_EQ(entry.next_hop, 0u);
 }
 
 TEST_F(RoutingTableEntryTest, ParameterizedConstructor) {
@@ -50,13 +51,14 @@ TEST_F(RoutingTableEntryTest, ConstructorDefaultCaps) {
 }
 
 TEST_F(RoutingTableEntryTest, SizeConstant) {
-    EXPECT_EQ(RoutingTableEntry::Size(), 8u);  // 2 + 1 + 1 + 1 + 1 + 1 + 1
+    EXPECT_EQ(RoutingTableEntry::Size(), 10u);  // 2 + 1 + 1 + 1 + 1 + 1 + 1 + 2
 }
 
 TEST_F(RoutingTableEntryTest, SerializeDeserializeRoundTrip) {
     RoutingTableEntry original(kDest, kHops, kQuality, kDataSlots, kCaps,
                                kCtrlSlot);
     original.reception_quality = 42;
+    original.next_hop = 0x5678;
 
     std::vector<uint8_t> buf(RoutingTableEntry::Size());
     utils::ByteSerializer ser(buf);
@@ -74,6 +76,7 @@ TEST_F(RoutingTableEntryTest, SerializeDeserializeRoundTrip) {
     EXPECT_EQ(deserialized->capabilities, kCaps);
     EXPECT_EQ(deserialized->control_slot_index, kCtrlSlot);
     EXPECT_EQ(deserialized->reception_quality, 42u);
+    EXPECT_EQ(deserialized->next_hop, 0x5678u);
 }
 
 TEST_F(RoutingTableEntryTest, DeserializeInsufficientData) {
@@ -86,6 +89,7 @@ TEST_F(RoutingTableEntryTest, DeserializeInsufficientData) {
 TEST_F(RoutingTableEntryTest, EdgeCaseMaxValues) {
     RoutingTableEntry entry(0xFFFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
     entry.reception_quality = 0xFF;
+    entry.next_hop = 0xFFFF;
 
     std::vector<uint8_t> buf(RoutingTableEntry::Size());
     utils::ByteSerializer ser(buf);
@@ -98,6 +102,7 @@ TEST_F(RoutingTableEntryTest, EdgeCaseMaxValues) {
     EXPECT_EQ(result->hop_count, 0xFF);
     EXPECT_EQ(result->link_quality, 0xFF);
     EXPECT_EQ(result->reception_quality, 0xFF);
+    EXPECT_EQ(result->next_hop, 0xFFFF);
 }
 
 TEST_F(RoutingTableEntryTest, SerializedSizeMatchesActual) {

@@ -913,15 +913,13 @@ void NetworkService::ScheduleRoutingMessageExpectations() {
     routing_table_->UpdateLinkStatistics();
 
     // Degrade routes through next_hops that are not TDMA-reachable.
-    if (slot_count_ > 0) {
-        auto nodes = routing_table_->GetNodesCopy();
-        for (const auto& node : nodes) {
-            if (node.is_active && node.routing_entry.hop_count > 1 &&
-                (!IsTDMANeighbor(node.next_hop) ||
-                 routing_table_->HasUnidirectionalRisk(node.next_hop))) {
-                routing_table_->DegradeRouteQuality(
-                    node.routing_entry.destination, 1);
-            }
+    auto nodes = routing_table_->GetNodesCopy();
+    for (const auto& node : nodes) {
+        if (node.is_active && node.routing_entry.hop_count > 1 &&
+            (!IsTDMANeighbor(node.next_hop) ||
+             routing_table_->HasUnidirectionalRisk(node.next_hop))) {
+            routing_table_->DegradeRouteQuality(node.routing_entry.destination,
+                                                1);
         }
     }
 }
