@@ -178,10 +178,6 @@ size_t SyncBeaconMessage::GetTotalSize() const {
     return header_.GetSize();  // No additional payload for sync beacons
 }
 
-bool SyncBeaconMessage::ShouldBeForwardedBy(uint8_t node_hop_count) const {
-    return header_.ShouldBeForwardedBy(node_hop_count);
-}
-
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwardedBeacon(
     AddressType forwarding_node, uint32_t processing_delay,
     uint32_t guard_time_ms) const {

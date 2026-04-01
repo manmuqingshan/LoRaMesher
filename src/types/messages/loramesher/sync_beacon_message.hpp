@@ -142,14 +142,6 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
     size_t GetTotalSize() const;
 
     /**
-     * @brief Checks if this beacon should be forwarded by the given node
-     * 
-     * @param node_hop_count The receiving node's hop distance from Network Manager
-     * @return bool True if the node should forward this beacon
-     */
-    bool ShouldBeForwardedBy(uint8_t node_hop_count) const;
-
-    /**
      * @brief Creates a forwarded version of this beacon for the next hop
      * 
      * @param forwarding_node Address of the node doing the forwarding
