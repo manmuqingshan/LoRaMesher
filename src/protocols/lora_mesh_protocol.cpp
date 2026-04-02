@@ -978,6 +978,8 @@ Result LoRaMeshProtocol::TrySendGuardedMessage(
 
     if (!CanFitInSlot(static_cast<uint8_t>(message->GetTotalSize()),
                       guard_time_ms)) {
+        message_queue_service_->AddMessageToQueue(slot_type,
+                                                  std::move(message));
         return Result::Success();
     }
 
@@ -1021,6 +1023,8 @@ Result LoRaMeshProtocol::TrySendSubslottedMessage(
 
     if (!use_subslot) {
         if (!CanFitInSlot(msg_size)) {
+            message_queue_service_->AddMessageToQueue(slot_type,
+                                                      std::move(message));
             return Result::Success();
         }
         LOG_DEBUG("Subslot doesn't fit, sending immediately");

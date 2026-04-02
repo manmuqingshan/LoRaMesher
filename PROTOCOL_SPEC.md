@@ -1382,8 +1382,8 @@ The sync beacon serves dual purposes: network synchronization and slot allocatio
 
 **Slot Allocation Update Process**:
 
-1. **Join Request Buffering**: Network Manager buffers join requests until superframe boundary
-2. **Superframe Boundary**: At sync beacon transmission, apply pending joins
+1. **Join Request Buffering**: Network Manager buffers up to 3 join requests until superframe boundary; additional requests receive `RETRY_LATER`
+2. **Superframe Boundary**: At sync beacon transmission, apply all pending joins atomically
 3. **Updated Sync Beacon**: `total_slots` field reflects new superframe size, `node_count` field reflects authoritative control slot count
 4. **Network-Wide Update**: All nodes recalculate slot allocations based on new `total_slots` and `node_count`
 
@@ -1545,7 +1545,7 @@ While Section 5.5.2 eliminates inter-hop collisions by assigning different hops 
 **Affected Slot Types:**
 - `SYNC_BEACON_TX` — Multiple same-hop nodes forwarding sync beacons
 - `DISCOVERY_TX` — Multiple discovering nodes transmitting discovery messages
-- `DISCOVERY_RX` — Also transmits queued discovery messages as fallback (see TODO in code)
+- `DISCOVERY_RX` — Also transmits queued discovery messages as fallback; this is the primary delivery mechanism for sponsor-forwarded join requests and responses
 
 **Subslot Division Model:**
 
@@ -1794,7 +1794,7 @@ Where:
 
 **Non-subslotted TX** (CONTROL_TX, TX, SYNC_BEACON_TX for NM): the guard time is passed as `pre_tx_delay`. If the check fails, the message is not transmitted.
 
-**Subslotted TX** (DISCOVERY_TX, SYNC_BEACON_TX for non-NM): if the check fails with the subslot offset, the node retries with `pre_tx_delay = 0` (immediate TX, bypassing the subslot). If it still does not fit, the TX is skipped.
+**Subslotted TX** (DISCOVERY_TX, SYNC_BEACON_TX for non-NM): if the check fails with the subslot offset, the node retries with `pre_tx_delay = 0` (immediate TX, bypassing the subslot). If it still does not fit, the message is re-queued for the next slot attempt.
 
 ### 5.8 Power-Aware Slot Allocation
 
@@ -2122,50 +2122,58 @@ config.setNodeRole(NodeRole::NETWORK_MANAGER);  // or NODE_ONLY, or AUTO
 
 #### 6.3.0 Join Request Flow with Superframe Coordination
 
-The following sequence diagram illustrates the coordinated join process:
+The following sequence diagram illustrates the coordinated join process. The Network Manager can buffer up to 3 join requests per superframe and applies them atomically at the superframe boundary.
 
 ```mermaid
 sequenceDiagram
     participant N1 as New Node 1
     participant N2 as New Node 2
+    participant N3 as New Node 3
+    participant N4 as New Node 4
     participant M as Network Manager
     participant E as Existing Nodes
     
     Note over N1,E: Current superframe cycle active
     
     N1->>M: JOIN_REQUEST
-    M->>M: Buffer join request (first one)
+    M->>M: Buffer join request (1/3)
     M->>N1: JOIN_RESPONSE (ACCEPTED)
     
-    Note over N1,E: Second join attempt during same superframe
-    N2->>M: JOIN_REQUEST  
-    M->>N2: JOIN_RESPONSE (RETRY_LATER, delay=3 superframes)
-    
-    Note over N1,E: Wait for current superframe to complete...
-    
-    Note over N1,E: Next superframe boundary - sync beacon transmission
-    M->>M: ApplyPendingJoin() - update slot allocation
-    M->>*: SYNC_BEACON (total_slots = N+1)
-    
-    N1->>N1: Receive updated sync beacon
-    N1->>N1: Transition to NORMAL_OPERATION
-    E->>E: Apply new slot allocation from sync beacon
-    
-    Note over N1,E: RETRY_LATER node waits configured delay
-    Note over N2: Wait 3 superframes...
-    N2->>M: JOIN_REQUEST (retry attempt)
-    M->>M: Buffer second join request
+    N2->>M: JOIN_REQUEST
+    M->>M: Buffer join request (2/3)
     M->>N2: JOIN_RESPONSE (ACCEPTED)
     
+    N3->>M: JOIN_REQUEST
+    M->>M: Buffer join request (3/3)
+    M->>N3: JOIN_RESPONSE (ACCEPTED)
+    
+    Note over N4,E: Queue full — 4th request during same superframe
+    N4->>M: JOIN_REQUEST
+    M->>N4: JOIN_RESPONSE (RETRY_LATER)
+    
+    Note over N1,E: Next superframe boundary - sync beacon transmission
+    M->>M: ApplyPendingJoin() - apply all 3 joins, single UpdateSlotTable()
+    M->>*: SYNC_BEACON (total_slots = N+3)
+    
+    N1->>N1: Transition to NORMAL_OPERATION
+    N2->>N2: Transition to NORMAL_OPERATION
+    N3->>N3: Transition to NORMAL_OPERATION
+    E->>E: Apply new slot allocation from sync beacon
+    
+    Note over N4: Wait 1 superframe (RETRY_LATER backoff)
+    N4->>M: JOIN_REQUEST (retry attempt)
+    M->>M: Buffer join request (1/3)
+    M->>N4: JOIN_RESPONSE (ACCEPTED)
+    
     Note over N1,E: Next superframe boundary
-    M->>M: ApplyPendingJoin() - update for N2
-    M->>*: SYNC_BEACON (total_slots = N+2)
-    N2->>N2: Join completed, enter NORMAL_OPERATION
+    M->>M: ApplyPendingJoin() - apply for N4
+    M->>*: SYNC_BEACON (total_slots = N+4)
+    N4->>N4: Join completed, enter NORMAL_OPERATION
 ```
 
 #### 6.3.1 Join Request Handling with Superframe Coordination
 
-The protocol implements a coordinated join process to ensure network stability and proper synchronization. Only one node can join per superframe cycle to maintain deterministic slot allocation and prevent timing conflicts.
+The protocol implements a coordinated join process to ensure network stability and proper synchronization. Up to 3 nodes can join per superframe cycle; additional requests receive `RETRY_LATER`. All accepted joins are applied atomically at the superframe boundary with a single slot table rebuild.
 
 **Join Request Buffering Process**:
 
@@ -2177,27 +2185,28 @@ void ProcessJoinRequest(const JoinRequest& request) {
         return;
     }
     
-    // Check if a join is already pending for this superframe
-    if (pending_join_request_) {
-        // Send immediate retry response with suggested delay
-        uint32_t retry_delay_ms = config_.retry_delay_superframes * GetSuperframeDuration();
-        sendJoinResponse(request.nodeId, RETRY_LATER, retry_delay_ms);
+    // Deduplicate by source address
+    for (const auto& pending : pending_joins_) {
+        if (pending.GetSource() == request.nodeId) return;  // Already pending
+    }
+    
+    // If queue is full, tell the node to retry next superframe
+    if (pending_joins_.size() >= kMaxPendingJoins) {
+        sendJoinResponse(request.nodeId, RETRY_LATER);
         return;
     }
     
-    // Check available slots
-    uint16_t availableSlot = findAvailableSlot();
-    if (availableSlot == NO_SLOT_AVAILABLE) {
+    // Check available slots (accounting for already-pending joins)
+    if (!ShouldAcceptJoin(request, pending_joins_.size(), pending_slot_count)) {
         sendJoinResponse(request.nodeId, JOIN_DENIED, "No slots available");
         return;
     }
     
     // Buffer the join request for next superframe boundary
-    pending_join_data_ = request;
-    pending_join_request_ = true;
+    pending_joins_.push_back(request);
     
     // Send immediate acceptance response
-    sendJoinResponse(request.nodeId, JOIN_ACCEPTED, availableSlot);
+    sendJoinResponse(request.nodeId, JOIN_ACCEPTED, allocatedSlot);
 }
 ```
 
@@ -2207,19 +2216,17 @@ At the start of each superframe, during sync beacon transmission:
 
 ```cpp
 void ApplyPendingJoin() {
-    if (pending_join_request_) {
-        // Update network state with buffered join
-        addNodeToNetwork(pending_join_data_.nodeId, pending_join_data_.requestedSlots);
-        
-        // Update slot allocation (reflected in sync beacon total_slots field)
-        updateSlotAllocation();
-        
-        // Clear pending join flag
-        pending_join_request_ = false;
-        
-        LOG_INFO("Applied pending join for node %d at superframe boundary", 
-                 pending_join_data_.nodeId);
+    if (pending_joins_.empty()) return;
+    
+    // Re-establish routes for all pending joins
+    for (const auto& pending : pending_joins_) {
+        addNodeToNetwork(pending.nodeId, pending.requestedSlots);
     }
+    
+    // Single slot table rebuild for all joins
+    UpdateSlotTable();
+    
+    pending_joins_.clear();
 }
 ```
 
@@ -2274,7 +2281,7 @@ void ProcessSyncBeacon(const SyncBeaconHeader& beacon) {
 
 #### 6.3.3 RETRY_LATER Behavior and Join Backoff
 
-When the Network Manager receives a join request while another is already pending for the current superframe, it responds with `RETRY_LATER`. This tells the joining node to try again in a future superframe.
+When the Network Manager receives a join request while the pending join queue is full (3 requests buffered), it responds with `RETRY_LATER`. This tells the joining node to try again in a future superframe.
 
 **Exponential Backoff at Superframe Boundaries:**
 
@@ -2403,7 +2410,9 @@ if (sponsor_address == node_address_) {
 **Sponsor Failure Recovery**:
 - If sponsor becomes unreachable, joining node returns to DISCOVERY state
 - Clear sponsor selection and restart discovery process
-- Future enhancement: Multi-hop sponsor chains for better reliability
+
+**Forwarding Delivery Mechanism**:
+Forwarded join requests and responses are queued to DISCOVERY_TX and delivered via the DISCOVERY_RX fallback TX path. Slot conversion (`ScheduleDiscoverySlotForwarding`) is attempted as an optimization but is not required — the DISCOVERY_RX fallback ensures delivery regardless. Messages that do not fit within the current slot's remaining time are re-queued for the next slot attempt.
 
 **Circular Routing Prevention**:
 - Network Manager detects when it is both sender and sponsor

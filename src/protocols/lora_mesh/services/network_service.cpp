@@ -1191,31 +1191,37 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     LOG_INFO("Join request from 0x%04X: battery=%d%%, slots=%d, hops=%d",
              source, battery_level, requested_slots, hop_count);
 
-    // Check if a join is already pending for this superframe
-    if (pending_join_request_) {
-        // Check if this is a duplicate request from the same node
-        if (pending_join_data_ && pending_join_data_->GetSource() == source) {
+    // Check for duplicate from same source
+    for (const auto& pending : pending_joins_) {
+        if (pending.GetSource() == source) {
             LOG_INFO(
                 "Duplicate join request from 0x%04X - already pending, "
                 "ignoring",
                 source);
-            return Result::Success();  // Silent deduplication
+            return Result::Success();
         }
+    }
 
-        LOG_INFO(
-            "Join request from 0x%04X deferred - join already pending this "
-            "superframe",
-            source);
-        // return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
-        //                         sponsor_address);
-        return Result::Success();
+    // If queue is full, tell the node to retry next superframe
+    if (pending_joins_.size() >= kMaxPendingJoins) {
+        LOG_INFO("Join queue full (%zu/%zu), sending RETRY_LATER to 0x%04X",
+                 pending_joins_.size(), kMaxPendingJoins, source);
+        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
+                                sponsor_address);
     }
 
     uint8_t routing_hop_count = hop_count + 1;
 
+    // Account for slots already committed to pending joins
+    uint8_t pending_slot_count = 0;
+    for (const auto& p : pending_joins_) {
+        pending_slot_count += p.GetRequestedSlots();
+    }
+
     // Determine if node should be accepted
     auto [accepted, allocated_slots] =
-        ShouldAcceptJoin(source, requested_slots, routing_hop_count);
+        ShouldAcceptJoin(source, requested_slots, routing_hop_count,
+                         pending_joins_.size(), pending_slot_count);
 
     if (!accepted) {
         LOG_INFO("Join request from 0x%04X rejected - network constraints",
@@ -1225,22 +1231,19 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     }
 
     // Buffer the join request for next superframe boundary
-    pending_join_request_ = true;
-
     Result setReqSlotsResult =
         (*join_request_opt).SetRequestedSlots(requested_slots);
     if (!setReqSlotsResult) {
         LOG_ERROR("Failed to set requested slots for join request");
-        pending_join_request_ = false;
         return setReqSlotsResult;
     }
 
-    pending_join_data_ = *join_request_opt;
+    pending_joins_.push_back(*join_request_opt);
 
     LOG_INFO(
-        "Join request from 0x%04X buffered for next superframe, allocated %d "
-        "slots",
-        source, allocated_slots);
+        "Join request from 0x%04X buffered (%zu/%zu) for next superframe, "
+        "allocated %d slots",
+        source, pending_joins_.size(), kMaxPendingJoins, allocated_slots);
 
     // Compute control slot index for ACCEPTED joins
     uint8_t control_slot_index = 0xFF;
@@ -1289,9 +1292,10 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         SendJoinResponse(source, JoinResponseHeader::ACCEPTED, allocated_slots,
                          sponsor_address, control_slot_index);
     if (!result) {
-        // Clear pending join if response fails
-        pending_join_request_ = false;
-        pending_join_data_.reset();
+        // Remove the just-pushed pending join if response fails
+        if (!pending_joins_.empty()) {
+            pending_joins_.pop_back();
+        }
         return result;
     }
 
@@ -2594,10 +2598,12 @@ uint8_t NetworkService::GetHopDistanceToNM() const {
 // Helper method implementations
 
 std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
-    AddressType node_address, uint8_t requested_slots, uint8_t hops) {
+    AddressType node_address, uint8_t requested_slots, uint8_t hops,
+    size_t pending_node_count, uint8_t pending_slot_count) {
 
-    // Check network capacity
-    if (routing_table_->GetSize() >= config_.max_network_nodes) {
+    // Check network capacity including already-pending joins
+    if (routing_table_->GetSize() + pending_node_count >=
+        config_.max_network_nodes) {
         LOG_WARNING("Network at capacity, rejecting node 0x%04X", node_address);
         return {false, 0};
     }
@@ -2608,9 +2614,13 @@ std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
         return {false, 0};
     }
 
-    // Check available slots
-    uint8_t available_slots =
-        config_.max_network_nodes - GetAllocatedDataSlots();
+    // Check available slots accounting for pending joins
+    uint8_t allocated_data_slots = GetAllocatedDataSlots();
+    uint8_t total_committed =
+        (allocated_data_slots + pending_slot_count > config_.max_network_nodes)
+            ? config_.max_network_nodes
+            : allocated_data_slots + pending_slot_count;
+    uint8_t available_slots = config_.max_network_nodes - total_committed;
     if (available_slots == 0) {
         LOG_WARNING("No slots available, rejecting node 0x%04X", node_address);
         return {false, 0};
@@ -3221,28 +3231,23 @@ Result NetworkService::HandleSuperframeStart() {
 }
 
 Result NetworkService::ApplyPendingJoin() {
-    // Only apply if we're the network manager and have a pending join
+    // Only apply if we're the network manager and have pending joins
     if (state_ != ProtocolState::NETWORK_MANAGER ||
-        network_manager_ != node_address_ || !pending_join_request_ ||
-        !pending_join_data_) {
+        network_manager_ != node_address_ || pending_joins_.empty()) {
         return Result::Success();
     }
 
-    LOG_INFO(
-        "Applying pending join request for node 0x%04X at superframe boundary",
-        pending_join_data_->GetSource());
+    LOG_INFO("Applying %zu pending join request(s) at superframe boundary",
+             pending_joins_.size());
 
-    // Extract join request information
-    auto source = pending_join_data_->GetSource();
-    auto allocated_slots = pending_join_data_->GetRequestedSlots();
-
-    // Re-establish the route to the joining node before building the slot table.
+    // Re-establish routes for all pending joins before rebuilding the slot table.
     // RemoveInactiveNodes() (called just before this function) may have expired
-    // the node's route (is_active=false), causing IsDirectNeighbor() → false →
+    // routes (is_active=false), causing IsDirectNeighbor() → false →
     // SLEEP instead of RX in UpdateSlotTable().
-    {
-        AddressType sponsor =
-            pending_join_data_->GetHeader().GetSponsorAddress();
+    for (const auto& pending : pending_joins_) {
+        auto source = pending.GetSource();
+        auto allocated_slots = pending.GetRequestedSlots();
+        AddressType sponsor = pending.GetHeader().GetSponsorAddress();
         bool has_external_sponsor = (sponsor != 0 && sponsor != node_address_);
         AddressType route_next_hop;
         if (has_external_sponsor) {
@@ -3253,7 +3258,7 @@ Result NetworkService::ApplyPendingJoin() {
             route_next_hop = source;
         }
         uint8_t routing_hop_count =
-            pending_join_data_->GetHopCount() + (has_external_sponsor ? 2 : 1);
+            pending.GetHopCount() + (has_external_sponsor ? 2 : 1);
         routing_table_->UpdateRoute(route_next_hop, source, routing_hop_count,
                                     255, allocated_slots, 0,
                                     GetRTOS().getTickCount());
@@ -3266,21 +3271,21 @@ Result NetworkService::ApplyPendingJoin() {
     // redundant rebuild in HandleSuperframeStart() when both are pending simultaneously.
     pending_slot_table_rebuild_ = false;
 
-    // Update slot allocation (this will be reflected in the sync beacon total_slots field)
+    // Single UpdateSlotTable call after all routes are established
     Result result = UpdateSlotTable();
     if (!result) {
-        LOG_ERROR("Failed to update slot table for pending join: %s",
+        LOG_ERROR("Failed to update slot table for pending joins: %s",
                   result.GetErrorMessage().c_str());
-        pending_join_request_ = false;
+        pending_joins_.clear();
         return result;
     }
 
-    LOG_INFO("Node 0x%04X successfully added to network with %d slots", source,
-             allocated_slots);
+    for (const auto& pending : pending_joins_) {
+        LOG_INFO("Node 0x%04X successfully added to network with %d slots",
+                 pending.GetSource(), pending.GetRequestedSlots());
+    }
 
-    // Clear the pending join flag and data
-    pending_join_request_ = false;
-    pending_join_data_.reset();
+    pending_joins_.clear();
 
     return Result::Success();
 }
@@ -3293,13 +3298,9 @@ Result NetworkService::ForwardJoinRequest(
         return Result::Success();
     }
 
-    // Schedule the next discovery slot for forwarding
-    if (!ScheduleDiscoverySlotForwarding()) {
-        LOG_WARNING(
-            "Failed to schedule discovery slot for join request forwarding");
-        return Result(LoraMesherErrorCode::kMemoryError,
-                      "No available discovery slots for forwarding");
-    }
+    // Best-effort slot conversion; DISCOVERY_RX fallback TX handles delivery
+    // regardless, so don't abort forwarding if no slot can be converted.
+    ScheduleDiscoverySlotForwarding();
 
     // Calculate next hop towards network manager using routing table
     AddressType next_hop = routing_table_->FindNextHop(network_manager_);
@@ -3434,13 +3435,9 @@ Result NetworkService::ForwardJoinResponse(
         return Result::Success();
     }
 
-    // Schedule discovery slot for forwarding
-    if (!ScheduleDiscoverySlotForwarding()) {
-        LOG_WARNING(
-            "Failed to schedule discovery slot for join response forwarding");
-        return Result(LoraMesherErrorCode::kMemoryError,
-                      "No available discovery slots for forwarding");
-    }
+    // Best-effort slot conversion; DISCOVERY_RX fallback TX handles delivery
+    // regardless, so don't abort forwarding if no slot can be converted.
+    ScheduleDiscoverySlotForwarding();
 
     // Calculate next hop toward destination (sponsor)
     AddressType dest = join_response.GetDestination();
@@ -3548,7 +3545,7 @@ void NetworkService::ResetNetworkState() {
     last_cleanup_time_ = 0;
 
     // Clear join data
-    pending_join_data_.reset();
+    pending_joins_.clear();
 
     // Reset message de-duplication state
     message_cache_.fill({});

@@ -955,7 +955,9 @@ class NetworkService : public INetworkService {
      */
     std::pair<bool, uint8_t> ShouldAcceptJoin(AddressType node_address,
                                               uint8_t requested_slots,
-                                              uint8_t hops);
+                                              uint8_t hops,
+                                              size_t pending_node_count = 0,
+                                              uint8_t pending_slot_count = 0);
 
     /**
      * @brief Forward a join request to the network manager
@@ -1157,10 +1159,9 @@ class NetworkService : public INetworkService {
         0;  ///< Count of nº superframes without receiving sync beacons
 
     // Join request buffering for superframe coordination
-    bool pending_join_request_ =
-        false;  ///< Flag indicating join request is buffered
-    std::optional<JoinRequestMessage>
-        pending_join_data_;  ///< Buffered join request data
+    static constexpr size_t kMaxPendingJoins = 3;
+    std::vector<JoinRequestMessage>
+        pending_joins_;  ///< Buffered join requests (up to kMaxPendingJoins)
 
     bool pending_slot_table_rebuild_ =
         false;  ///< Flag indicating slot table rebuild is deferred to next superframe boundary
