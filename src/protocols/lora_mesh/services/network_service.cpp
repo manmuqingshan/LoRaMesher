@@ -1666,6 +1666,14 @@ Result NetworkService::SendData(AddressType destination,
                       "Cannot send data to self");
     }
 
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Cannot send data in state %d, not in normal operation",
+                    static_cast<int>(state_));
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot send data outside normal operation");
+    }
+
     // Find the next hop to the destination
     AddressType next_hop = FindNextHop(destination);
 
