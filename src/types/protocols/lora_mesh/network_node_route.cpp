@@ -237,6 +237,7 @@ bool NetworkNodeRoute::UpdateRouteInfo(AddressType new_next_hop,
         changed = true;
     }
 
+    last_seen = current_time;
     last_updated = current_time;
     is_active = true;
 
@@ -275,6 +276,7 @@ bool NetworkNodeRoute::UpdateFromRoutingTableEntry(
     }
 
     // Update timestamps and status
+    last_seen = current_time;
     last_updated = current_time;
     is_active = true;
 

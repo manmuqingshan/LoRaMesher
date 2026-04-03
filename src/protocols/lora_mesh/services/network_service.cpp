@@ -1145,9 +1145,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         message.GetSource(), static_cast<int>(state_), network_manager_);
     LOG_DEBUG("Processing JOIN_REQUEST from 0x%04X", message.GetSource());
 
-    auto join_request_opt =
-        JoinRequestMessage::CreateFromSerialized(*message.Serialize());
-
+    auto join_request_opt = JoinRequestMessage::CreateFromBaseMessage(message);
     if (!join_request_opt) {
         return Result(LoraMesherErrorCode::kSerializationError,
                       "Failed to deserialize join request");
@@ -1353,7 +1351,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
                                            uint32_t /* reception_timestamp */) {
     // Deserialize to get sponsor information for forwarding logic
     auto join_response_opt =
-        JoinResponseMessage::CreateFromSerialized(*message.Serialize());
+        JoinResponseMessage::CreateFromBaseMessage(message);
     if (!join_response_opt) {
         return Result(
             LoraMesherErrorCode::kSerializationError,
@@ -1543,7 +1541,7 @@ Result NetworkService::SendJoinResponse(AddressType dest,
 Result NetworkService::ProcessDataMessage(const BaseMessage& message,
                                           uint32_t /* reception_timestamp */) {
     // Deserialize the data message
-    auto data_msg_opt = DataMessage::CreateFromSerialized(*message.Serialize());
+    auto data_msg_opt = DataMessage::CreateFromBaseMessage(message);
     if (!data_msg_opt) {
         LOG_ERROR("Failed to deserialize DATA message");
         return Result(LoraMesherErrorCode::kSerializationError,
@@ -1720,8 +1718,7 @@ Result NetworkService::SendData(AddressType destination,
 
 Result NetworkService::ProcessBroadcastMessage(
     const BaseMessage& message, uint32_t /* reception_timestamp */) {
-    auto bcast_opt =
-        BroadcastMessage::CreateFromSerialized(*message.Serialize());
+    auto bcast_opt = BroadcastMessage::CreateFromBaseMessage(message);
     if (!bcast_opt) {
         LOG_ERROR("Failed to deserialize broadcast message");
         return Result(LoraMesherErrorCode::kSerializationError,
@@ -1834,9 +1831,7 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
         return Result::Success();
     }
 
-    auto slot_request_opt =
-        SlotRequestMessage::CreateFromSerialized(*message.Serialize());
-
+    auto slot_request_opt = SlotRequestMessage::CreateFromBaseMessage(message);
     if (!slot_request_opt) {
         return Result(LoraMesherErrorCode::kSerializationError,
                       "Failed to deserialize slot request");
@@ -3674,7 +3669,7 @@ void NetworkService::HandleForeignBeacon(const SyncBeaconMessage& beacon) {
 }
 
 Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
-    auto claim_opt = NMClaimMessage::CreateFromSerialized(*message.Serialize());
+    auto claim_opt = NMClaimMessage::CreateFromBaseMessage(message);
     if (!claim_opt) {
         LOG_ERROR("Failed to deserialize NM_CLAIM message");
         return Result::Error(LoraMesherErrorCode::kSerializationError);
