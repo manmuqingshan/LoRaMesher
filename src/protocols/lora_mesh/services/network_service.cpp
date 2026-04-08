@@ -1952,7 +1952,8 @@ Result NetworkService::UpdateSlotTable() {
                                   });
 
     if (!self_found) {
-        NetworkNodeRoute self_node(node_address_, 0, 0, false, 0,
+        NetworkNodeRoute self_node(node_address_, 0, 0, false,
+                                   local_capabilities_,
                                    local_allocated_data_slots_, 0);
         self_node.is_active = true;
         self_node.is_network_manager = (network_manager_ == node_address_);
