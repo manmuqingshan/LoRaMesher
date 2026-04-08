@@ -21,7 +21,7 @@ struct RouteEntry {
     AddressType next_hop;     ///< Next hop address for reaching destination
     uint8_t hop_count;        ///< Number of hops to destination
     uint8_t link_quality;     ///< Link quality metric (0-255)
-    uint32_t last_seen_ms;    ///< Timestamp when route was last updated
+    uint32_t last_seen_ms;    ///< Milliseconds since route was last updated
     bool is_valid;            ///< Whether route is currently valid
     uint8_t capabilities =
         0;  ///< Node capabilities bitmap (NodeCapabilities flags)
