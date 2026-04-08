@@ -158,6 +158,9 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                 NotifyRouteUpdate(true, destination, source, hop_count);
                 LogRouteEntry(*node_it);
             }
+        } else if (node_it->is_active) {
+            // Route cost unchanged but node is still reachable — refresh timestamp
+            node_it->last_seen = current_time;
         }
 
         // Capability propagation: update even when route cost hasn't
