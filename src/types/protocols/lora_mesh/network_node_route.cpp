@@ -51,6 +51,8 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
     ewma_quality = 200;
     recovery_counter = 0;
     inactive_probe_count = 0;
+    last_rssi = 0.0f;
+    last_snr = 0.0f;
     window.Reset();
     // Don't reset last_message_time or remote_link_quality
 }
@@ -68,11 +70,14 @@ void NetworkNodeRoute::LinkQualityStats::ExpectMessage() {
     window.Expect();
 }
 
-void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(
-    uint32_t current_time) {
+void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(uint32_t current_time,
+                                                         float rssi,
+                                                         float snr) {
     messages_received++;
     last_message_time = current_time;
     consecutive_missed = 0;
+    last_rssi = rssi;
+    last_snr = snr;
     // EWMA update: sample = 255 (successful reception)
     // ewma = alpha * 255 + (1 - alpha) * ewma
     ewma_quality = static_cast<uint8_t>(
@@ -334,8 +339,9 @@ void NetworkNodeRoute::ExpectRoutingMessage() {
 }
 
 void NetworkNodeRoute::ReceivedRoutingMessage(uint8_t remote_quality,
-                                              uint32_t current_time) {
-    link_stats.ReceivedMessage(current_time);
+                                              uint32_t current_time, float rssi,
+                                              float snr) {
+    link_stats.ReceivedMessage(current_time, rssi, snr);
     link_stats.UpdateRemoteQuality(remote_quality);
 
     // Update link quality from EWMA statistics

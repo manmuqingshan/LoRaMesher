@@ -333,6 +333,8 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         entry.is_valid = node.is_active;
         entry.capabilities = node.routing_entry.capabilities;
         entry.is_network_manager = node.is_network_manager;
+        entry.last_rssi = node.link_stats.last_rssi;
+        entry.last_snr = node.link_stats.last_snr;
         routes.push_back(entry);
     }
 

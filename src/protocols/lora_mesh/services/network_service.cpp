@@ -170,8 +170,9 @@ size_t NetworkService::RemoveInactiveNodes() {
     return nodes_removed;
 }
 
-Result NetworkService::ProcessRoutingTableMessage(
-    const BaseMessage& message, uint32_t reception_timestamp) {
+Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
+                                                  uint32_t reception_timestamp,
+                                                  float rssi, float snr) {
     // Deserialize routing table message
     auto routing_msg_opt = RoutingTableMessage::CreateFromBaseMessage(message);
     if (!routing_msg_opt.has_value()) {
@@ -227,7 +228,8 @@ Result NetworkService::ProcessRoutingTableMessage(
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
         source, entries, reception_timestamp, local_link_quality,
-        config_.max_hops, source_capabilities, source_allocated_data_slots);
+        config_.max_hops, source_capabilities, source_allocated_data_slots,
+        rssi, snr);
 
     routing_changed |= routes_updated;
 
@@ -501,7 +503,8 @@ bool NetworkService::IsNetworkCreator() const {
 }
 
 Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
-                                              uint32_t reception_timestamp) {
+                                              uint32_t reception_timestamp,
+                                              float rssi, float snr) {
     LOG_INFO(
         "*** RECEIVED MESSAGE: type 0x%02X from 0x%04X to 0x%04X (my state: "
         "%d, "
@@ -513,7 +516,8 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
     // Route message to appropriate handler based on type
     switch (message.GetType()) {
         case MessageType::ROUTE_TABLE:
-            return ProcessRoutingTableMessage(message, reception_timestamp);
+            return ProcessRoutingTableMessage(message, reception_timestamp,
+                                              rssi, snr);
 
         case MessageType::JOIN_REQUEST:
             return ProcessJoinRequest(message, reception_timestamp);

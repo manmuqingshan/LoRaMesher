@@ -27,6 +27,9 @@ struct RouteEntry {
         0;  ///< Node capabilities bitmap (NodeCapabilities flags)
     bool is_network_manager =
         false;  ///< Whether this node is the network manager
+    float last_rssi =
+        0.0f;  ///< Last RSSI for direct neighbors (dBm), 0 = unknown
+    float last_snr = 0.0f;  ///< Last SNR for direct neighbors (dB), 0 = unknown
 };
 
 /**

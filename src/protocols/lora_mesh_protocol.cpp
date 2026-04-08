@@ -812,7 +812,8 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     // Extract the reception timestamp from the RadioEvent
                     uint32_t reception_timestamp = event->getTimestamp();
                     network_service_->ProcessReceivedMessage(
-                        *message, reception_timestamp);
+                        *message, reception_timestamp, event->getRssi(),
+                        event->getSnr());
                     // During subslotted slots, stay in RX to catch more
                     // transmissions from other subslots
                     if (in_subslotted_slot_) {
