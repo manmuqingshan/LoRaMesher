@@ -956,6 +956,14 @@ bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
     uint32_t time_in_slot = superframe_service_->GetTimeInSlot();
     uint32_t slot_duration = superframe_service_->GetSlotDuration();
 
+    // Guard against RadioLib overflow or SPI errors returning absurd values
+    if (toa_ms > slot_duration) {
+        LOG_ERROR(
+            "ToA sanity failed: %u ms for %u bytes (slot=%u). Using fallback.",
+            toa_ms, message_size, slot_duration);
+        toa_ms = static_cast<uint32_t>(message_size) * 10;
+    }
+
     uint32_t needed =
         time_in_slot + additional_delay_ms + toa_ms + kRxProcessingMarginMs;
     if (needed > slot_duration) {
