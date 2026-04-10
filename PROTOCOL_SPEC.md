@@ -925,7 +925,7 @@ The EWMA formula uses fixed-point arithmetic:
 - On received message: `ewma = α × 255 + (1 − α) × ewma`
 - On missed message (deferred to next `ExpectMessage`): `ewma = (1 − α) × ewma`
 
-Once 8 superframes of data are available, a sliding window PDR (packet delivery ratio over the last 8 superframes) replaces the EWMA for quality calculation and `reception_quality` advertisement, providing a more stable metric on lossy links.
+Once 16 superframes of data are available, a sliding window PDR (packet delivery ratio over the last 16 superframes) replaces the EWMA for quality calculation and `reception_quality` advertisement, providing a more stable metric on lossy links.
 
 Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
 
@@ -2545,7 +2545,7 @@ The base header structure used by all messages:
 | SYNC_BEACON | network_id(2), total_slots(1), slot_duration_ms(2), network_manager(2), hop_count(1), propagation_delay_ms(4), max_hops(1), node_count(1) | 20 bytes |
 | JOIN_REQUEST | battery_level(1), requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 13 bytes |
 | JOIN_RESPONSE | network_id(2), allocated_slots(1), status(1), next_hop(2), target_address(2), control_slot_index(1) | 15 bytes |
-| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(8 each) | 12+ bytes |
+| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(10 each) | 12+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | NM_CLAIM | election_priority(1), battery_level(1), network_node_count(1), network_id(2) | 11 bytes |
@@ -2558,12 +2558,12 @@ The base header structure used by all messages:
 
 | LoRa Configuration | Max Frame Size | Sync Beacon Size | Data Message Size |
 |-------------------|----------------|------------------|-------------------|
-| SF7, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF8, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF9, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF10, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF11, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF12, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF7, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF8, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF9, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF10, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF11, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF12, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
 
 *Note: BaseHeader overhead is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific). Maximum data payload is 251 bytes (255 max payload - 4 data header extension).*
 
