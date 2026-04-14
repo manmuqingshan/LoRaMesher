@@ -21,7 +21,8 @@ jobs:
     - name: Build ESP32 Example
       run: |
         cd examples/simple_example
-        pio run -e ttgo-lora32-v1 -O "lib_deps=symlink://../../"
+        sed -i 's|lib_deps =.*|lib_deps = symlink://../../|' platformio.ini
+        pio run -e ttgo-lora32-v1
 
   build:
     runs-on: ubuntu-latest
