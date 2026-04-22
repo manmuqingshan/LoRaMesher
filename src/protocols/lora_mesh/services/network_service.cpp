@@ -2440,6 +2440,13 @@ void NetworkService::ExpandSyncBeaconListening() {
 }
 
 void NetworkService::RestoreSyncBeaconTxSlot() {
+    if (no_received_sync_beacon_count_ < kExpandListeningThreshold) {
+        // No expansion happened this superframe, so nothing to restore.
+        // Guards against flipping a slot that is legitimately RX because the
+        // slot table is stale w.r.t. our current hop distance (routing table
+        // updates do not trigger a slot table rebuild).
+        return;
+    }
     uint8_t our_hop_distance = GetHopDistanceToNM();
     if (our_hop_distance == 0) {
         return;
@@ -3145,6 +3152,14 @@ bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
 }
 
 Result NetworkService::HandleSuperframeStart() {
+    // A forwarded sync beacon is only valid within the superframe in which it
+    // was received. If the SYNC_BEACON_TX slot's subslot window already closed
+    // before the forward completed, the queued copy persists into the next
+    // superframe and would be transmitted with stale timing. Drop any leftover
+    // before the new superframe's slot handlers run.
+    message_queue_service_->ClearQueue(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX);
+
     // Link quality tracking for active operational states only
     if (state_ == ProtocolState::NETWORK_MANAGER ||
         state_ == ProtocolState::NORMAL_OPERATION) {
