@@ -1271,7 +1271,7 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    POWER-OPTIMIZED SUPERFRAME STRUCTURE (Updated v1.5)       │
+│                    POWER-OPTIMIZED SUPERFRAME STRUCTURE                      │
 │                              (Example: 20 slots)                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
@@ -1285,19 +1285,24 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 │  5   │ CONTROL_TX     │ Node B routing       │ TX (Node B), RX (others)      │
 │  6   │ DATA_TX        │ Node A data          │ TX (Node A), RX (neighbors)   │
 │  7   │ DATA_TX        │ Node B data          │ TX (Node B), RX (neighbors)   │
-│  8-15│ SLEEP          │ Power conservation   │ SLEEP (reduced for optimization) │
-│ 16   │ DISCOVERY_RX   │ New node detection   │ RX (all nodes)                │
-│ 17   │ DISCOVERY_RX   │ Network monitoring   │ RX (all nodes)                │
-│ 18-19│ SLEEP          │ Final power saving   │ SLEEP (end of superframe)     │
+│  8-17│ SLEEP          │ Elastic buffer       │ SLEEP (shrinks to honour tail)│
+│ 18-19│ DISCOVERY_RX   │ New-node / NM_CLAIM  │ RX (all nodes, always at tail)│
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ POWER CHARACTERISTICS:                                                      │
-│ • Active Slots: 10 (50% - sync: 3, control: 3, data: 2, discovery: 2)     │
-│ • Sleep Slots: N (configurable TX duty cycle ≥1% and/or sleep fraction ≥30%)│
-│ • Actual Duty Cycle: 50% (configurable based on network size)              │
-│ • Power Savings: 50% sleep time, adaptive based on traffic                 │
+│ • Active Slots: 10 (sync: 3, control: 3, data: 2, discovery: 2)           │
+│ • Sleep Slots: elastic — fill between data and discovery                   │
+│ • DISCOVERY_RX is always placed at the tail of the superframe              │
+│ • Configurable via TX duty cycle, min_sleep_fraction, churn_margin_slots   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Allocation order** (`NetworkService::UpdateSlotTable()`):
+`sync_beacon → control → data → sleep (elastic) → discovery (tail)`. Sleep
+shrinks to 0 if necessary to preserve the discovery tail. Discovery count
+is `(max_hops + 1) * 2`; sync count is `(max_hops + 1)`; control count
+equals the sync beacon's `node_count`; data count equals the sum of active
+routing-table entries' `allocated_data_slots`.
 
 ### 5.2 Timing Parameters
 
@@ -1452,6 +1457,20 @@ void ProcessSyncBeacon(const SyncMessage& sync) {
 > **Note**: Only one sync beacon is processed per superframe. If a sync beacon is received within half the superframe duration of the previously processed one, it is silently ignored. This prevents redundant timing adjustments when a node receives multiple forwarded copies of the same beacon from different hops.
 
 ### 5.4 Slot Allocation
+
+**Layout invariants** (enforced by `NetworkService::UpdateSlotTable()`):
+
+- Phases are allocated in the fixed order
+  `sync_beacon → control → data → sleep → discovery`.
+- **DISCOVERY_RX slots are always placed at the tail of the superframe.**
+  They host `NM_CLAIM` reception and new-node discovery; losing them breaks
+  mesh recovery, so they are the highest-priority phase after active TX/RX.
+- SLEEP acts as an elastic buffer between data and discovery; it shrinks
+  (down to zero) before discovery is truncated.
+- The NM-advertised `total_slots` in the sync beacon is lifted by
+  `churn_margin_slots` (default 2, range 0–32) to absorb transient
+  routing-table divergence when nodes join or leave. All peers inherit the
+  enlarged size through the beacon — no wire-format change.
 
 #### 5.4.1 Initial Allocation
 

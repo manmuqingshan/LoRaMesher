@@ -68,6 +68,8 @@ class INetworkService {
         float target_duty_cycle = 0.01f;  ///< Target TX duty cycle (default 1%)
         float min_sleep_fraction =
             0.30f;  ///< Minimum sleep fraction (0.0–1.0, default 30%)
+        uint8_t churn_margin_slots =
+            2;  ///< Absolute extra slots reserved by NM to absorb routing churn
         float link_quality_ewma_alpha =
             0.30f;  ///< EWMA smoothing factor for link quality
         uint8_t consecutive_missed_for_inactivation =

@@ -618,6 +618,7 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     node_role_ = config.node_role;
     target_duty_cycle_ = config.target_duty_cycle;
     min_sleep_fraction_ = config.min_sleep_fraction;
+    churn_margin_slots_ = config.churn_margin_slots;
     ewma_alpha_fixed_ = static_cast<uint8_t>(
         std::clamp(config.link_quality_ewma_alpha, 0.05f, 0.95f) * 256.0f);
     consecutive_missed_for_inactivation_ =
@@ -2055,8 +2056,12 @@ Result NetworkService::UpdateSlotTable() {
                                    (1.0f - min_sleep_fraction_)),
                          255.0f));
         }
-        total_superframe_slots =
-            std::max({computed_slots, kMinSlots, min_for_sleep});
+        uint16_t active_plus_margin =
+            static_cast<uint16_t>(total_active_slots) + churn_margin_slots_;
+        uint8_t min_with_margin = static_cast<uint8_t>(
+            std::min(active_plus_margin, static_cast<uint16_t>(255)));
+        total_superframe_slots = std::max(
+            {computed_slots, kMinSlots, min_for_sleep, min_with_margin});
     }
 
     uint8_t sleep_slots = total_superframe_slots - total_active_slots;
@@ -2153,25 +2158,18 @@ Result NetworkService::UpdateSlotTable() {
         }
     }
 
-    // ── Phase 4: Sleep slots ──────────────────────────────────────────────────
-    for (size_t i = 0; i < sleep_slots; i++) {
-        if (slot_index >= slot_count_) {
-            LOG_ERROR("SLEEP slot index %zu out of bounds, skipping",
-                      slot_index);
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Slot index out of bounds");
-        }
+    // ── Phase 4: Sleep (elastic buffer, shrinks to guarantee discovery tail) ──
+    size_t remaining =
+        (slot_index < slot_count_) ? slot_count_ - slot_index : 0;
+    size_t discovery_reserve =
+        std::min(static_cast<size_t>(allocated_discovery_slots_), remaining);
+    size_t sleep_to_write = remaining - discovery_reserve;
+    for (size_t i = 0; i < sleep_to_write; i++) {
         AllocateSlot(SlotAllocation::SlotType::SLEEP, 0);
     }
 
-    // ── Phase 5: Discovery slots ──────────────────────────────────────────────
-    for (size_t i = 0; i < allocated_discovery_slots_; i++) {
-        if (slot_index >= slot_count_) {
-            LOG_ERROR("Discovery slot index %zu out of bounds, skipping",
-                      slot_index);
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Slot index out of bounds");
-        }
+    // ── Phase 5: Discovery slots (always last in the superframe) ──────────────
+    for (size_t i = 0; i < discovery_reserve; i++) {
         AllocateSlot(SlotAllocation::SlotType::DISCOVERY_RX, 0);
     }
 

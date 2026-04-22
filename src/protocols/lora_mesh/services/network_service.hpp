@@ -1200,6 +1200,8 @@ class NetworkService : public INetworkService {
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
+    uint8_t churn_margin_slots_ =
+        2;  ///< Absolute extra slots reserved by NM to absorb routing churn
     uint8_t ewma_alpha_fixed_ = 77;  ///< EWMA alpha in fixed-point (0.30 * 256)
     uint8_t consecutive_missed_for_inactivation_ =
         10;  ///< Consecutive misses before hard inactivation

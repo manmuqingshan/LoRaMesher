@@ -416,6 +416,15 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         min_sleep_fraction_ = std::clamp(fraction, 0.0f, 0.9f);
     }
 
+    /** @brief Get the churn margin (absolute extra slots, default 2) */
+    uint8_t getChurnMarginSlots() const { return churn_margin_slots_; }
+
+    /** @brief Set the churn margin (absolute extra slots, clamped to 0–32) */
+    void setChurnMarginSlots(uint8_t slots) {
+        churn_margin_slots_ = std::clamp(slots, static_cast<uint8_t>(0),
+                                         static_cast<uint8_t>(32));
+    }
+
     /** @brief Get EWMA alpha for link quality (0.0–1.0, default 0.30) */
     float getLinkQualityEwmaAlpha() const { return link_quality_ewma_alpha_; }
 
@@ -623,6 +632,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
+    uint8_t churn_margin_slots_ =
+        2;  ///< Absolute extra slots reserved by NM to absorb routing churn
     float link_quality_ewma_alpha_ =
         0.30f;  ///< EWMA smoothing factor for link quality
     uint8_t consecutive_missed_for_inactivation_ =

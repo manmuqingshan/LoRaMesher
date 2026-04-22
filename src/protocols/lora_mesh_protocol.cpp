@@ -268,6 +268,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     net_config.node_role = config.getNodeRole();
     net_config.target_duty_cycle = config.getTargetDutyCycle();
     net_config.min_sleep_fraction = config.getMinSleepFraction();
+    net_config.churn_margin_slots = config.getChurnMarginSlots();
     net_config.link_quality_ewma_alpha = config.getLinkQualityEwmaAlpha();
     net_config.consecutive_missed_for_inactivation =
         config.getConsecutiveMissedForInactivation();
