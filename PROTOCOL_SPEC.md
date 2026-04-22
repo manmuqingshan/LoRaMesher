@@ -2556,16 +2556,26 @@ The base header structure used by all messages:
 
 ### 7.4 Maximum Frame Sizes
 
-| LoRa Configuration | Max Frame Size | Sync Beacon Size | Data Message Size |
-|-------------------|----------------|------------------|-------------------|
-| SF7, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
-| SF8, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
-| SF9, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
-| SF10, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
-| SF11, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
-| SF12, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+The LoRa PHY ceiling is 255 bytes. LoRaMesher additionally selects an **SF-derived default** for `max_packet_size` so that time-on-air — and therefore TDMA slot duration — stays within practical bounds at high spreading factors.
 
-*Note: BaseHeader overhead is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific). Maximum data payload is 251 bytes (255 max payload - 4 data header extension).*
+**SF-derived default (BW 125 kHz):**
+
+| Spreading Factor | Default `max_packet_size` | LoRaWAN EU868 equivalent |
+|------------------|---------------------------|--------------------------|
+| SF7 | 242 bytes | DR5 |
+| SF8 | 242 bytes | DR4 |
+| SF9 | 115 bytes | DR3 |
+| SF10 | 51 bytes | DR2 |
+| SF11 | 51 bytes (LDRO) | DR1 |
+| SF12 | 51 bytes (LDRO) | DR0 |
+
+**Bandwidth scaling:** the BW125 value is multiplied by 2 for BW250 and by 4 for BW500, clamped to the 255-byte PHY ceiling.
+
+**Authoritative helper:** `RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz)` is the single source of truth and is usable by library code, tests, and downstream applications.
+
+**Override semantics:** when `LoRaMeshProtocolConfig::setMaxPacketSize()` is called, the user's value is preserved. If that value exceeds the SF-derived cap, `LoRaMeshProtocol::Configure()` logs a warning; the value is not rejected. Values set via the `LoRaMeshProtocolConfig` constructor default arguments do **not** mark the value as user-set and are replaced by the SF-derived default when `ApplySfDerivedDefaults()` runs inside `Configure()`.
+
+**Frame overheads (unchanged):** BaseHeader is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific) and always fit regardless of SF. DATA/DATA_BROADCAST messages carry an additional 4-byte DataHeader, so the maximum data payload for a given SF is `max_packet_size - 6 (BaseHeader) - 4 (DataHeader)`. Example: at SF10/BW125 the data payload is capped at 41 bytes.
 
 ---
 

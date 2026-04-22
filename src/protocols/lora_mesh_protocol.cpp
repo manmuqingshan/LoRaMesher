@@ -236,10 +236,29 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
 
     // Store configuration
     config_ = config;
+
+    // Apply SF-derived max_packet_size default based on live radio settings.
+    // If the user explicitly set max_packet_size above the SF-safe cap, keep
+    // their value and warn so slot-duration inflation is traceable.
+    if (hardware_) {
+        uint8_t sf = hardware_->getSpreadingFactor();
+        float bw_khz = hardware_->getBandwidth();
+        uint8_t sf_safe = config_.ApplySfDerivedDefaults(sf, bw_khz);
+        if (config_.IsMaxPacketSizeUserSet() &&
+            config_.getMaxPacketSize() > sf_safe) {
+            LOG_WARNING(
+                "max_packet_size %u exceeds SF%u/BW%.0fkHz recommended cap %u; "
+                "slot duration will be inflated",
+                static_cast<unsigned>(config_.getMaxPacketSize()),
+                static_cast<unsigned>(sf), static_cast<double>(bw_khz),
+                static_cast<unsigned>(sf_safe));
+        }
+    }
+
 #ifdef DEBUG
-    service_config_ = CreateServiceConfigForTest(config);
+    service_config_ = CreateServiceConfigForTest(config_);
 #else
-    service_config_ = CreateServiceConfig(config);
+    service_config_ = CreateServiceConfig(config_);
 #endif  // DEBUG
 
     // Configure network service

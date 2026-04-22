@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include "protocols/lora_mesh/services/subslot_scheduler.hpp"
+#include "types/configurations/radio_configuration.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/power/power_types.hpp"
 #include "types/protocols/protocol.hpp"
@@ -269,17 +270,53 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
 
     /**
      * @brief Get the maximum packet size
-     * 
+     *
      * @return uint8_t Maximum packet size
      */
     uint8_t getMaxPacketSize() const { return max_packet_size_; }
 
     /**
      * @brief Set the maximum packet size
-     * 
+     *
+     * Marks the value as explicitly user-set so ApplySfDerivedDefaults()
+     * preserves it (and only emits a warning if it exceeds the SF-safe cap).
+     *
      * @param size Maximum packet size
      */
-    void setMaxPacketSize(uint8_t size) { max_packet_size_ = size; }
+    void setMaxPacketSize(uint8_t size) {
+        max_packet_size_ = size;
+        max_packet_size_user_set_ = true;
+    }
+
+    /**
+     * @brief Whether max_packet_size was explicitly set by the user
+     *
+     * Returns true only when setMaxPacketSize() has been called. Values
+     * provided via the constructor are treated as defaults.
+     */
+    bool IsMaxPacketSizeUserSet() const { return max_packet_size_user_set_; }
+
+    /**
+     * @brief Apply SF-derived defaults to the configuration
+     *
+     * If max_packet_size has not been explicitly set via setMaxPacketSize(),
+     * overwrites it with RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz).
+     * If the user has explicitly set a value greater than the SF-safe cap,
+     * the value is kept and the caller is expected to log a warning; this
+     * method remains silent and returns the cap so the caller can decide.
+     *
+     * @param sf Active spreading factor
+     * @param bw_khz Active bandwidth in kHz
+     * @return uint8_t The SF-safe cap for the given (sf, bw). Useful to
+     *         compare against getMaxPacketSize() and emit a warning.
+     */
+    uint8_t ApplySfDerivedDefaults(uint8_t sf, float bw_khz) {
+        uint8_t sf_safe = RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz);
+        if (!max_packet_size_user_set_) {
+            max_packet_size_ = sf_safe;
+        }
+        return sf_safe;
+    }
 
     /**
      * @brief Get the default number of data slots in the superframe
@@ -572,6 +609,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         60000;               ///< Time after which routes are considered stale
     uint8_t max_hops_ = 10;  ///< Maximum number of hops for routing
     uint8_t max_packet_size_ = 255;  ///< Maximum packet size
+    bool max_packet_size_user_set_ =
+        false;  ///< True when setMaxPacketSize() was called
     uint8_t default_data_slots_ =
         1;  ///< Default Number of data slots in the superframe
     uint32_t joining_timeout_ms_ =
