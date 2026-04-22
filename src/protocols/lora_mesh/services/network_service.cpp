@@ -2439,6 +2439,26 @@ void NetworkService::ExpandSyncBeaconListening() {
         limit, no_received_sync_beacon_count_);
 }
 
+void NetworkService::RestoreSyncBeaconTxSlot() {
+    uint8_t our_hop_distance = GetHopDistanceToNM();
+    if (our_hop_distance == 0) {
+        return;
+    }
+    uint16_t tx_index = static_cast<uint16_t>(our_hop_distance);
+    if (tx_index >= slot_count_) {
+        return;
+    }
+    auto& slot = slot_table_[tx_index];
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+    if (slot.type == SlotType::SYNC_BEACON_RX) {
+        slot.type = SlotType::SYNC_BEACON_TX;
+        LOG_DEBUG(
+            "Restored SYNC_BEACON_TX at slot %u after receiving beacon in "
+            "expanded-listening mode",
+            tx_index);
+    }
+}
+
 Result NetworkService::BroadcastSlotAllocation() {
     // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
     // Only network manager broadcasts
@@ -3078,6 +3098,11 @@ Result NetworkService::ForwardSyncBeacon(
     // callback overwrites it with GetTimeSinceSuperframeStart() right before TX,
     // which naturally includes any subslot delay that has elapsed.
     SetSyncBeaconPreSendCallback(base_msg);
+
+    // If listening was expanded after missed beacons, the designated TX slot
+    // was demoted to RX. Now that we have a fresh beacon to forward and are
+    // re-synced, restore the TX slot so the queued beacon can be transmitted.
+    RestoreSyncBeaconTxSlot();
 
     // Clear any stale beacon before queuing the fresh one
     message_queue_service_->ClearQueue(

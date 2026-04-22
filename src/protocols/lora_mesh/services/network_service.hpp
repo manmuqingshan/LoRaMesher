@@ -636,6 +636,17 @@ class NetworkService : public INetworkService {
     void ExpandSyncBeaconListening();
 
     /**
+     * @brief Restore the SYNC_BEACON_TX slot demoted by ExpandSyncBeaconListening()
+     *
+     * Called when a sync beacon has been received and queued for forwarding in
+     * the same superframe. Flips the slot at our hop distance to NM from
+     * SYNC_BEACON_RX back to SYNC_BEACON_TX so the queued forward can be sent.
+     * No-op for the network manager (hop distance 0) and when the slot is
+     * already TX.
+     */
+    void RestoreSyncBeaconTxSlot();
+
+    /**
      * @brief Apply pending join request at superframe boundary
      * 
      * Called by the Network Manager at the start of each superframe to apply

@@ -1479,6 +1479,74 @@ TEST_F(NetworkServiceCoverageTest, ExpandSyncListeningAfterMissedBeacons) {
     superframe_->StopSuperframe();
 }
 
+// Verifies that a beacon arriving during expanded-listening mode restores the
+// node's designated SYNC_BEACON_TX slot and queues the forward for transmission.
+TEST_F(NetworkServiceCoverageTest,
+       ExpandedListeningRestoresTxSlotOnBeaconReceive) {
+    // Node at hop=2 from NM with a 40-slot, max_hops=4 superframe.
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    service_->SetNetworkManager(kNMAddress);
+    service_->SetMaxHopCount(4);
+    service_->SetNumberOfSlotsPerSuperframe(40);
+    service_->UpdateRouteEntry(kOtherNode, kNMAddress, 1, 200, 2, 0);
+
+    superframe_->StartSuperframe();
+
+    Result r = service_->UpdateSlotTable();
+    ASSERT_TRUE(r) << r.GetErrorMessage();
+
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+    // Trigger expansion: two HandleSuperframeStart calls with no receive.
+    service_->HandleSuperframeStart();
+    service_->HandleSuperframeStart();
+
+    // Slot 2 (our_hop_distance=2) was demoted from TX to RX by expansion.
+    auto slot_table = service_->GetSlotTable();
+    ASSERT_GT(slot_table.size(), 2u);
+    ASSERT_EQ(slot_table[2].type, SlotType::SYNC_BEACON_RX)
+        << "Expected slot 2 (TX) to be demoted to RX after expansion";
+
+    // Build a forwarded beacon from kOtherNode (hop=1) so our computed
+    // hop distance to NM stays at 2 (beacon hop_count 1 + 1). Matches the
+    // node's current config (max_hops=4, total_slots=40, slot_duration=1000)
+    // so ProcessSyncBeacon does NOT rebuild the slot table via UpdateSlotTable
+    // — this isolates the RestoreSyncBeaconTxSlot() code path.
+    auto beacon_opt =
+        SyncBeaconMessage::CreateForwarded(0xFFFF,      // dest: broadcast
+                                           kOtherNode,  // src: hop=1 forwarder
+                                           /*network_id=*/0xABCD,
+                                           /*total_slots=*/40,
+                                           /*slot_duration=*/1000,
+                                           /*nm_address=*/kNMAddress,
+                                           /*hop_count=*/1,
+                                           /*propagation_delay=*/0,
+                                           /*guard_time=*/0,
+                                           /*max_hops=*/4);
+    ASSERT_TRUE(beacon_opt.has_value());
+    BaseMessage beacon_msg = beacon_opt->ToBaseMessage();
+
+    // SYNC_BEACON_TX queue must be empty before the receive.
+    ASSERT_TRUE(message_queue_->IsQueueEmpty(SlotType::SYNC_BEACON_TX));
+
+    Result proc_r = service_->ProcessReceivedMessage(beacon_msg, 0);
+    EXPECT_TRUE(proc_r) << proc_r.GetErrorMessage();
+
+    // Slot 2 must now be restored to TX.
+    slot_table = service_->GetSlotTable();
+    ASSERT_GT(slot_table.size(), 2u);
+    EXPECT_EQ(slot_table[2].type, SlotType::SYNC_BEACON_TX)
+        << "Expected slot 2 to be restored to SYNC_BEACON_TX after beacon "
+           "received in expanded-listening mode";
+
+    // The forwarded beacon must be in the SYNC_BEACON_TX queue ready for send.
+    EXPECT_FALSE(message_queue_->IsQueueEmpty(SlotType::SYNC_BEACON_TX))
+        << "Expected forwarded beacon to be queued for SYNC_BEACON_TX";
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::SYNC_BEACON_TX), 1u);
+
+    superframe_->StopSuperframe();
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols
