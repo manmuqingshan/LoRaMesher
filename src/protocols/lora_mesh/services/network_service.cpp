@@ -2721,6 +2721,9 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
     bool is_self_active = false;
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
+        if (!node.is_active) {
+            continue;
+        }
         total_allocated += node.GetAllocatedDataSlots();
         if (node.GetAddress() == node_address_) {
             is_self_active = true;
