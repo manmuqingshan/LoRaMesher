@@ -3804,6 +3804,85 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
     return Result::Success();
 }
 
+Result NetworkService::ApplyRoleChange(NodeRole new_role) {
+    if (new_role != NodeRole::AUTO && new_role != NodeRole::NETWORK_MANAGER &&
+        new_role != NodeRole::NODE_ONLY) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Invalid NodeRole value");
+    }
+
+    const NodeRole old_role = node_role_;
+    if (old_role == new_role) {
+        LOG_DEBUG("ApplyRoleChange: already role %d, no-op",
+                  static_cast<int>(new_role));
+        return Result::Success();
+    }
+
+    LOG_INFO("Role change: %d -> %d (state=%d)", static_cast<int>(old_role),
+             static_cast<int>(new_role), static_cast<int>(state_));
+
+    node_role_ = new_role;
+    config_.node_role = new_role;
+
+    const bool promoting_to_nm = (new_role == NodeRole::NETWORK_MANAGER);
+    const bool demoting_from_nm_state =
+        (state_ == ProtocolState::NETWORK_MANAGER &&
+         new_role != NodeRole::NETWORK_MANAGER);
+
+    if (promoting_to_nm) {
+        switch (state_) {
+            case ProtocolState::NETWORK_MANAGER:
+                election_priority_ = ComputeElectionPriority();
+                return Result::Success();
+            case ProtocolState::INITIALIZING:
+            case ProtocolState::DISCOVERY:
+            case ProtocolState::FAULT_RECOVERY:
+            case ProtocolState::NM_ELECTION:
+                LOG_INFO("Promoting to NETWORK_MANAGER: creating network");
+                return CreateNetwork();
+            case ProtocolState::JOINING:
+                election_priority_ = ComputeElectionPriority();
+                LOG_INFO(
+                    "Promotion deferred: currently JOINING, role takes "
+                    "effect at next state transition");
+                return Result::Success();
+            case ProtocolState::NORMAL_OPERATION:
+                election_priority_ = ComputeElectionPriority();
+                LOG_INFO(
+                    "Promoting to NETWORK_MANAGER in NORMAL_OPERATION: "
+                    "broadcasting NM_CLAIM (priority=%d) to unseat incumbent",
+                    election_priority_);
+                return SendNMClaim();
+        }
+        return Result::Success();
+    }
+
+    if (demoting_from_nm_state) {
+        LOG_INFO("Demoting from NETWORK_MANAGER: surrendering network 0x%04X",
+                 network_id_);
+        surrendered_in_election_ = true;
+        network_found_ = false;
+        network_creator_ = false;
+        selected_sponsor_ = 0;
+        discovery_start_time_ = GetRTOS().getTickCount();
+        Result r = SetDiscoverySlots();
+        if (!r) {
+            LOG_ERROR("Failed to set discovery slots during demotion: %s",
+                      r.GetErrorMessage().c_str());
+            return r;
+        }
+        SetState(ProtocolState::DISCOVERY);
+        election_priority_ = ComputeElectionPriority();
+        return Result::Success();
+    }
+
+    election_priority_ = ComputeElectionPriority();
+    if (state_ == ProtocolState::DISCOVERY && new_role == NodeRole::AUTO) {
+        discovery_start_time_ = GetRTOS().getTickCount();
+    }
+    return Result::Success();
+}
+
 }  // namespace lora_mesh
 }  // namespace protocols
 }  // namespace loramesher

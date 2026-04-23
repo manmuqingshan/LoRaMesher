@@ -853,6 +853,10 @@ class NetworkService : public INetworkService {
      */
     Result SendNMClaim();
 
+    NodeRole GetNodeRole() const override { return node_role_; }
+
+    Result ApplyRoleChange(NodeRole new_role) override;
+
    private:
     /**
      * @brief Log a compact grid visualization of the current slot table
