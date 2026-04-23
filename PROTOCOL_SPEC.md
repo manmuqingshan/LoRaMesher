@@ -1196,9 +1196,9 @@ public:
 
 The routing table selects the active route with the lowest ETX-inspired cost (`hop_count × 65536 / link_quality`), with hop count as tie-breaker. The network service layer then validates the result:
 
-1. **TDMA check** (`IsTDMANeighbor`): the next_hop must have an allocated RX slot in the local TDMA schedule. Nodes overheard from outside the network (no slot allocated) are skipped.
-2. **Bidirectional check** (`HasUnidirectionalRisk`): the next_hop must not be a confirmed-unidirectional neighbor (received ≥2 routing messages from them, but their routing table never lists us — `remote_link_quality == 0`).
-3. **Fallback**: if the best route fails validation, scan all routes for the destination and select the best TDMA-valid bidirectional alternative. If none exists, use the original route as last resort (natural quality convergence via unidirectional detection will eventually correct the routing table).
+1. **TDMA check** (`IsTDMANeighbor`): the next_hop must have an allocated RX slot in the local TDMA schedule. Nodes overheard from outside the network (no slot allocated) are skipped — they are replaced by the best TDMA-valid alternative unconditionally.
+2. **Bidirectional check** (`HasUnidirectionalRisk`): if the next_hop is a confirmed-unidirectional neighbour (received ≥2 routing messages from them, but their routing table never lists us — `remote_link_quality == 0`), its ETX cost is multiplied by a penalty factor (×4) rather than being excluded outright. This tolerates a transient false-positive unidirectional flag when the direct link is still objectively the best option.
+3. **Fallback**: the best fallback TDMA-valid bidirectional alternative replaces the original next_hop only when its ETX cost is strictly lower than the penalised cost of the original. Otherwise the original is kept as last resort (natural quality convergence via unidirectional detection will eventually correct the routing table).
 
 #### 4.5.3 Future Advanced Routing Algorithm (Planned)
 

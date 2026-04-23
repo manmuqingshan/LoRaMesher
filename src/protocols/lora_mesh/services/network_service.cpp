@@ -288,50 +288,88 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
         return best;
     }
 
-    // Best next_hop is reachable: TDMA neighbor with confirmed bidirectional
-    // link (or too few messages to determine directionality yet)
-    if (IsTDMANeighbor(best) && !routing_table_->HasUnidirectionalRisk(best)) {
+    const bool best_is_tdma = IsTDMANeighbor(best);
+    const bool best_uni = routing_table_->HasUnidirectionalRisk(best);
+
+    // Fast path: best next_hop is directly usable.
+    if (best_is_tdma && !best_uni) {
         return best;
     }
 
-    // Best next_hop is NOT reachable — either not a TDMA neighbor (overheard
-    // from outside the network) or confirmed unidirectional (they cannot
-    // hear us). Find the best route among reachable next_hops.
-    auto nodes = routing_table_->GetNodesCopy();
-    AddressType fallback = 0;
+    // Scan nodes once to collect:
+    //   - the cost of the route that `best` represents (so we can
+    //     apply a unidirectional penalty to it)
+    //   - the best fallback candidate with TDMA reachability and no
+    //     unidirectional risk.
+    const auto nodes = routing_table_->GetNodesCopy();
     uint16_t best_cost = UINT16_MAX;
-    uint8_t best_hops = UINT8_MAX;
+    AddressType fallback = 0;
+    uint16_t fallback_cost = UINT16_MAX;
+    uint8_t fallback_hops = UINT8_MAX;
 
     for (const auto& node : nodes) {
-        if (node.routing_entry.destination == destination && node.is_active &&
-            IsTDMANeighbor(node.next_hop) &&
+        if (node.routing_entry.destination != destination || !node.is_active) {
+            continue;
+        }
+        const uint16_t cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                node.routing_entry.hop_count, node.routing_entry.link_quality);
+        if (node.next_hop == best && cost < best_cost) {
+            best_cost = cost;
+        }
+        if (IsTDMANeighbor(node.next_hop) &&
             !routing_table_->HasUnidirectionalRisk(node.next_hop)) {
-            uint16_t cost = types::protocols::lora_mesh::NetworkNodeRoute::
-                CalculateRouteCost(node.routing_entry.hop_count,
-                                   node.routing_entry.link_quality);
-            if (cost < best_cost ||
-                (cost == best_cost &&
-                 node.routing_entry.hop_count < best_hops)) {
-                best_cost = cost;
-                best_hops = node.routing_entry.hop_count;
+            if (cost < fallback_cost ||
+                (cost == fallback_cost &&
+                 node.routing_entry.hop_count < fallback_hops)) {
+                fallback_cost = cost;
+                fallback_hops = node.routing_entry.hop_count;
                 fallback = node.next_hop;
             }
         }
     }
 
-    if (fallback != 0) {
+    // A next_hop that isn't a TDMA neighbour at all has no slot to
+    // transmit on — it must be replaced unconditionally if an
+    // alternative exists. This preserves the pre-penalty safety.
+    if (!best_is_tdma) {
+        if (fallback != 0) {
+            LOG_WARNING(
+                "Next hop 0x%04X for dest 0x%04X is unreachable "
+                "(non-TDMA), using 0x%04X instead",
+                best, destination, fallback);
+            return fallback;
+        }
         LOG_WARNING(
             "Next hop 0x%04X for dest 0x%04X is unreachable "
-            "(non-TDMA or unidirectional), using 0x%04X instead",
-            best, destination, fallback);
+            "(non-TDMA) and no valid alternative found, using as last resort",
+            best, destination);
+        return best;
+    }
+
+    // `best` is a TDMA neighbour with unidirectional risk. Instead of
+    // excluding it outright, penalise its ETX cost by a factor and
+    // compare against the best fallback. This prevents a transient
+    // false-positive unidirectional flag from steering traffic into a
+    // multi-hop detour when the direct link is still the best option.
+    const uint32_t kUnidirectionalCostPenalty = 4;
+    const uint16_t best_effective = static_cast<uint16_t>(
+        std::min(static_cast<uint32_t>(best_cost) * kUnidirectionalCostPenalty,
+                 static_cast<uint32_t>(UINT16_MAX)));
+
+    if (fallback != 0 && fallback_cost < best_effective) {
+        LOG_WARNING(
+            "Next hop 0x%04X for dest 0x%04X penalised "
+            "(uni=1 cost=%u penalised=%u) vs fallback 0x%04X cost=%u",
+            best, destination, best_cost, best_effective, fallback,
+            fallback_cost);
         return fallback;
     }
 
-    // No valid alternative exists — use the original route as last resort.
-    LOG_WARNING(
-        "Next hop 0x%04X for dest 0x%04X is unreachable "
-        "and no valid alternative found, using as last resort",
-        best, destination);
+    LOG_DEBUG(
+        "Next hop 0x%04X for dest 0x%04X kept despite unidirectional risk "
+        "(cost=%u penalised=%u fallback_cost=%u)",
+        best, destination, best_cost, best_effective, fallback_cost);
     return best;
 }
 
