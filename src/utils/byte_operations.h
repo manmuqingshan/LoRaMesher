@@ -13,8 +13,8 @@
 #include <type_traits>
 #include <vector>
 
-#include "utils/compat/span.hpp"
 #include "types/error_codes/result.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace utils {
