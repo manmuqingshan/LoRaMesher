@@ -70,18 +70,18 @@ struct TaskStats {
 class RTOS {
    public:
     /**
-     * @brief Initialise the RTOS singleton.
+     * @brief Get the RTOS singleton.
      *
-     * Must be called once on the main thread before any worker task or ISR
-     * can reach instance(). Idempotent: subsequent calls are no-ops and
-     * always reach the same singleton. LoraMesher::Start() invokes this
-     * automatically; applications that bypass Start() and use GetRTOS()
-     * directly must call it explicitly.
-     */
-    static void Init();
-
-    /**
-     * @brief Get singleton instance. Init() must have been called first.
+     * The singleton is eagerly constructed at static-initialization time,
+     * so this is safe to call from any *runtime* context — including from
+     * worker tasks and ISRs — without any prior initialization step.
+     *
+     * Not safe from another translation unit's static initializer: cross-TU
+     * static-init order is unspecified by the C++ standard, so a global in
+     * another file whose constructor calls GetRTOS() may observe the
+     * pointer before this TU's eager init has run. No library code does
+     * this; if you add such a global, hoist the call into main()/setup()
+     * or the first runtime entry point instead.
      */
     static RTOS& instance();
 

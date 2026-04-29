@@ -3,8 +3,8 @@
  * @brief Hardware manager unit tests
  */
 #include <gtest/gtest.h>
-#include "os/rtos.hpp"
 #include <memory>
+#include "os/rtos.hpp"
 
 #include "hardware/hardware_manager.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
@@ -266,7 +266,6 @@ void loop() {
 #else
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
-    loramesher::os::RTOS::Init();
     if (RUN_ALL_TESTS()) {}
     return 0;
 }

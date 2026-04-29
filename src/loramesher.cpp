@@ -24,8 +24,6 @@ LoraMesher::~LoraMesher() {
 }
 
 Result LoraMesher::Initialize() {
-    os::RTOS::Init();
-
     if (is_initialized_) {
         return Result::Success();
     }

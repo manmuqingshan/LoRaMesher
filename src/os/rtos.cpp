@@ -1,7 +1,5 @@
 #include "os/rtos.hpp"
 
-#include <cassert>
-
 #include "config/system_config.hpp"
 
 #ifdef LORAMESHER_BUILD_ARDUINO
@@ -10,17 +8,16 @@
 namespace loramesher {
 namespace os {
 
+// Eager file-scope singleton. Constructed during this TU's static init,
+// so any *runtime* call to instance() observes a non-null pointer. Calls
+// from another TU's static initializer are not guaranteed to see it (the
+// C++ standard does not order dynamic init across TUs); see rtos.hpp.
 namespace {
-RTOS* g_rtos = nullptr;
-}
-
-void RTOS::Init() {
-    static RTOSFreeRTOS impl;
-    g_rtos = &impl;
-}
+RTOSFreeRTOS g_impl;
+RTOS* g_rtos = &g_impl;
+}  // namespace
 
 RTOS& RTOS::instance() {
-    assert(g_rtos != nullptr && "RTOS::Init() must be called before instance()");
     return *g_rtos;
 }
 
@@ -36,17 +33,14 @@ namespace os {
 // Thread-local storage definition for node address cache
 thread_local char RTOSMock::thread_local_node_address_[8] = {};
 
+// Eager file-scope singleton. See note in the Arduino branch above and
+// the doc comment on RTOS::instance() in rtos.hpp.
 namespace {
-RTOS* g_rtos = nullptr;
-}
-
-void RTOS::Init() {
-    static RTOSMock impl;
-    g_rtos = &impl;
-}
+RTOSMock g_impl;
+RTOS* g_rtos = &g_impl;
+}  // namespace
 
 RTOS& RTOS::instance() {
-    assert(g_rtos != nullptr && "RTOS::Init() must be called before instance()");
     return *g_rtos;
 }
 

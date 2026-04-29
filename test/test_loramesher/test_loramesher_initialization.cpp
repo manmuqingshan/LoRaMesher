@@ -3,10 +3,10 @@
  * @brief Test suite for LoraMesher initialization and lifecycle management
  */
 #include <gtest/gtest.h>
-#include "os/rtos.hpp"
 #include <chrono>
 #include <memory>
 #include <thread>
+#include "os/rtos.hpp"
 
 #include "loramesher.hpp"
 #include "os/os_port.hpp"
@@ -641,7 +641,6 @@ void loop() {
 #else
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
-    loramesher::os::RTOS::Init();
     if (RUN_ALL_TESTS()) {}
     // Always return zero-code and allow PlatformIO to parse results
     return 0;
