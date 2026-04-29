@@ -78,6 +78,12 @@ void NetworkNodeRoute::LinkQualityStats::ExpectMessage() {
 void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(uint32_t current_time,
                                                          float rssi,
                                                          float snr) {
+    // Align counters: first-ever reception happens before UpdateLinkStatistics
+    // can Expect() this neighbor.
+    if (messages_received == 0 && messages_expected == 0) {
+        messages_expected++;
+        window.Expect();
+    }
     messages_received++;
     last_message_time = current_time;
     consecutive_missed = 0;

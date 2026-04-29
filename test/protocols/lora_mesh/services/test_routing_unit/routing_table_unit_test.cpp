@@ -396,10 +396,13 @@ TEST_F(RoutingTableUnitTest, DirectNeighborShouldOverrideIndirectRoute) {
         << "Node3 should be 2 hops via Node2 initially";
     EXPECT_EQ(it_before->next_hop, kNeighbor1);
 
-    // Step 2: Now receive a direct routing message from Node3
-    // This should update our route to Node3 to 1 hop
+    // Step 2: Receive enough direct routing messages from Node3 for the
+    // direct link's quality to clear the trust gate (kMinSamplesForQuality).
     std::vector<RoutingTableEntry> empty;
-    ReceiveRoutingMessage(kNeighbor2, empty);  // Node3 directly contacts us
+    for (int i = 0;
+         i < NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality; ++i) {
+        ReceiveRoutingMessage(kNeighbor2, empty);
+    }
 
     // Verify Node3 is now 1 hop away (direct neighbor)
     const auto& nodes_after = routing_table_->GetNodes();

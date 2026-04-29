@@ -786,6 +786,18 @@ TEST_F(NetworkNodeRouteTest, LinkQualityProvisionalCappedByRemote) {
     EXPECT_EQ(stats.CalculateQuality(), 32);
 }
 
+TEST_F(NetworkNodeRouteTest, FirstReceptionAlignsExpectedCounter) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.ReceivedMessage(1000);
+    EXPECT_EQ(stats.messages_received, 1u);
+    EXPECT_EQ(stats.messages_expected, 1u);
+
+    stats.ExpectMessage();
+    stats.ReceivedMessage(2000);
+    EXPECT_EQ(stats.messages_received, 2u);
+    EXPECT_EQ(stats.messages_expected, 2u);
+}
+
 // ---- GetAddress / GetAllocatedDataSlots ----
 
 TEST_F(NetworkNodeRouteTest, GetAddress) {

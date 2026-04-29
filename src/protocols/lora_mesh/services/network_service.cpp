@@ -2930,18 +2930,30 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         current_time = GetRTOS().getTickCount();
         bool direct_nm_beacon = (beacon_source == beacon_nm);
         if (direct_nm_beacon) {
-            uint8_t beacon_quality =
-                routing_table_->GetDirectLinkQuality(beacon_source);
-            if (beacon_quality == 0) {
-                beacon_quality = types::protocols::lora_mesh::NetworkNodeRoute::
-                    LinkQualityStats::kProvisionalQuality;
-            }
-            bool route_updated = routing_table_->UpdateRoute(
-                beacon_source, beacon_nm, our_hop_count_to_nm, beacon_quality,
-                config_.default_data_slots, 0, current_time);
-            if (route_updated) {
-                LOG_DEBUG("Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
-                          beacon_nm, beacon_source, our_hop_count_to_nm);
+            // Don't displace an existing indirect route on a sync-beacon
+            // observation alone — the direct link could be unidirectional.
+            AddressType existing_next_hop =
+                routing_table_->FindNextHop(beacon_nm);
+            bool have_indirect =
+                existing_next_hop != 0 && existing_next_hop != beacon_nm;
+            if (have_indirect) {
+                routing_table_->RefreshRoute(beacon_nm, current_time);
+            } else {
+                uint8_t beacon_quality =
+                    routing_table_->GetDirectLinkQuality(beacon_source);
+                if (beacon_quality == 0) {
+                    beacon_quality = types::protocols::lora_mesh::
+                        NetworkNodeRoute::LinkQualityStats::kProvisionalQuality;
+                }
+                bool route_updated = routing_table_->UpdateRoute(
+                    beacon_source, beacon_nm, our_hop_count_to_nm,
+                    beacon_quality, config_.default_data_slots, 0,
+                    current_time);
+                if (route_updated) {
+                    LOG_DEBUG(
+                        "Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
+                        beacon_nm, beacon_source, our_hop_count_to_nm);
+                }
             }
         } else {
             routing_table_->RefreshRoute(beacon_nm, current_time);

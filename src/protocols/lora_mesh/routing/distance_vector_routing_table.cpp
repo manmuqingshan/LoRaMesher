@@ -721,9 +721,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             source_node_it->link_stats.remote_link_quality == 0 &&
             source_node_it->link_stats.messages_expected >= 3;
 
+        // Don't displace an indirect route on provisional quality alone.
+        bool direct_quality_trusted =
+            source_node_it->link_stats.messages_received >=
+            types::protocols::lora_mesh::NetworkNodeRoute::LinkQualityStats::
+                kMinSamplesForQuality;
+
         bool use_direct =
             was_inactive || prev_next_hop == source_address ||
-            (direct_cost <= current_cost && !direct_confirmed_unidirectional);
+            (direct_cost <= current_cost && direct_quality_trusted &&
+             !direct_confirmed_unidirectional);
 
         if (use_direct) {
             source_node_it->routing_entry.link_quality = direct_quality;
