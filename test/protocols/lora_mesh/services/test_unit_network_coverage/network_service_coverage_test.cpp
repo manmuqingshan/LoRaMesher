@@ -1619,7 +1619,8 @@ TEST_F(NetworkServiceCoverageTest, NoExpansionLeavesSlotTableAlone) {
 // path that delegates to NetworkService::SendData.
 // ============================================================================
 
-TEST_F(NetworkServiceCoverageTest, SendDataReturnsQueueFullWhenTxQueueSaturated) {
+TEST_F(NetworkServiceCoverageTest,
+       SendDataReturnsQueueFullWhenTxQueueSaturated) {
     using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
 
     // Cap the TX queue tightly so we can saturate it with a few SendData calls.
@@ -1630,8 +1631,9 @@ TEST_F(NetworkServiceCoverageTest, SendDataReturnsQueueFullWhenTxQueueSaturated)
 
     for (int i = 0; i < 3; ++i) {
         Result r = service_->SendData(kOtherNode, payload);
-        EXPECT_TRUE(r.IsSuccess()) << "SendData #" << i << " unexpectedly failed: "
-                                   << r.GetErrorMessage();
+        EXPECT_TRUE(r.IsSuccess())
+            << "SendData #" << i
+            << " unexpectedly failed: " << r.GetErrorMessage();
     }
     EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 3u);
 

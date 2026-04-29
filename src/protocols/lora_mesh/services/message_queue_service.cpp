@@ -23,9 +23,10 @@ Result MessageQueueService::AddMessageToQueue(
 
     size_t idx = static_cast<size_t>(type);
     if (idx == 0 || idx >= kNumSlotTypes) {
-        LOG_ERROR("Invalid slot type: %s",
-                  types::protocols::lora_mesh::slot_utils::SlotTypeToString(type)
-                      .c_str());
+        LOG_ERROR(
+            "Invalid slot type: %s",
+            types::protocols::lora_mesh::slot_utils::SlotTypeToString(type)
+                .c_str());
         return Result(LoraMesherErrorCode::kInvalidArgument,
                       "Invalid slot type");
     }
@@ -42,7 +43,8 @@ Result MessageQueueService::AddMessageToQueue(
         return Result(
             LoraMesherErrorCode::kQueueFull,
             "Queue full for slot type " +
-                types::protocols::lora_mesh::slot_utils::SlotTypeToString(type));
+                types::protocols::lora_mesh::slot_utils::SlotTypeToString(
+                    type));
     }
 
     queue.push_back(std::move(message));

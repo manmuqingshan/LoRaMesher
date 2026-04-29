@@ -203,11 +203,11 @@ Result LoRaMeshProtocol::Init(
         });
 
     // Create main protocol task
-    bool task_created = GetRTOS().CreateTask(
-        ProtocolTaskFunction, "LoRaMeshMain",
-        config::TaskConfig::kProtocolMainStackSize /
-            config::TaskConfig::kStackBytesPerWord,
-        this, TASK_PRIORITY, &protocol_task_handle_);
+    bool task_created =
+        GetRTOS().CreateTask(ProtocolTaskFunction, "LoRaMeshMain",
+                             config::TaskConfig::kProtocolMainStackSize /
+                                 config::TaskConfig::kStackBytesPerWord,
+                             this, TASK_PRIORITY, &protocol_task_handle_);
 
     if (!task_created) {
         return Result(LoraMesherErrorCode::kConfigurationError,
@@ -457,8 +457,8 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
     }
 
     auto msg_copy = std::make_unique<BaseMessage>(message);
-    Result queue_result =
-        message_queue_service_->AddMessageToQueue(slot_type, std::move(msg_copy));
+    Result queue_result = message_queue_service_->AddMessageToQueue(
+        slot_type, std::move(msg_copy));
     if (!queue_result) {
         LOG_ERROR("Failed to queue message for %s slot: %s",
                   slot_utils::SlotTypeToString(slot_type).c_str(),

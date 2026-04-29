@@ -72,8 +72,8 @@ TEST_F(MessageQueueServiceTest, QueueFullRejectsNewMessage) {
     EXPECT_EQ(service_.GetQueueSize(SlotType::TX), 5u);
 
     // The next add must be rejected with kQueueFull and must not change size
-    Result r =
-        service_.AddMessageToQueue(SlotType::TX, MakeMessage(MessageType::DATA));
+    Result r = service_.AddMessageToQueue(SlotType::TX,
+                                          MakeMessage(MessageType::DATA));
     EXPECT_FALSE(r.IsSuccess());
     EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kQueueFull);
     EXPECT_EQ(service_.GetQueueSize(SlotType::TX), 5u);
