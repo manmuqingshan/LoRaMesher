@@ -64,6 +64,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     void SetUp() override {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            mock->SeedRandom(42);
+        }
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
