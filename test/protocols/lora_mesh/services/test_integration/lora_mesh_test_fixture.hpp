@@ -325,22 +325,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
                      uint32_t check_interval_ms = 10,
                      uint32_t real_sleep_ms = 0,
                      std::function<bool()> condition = nullptr) {
-
-        // If no condition was provided, advance time directly
-        if (!condition) {
-            time_controller_.AdvanceTime(time_ms);
-
-            if (real_sleep_ms > 0) {
-                // Minimal sleep to allow tasks to execute
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(real_sleep_ms));
-            }
-
-            return true;
-        }
-
         // Check condition immediately before starting the loop
-        if (condition()) {
+        if (condition && condition()) {
             return true;
         }
 
@@ -373,12 +359,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
             }
 
             // Check if condition is met
-            if (condition()) {
+            if (condition && condition()) {
                 return true;
             }
         }
 
-        return false;  // Timeout occurred
+        return !condition;  // Timeout occurred
     }
 
     /**
