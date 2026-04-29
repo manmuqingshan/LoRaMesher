@@ -56,8 +56,8 @@ class TaskMonitor {
 
     struct Registration {
         os::TaskHandle_t handle;
-        const char* name;            ///< Assumed to point to a string literal.
-        uint32_t configured_bytes;   ///< Total stack size in bytes.
+        const char* name;           ///< Assumed to point to a string literal.
+        uint32_t configured_bytes;  ///< Total stack size in bytes.
     };
 
     /**
@@ -71,8 +71,7 @@ class TaskMonitor {
 #ifdef LORAMESHER_BUILD_ARDUINO
         os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
         std::lock_guard<std::mutex> lock(GetRegistry().mutex);
-        GetRegistry().entries.push_back(
-            {handle, task_name, configured_bytes});
+        GetRegistry().entries.push_back({handle, task_name, configured_bytes});
 #else
         (void)task_name;
         (void)configured_bytes;
@@ -90,8 +89,7 @@ class TaskMonitor {
 #ifdef LORAMESHER_BUILD_ARDUINO
         std::lock_guard<std::mutex> lock(GetRegistry().mutex);
         for (const auto& reg : GetRegistry().entries) {
-            UBaseType_t hwm_words =
-                uxTaskGetStackHighWaterMark(reg.handle);
+            UBaseType_t hwm_words = uxTaskGetStackHighWaterMark(reg.handle);
             uint32_t hwm_bytes = static_cast<uint32_t>(hwm_words) *
                                  config::TaskConfig::kStackBytesPerWord;
             LOG_INFO("STACK[%s] total=%u free=%u", reg.name,
@@ -137,6 +135,7 @@ class TaskMonitor {
         std::mutex mutex;
         std::vector<Registration> entries;
     };
+
     static Registry& GetRegistry() {
         static Registry r;
         return r;

@@ -771,9 +771,9 @@ class RTOSMock : public RTOS {
         // Sample stack pointer for the calling task before any other work.
         // Frame address taken in this function — close enough to the user
         // task's deepest frame (RTOS call only adds a few bytes).
-        SampleStackUsage(GetThreadLocalTaskInfo(),
-                         reinterpret_cast<uintptr_t>(
-                             __builtin_frame_address(0)));
+        SampleStackUsage(
+            GetThreadLocalTaskInfo(),
+            reinterpret_cast<uintptr_t>(__builtin_frame_address(0)));
 
         std::thread::id thread_id = std::this_thread::get_id();
         std::string task_name = "current";
@@ -1999,8 +1999,7 @@ class RTOSMock : public RTOS {
         if (info.stack_size == 0) {
             return 0;
         }
-        uint32_t used =
-            info.peak_stack_used.load(std::memory_order_relaxed);
+        uint32_t used = info.peak_stack_used.load(std::memory_order_relaxed);
         if (used == 0) {
             return info.stack_size;
         }
@@ -2012,18 +2011,14 @@ class RTOSMock : public RTOS {
         if (!info) {
             return;
         }
-        uintptr_t base =
-            info->stack_base_addr.load(std::memory_order_relaxed);
+        uintptr_t base = info->stack_base_addr.load(std::memory_order_relaxed);
         if (base == 0 || current_frame >= base) {
             return;
         }
         uint32_t used = static_cast<uint32_t>(base - current_frame);
-        uint32_t prev =
-            info->peak_stack_used.load(std::memory_order_relaxed);
-        while (used > prev &&
-               !info->peak_stack_used.compare_exchange_weak(
-                   prev, used, std::memory_order_relaxed)) {
-        }
+        uint32_t prev = info->peak_stack_used.load(std::memory_order_relaxed);
+        while (used > prev && !info->peak_stack_used.compare_exchange_weak(
+                                  prev, used, std::memory_order_relaxed)) {}
         if (info->stack_size > 0 && used >= info->stack_size) {
             std::fprintf(stderr,
                          "\n*** MOCK STACK OVERFLOW: task '%s' used %u "
