@@ -202,6 +202,24 @@ Result LoraMesher::SendBroadcast(std::span<const uint8_t> data) {
     return mesh_protocol->SendBroadcast(data);
 }
 
+Result LoraMesher::IsReadyToSend() const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "LoRaMesh protocol not active");
+    }
+    return mesh_protocol->IsReadyToSend();
+}
+
+Result LoraMesher::IsReadyToSend(AddressType destination) const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "LoRaMesh protocol not active");
+    }
+    return mesh_protocol->IsReadyToSend(destination);
+}
+
 void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     data_callback_ = callback;
 

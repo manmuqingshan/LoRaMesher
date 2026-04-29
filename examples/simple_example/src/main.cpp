@@ -127,9 +127,15 @@ bool sendTestMessage() {
 
     AddressType dest = routes[counter_address % routes.size()].destination;
 
-    // Skip sending to self
     if (dest == mesher->GetNodeAddress()) {
         counter_address++;
+        return false;
+    }
+
+    Result ready = mesher->IsReadyToSend(dest);
+    if (!ready) {
+        std::cerr << "Not ready to send to 0x" << std::hex << dest << std::dec
+                  << ": " << ready.GetErrorMessage() << std::endl;
         return false;
     }
 

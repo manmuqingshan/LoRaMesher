@@ -558,6 +558,47 @@ bool LoRaMeshProtocol::IsSynchronized() const {
            superframe_synchronized;  // Both must be synchronized
 }
 
+Result LoRaMeshProtocol::IsReadyToSend() const {
+    if (!network_service_ || !superframe_service_) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "Services not initialized");
+    }
+    const auto state = network_service_->GetState();
+    const bool in_operational_state =
+        state == lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION ||
+        state == lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER;
+    if (!in_operational_state) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Not in NORMAL_OPERATION or NETWORK_MANAGER");
+    }
+    if (!IsSynchronized()) {
+        return Result(LoraMesherErrorCode::kInvalidState, "Not synchronized");
+    }
+    if (GetDataSlotsPerSuperframe() == 0) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "No TX data slot allocated");
+    }
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::IsReadyToSend(AddressType destination) const {
+    Result base = IsReadyToSend();
+    if (!base) {
+        return base;
+    }
+    if (destination == node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Cannot send to self");
+    }
+    if (destination == kBroadcastAddress) {
+        return Result::Success();
+    }
+    if (network_service_->FindNextHop(destination) == 0) {
+        return Result(LoraMesherErrorCode::kNoRoute, "No route to destination");
+    }
+    return Result::Success();
+}
+
 AddressType LoRaMeshProtocol::GetNetworkManager() const {
     return network_service_->GetNetworkManagerAddress();
 }

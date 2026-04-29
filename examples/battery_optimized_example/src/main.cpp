@@ -115,6 +115,13 @@ void sendTestMessage() {
         return;
     }
 
+    Result ready = mesher->IsReadyToSend(dest);
+    if (!ready) {
+        std::cerr << "Not ready to send to 0x" << std::hex << dest << std::dec
+                  << ": " << ready.GetErrorMessage() << std::endl;
+        return;
+    }
+
     std::string msg = "Hello from node!";
     Result result =
         mesher->Send(dest, std::vector<uint8_t>(msg.begin(), msg.end()));

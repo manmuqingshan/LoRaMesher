@@ -87,6 +87,34 @@ class LoraMesher {
     [[nodiscard]] Result SendBroadcast(std::span<const uint8_t> data);
 
     /**
+     * @brief Check if the node is ready to originate a message
+     *
+     * Returns Success when the underlying mesh protocol is in
+     * NORMAL_OPERATION or NETWORK_MANAGER, both network and superframe are
+     * synchronized, and at least one TX data slot is allocated. Otherwise
+     * returns a Result whose error code identifies the unmet condition.
+     *
+     * @return Result Success if Send() / SendBroadcast() is expected to
+     *                succeed at the API boundary
+     */
+    [[nodiscard]] Result IsReadyToSend() const;
+
+    /**
+     * @brief Check readiness for a specific destination
+     *
+     * Same conditions as the no-arg overload plus self-send rejection and
+     * (for unicast destinations) a route-table lookup. Broadcast
+     * destinations short-circuit to the base predicate. A non-Success
+     * result does not preclude Send() from succeeding — direct delivery to
+     * a one-hop neighbor is attempted as a best-effort fallback.
+     *
+     * @param destination Destination node address
+     * @return Result Success if Send(destination, ...) is expected to
+     *                succeed
+     */
+    [[nodiscard]] Result IsReadyToSend(AddressType destination) const;
+
+    /**
      * @brief Generate address from hardware ID without full initialization
      *
      * This static method allows users to determine the auto-generated hardware

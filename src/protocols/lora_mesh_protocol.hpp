@@ -156,10 +156,40 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Check if protocol is synchronized
-     * 
+     *
      * @return bool True if synchronized
      */
     bool IsSynchronized() const;
+
+    /**
+     * @brief Check if the node is ready to originate a message
+     *
+     * Returns Success when the protocol is in NORMAL_OPERATION or
+     * NETWORK_MANAGER, both network and superframe services are
+     * synchronized, and at least one TX data slot is allocated. Returns a
+     * specific error code identifying the first failed condition otherwise.
+     *
+     * @return Result Success if a Send() / SendBroadcast() call is expected
+     *                to succeed at the API boundary; otherwise a Result with
+     *                an error code describing the unmet condition
+     */
+    [[nodiscard]] Result IsReadyToSend() const;
+
+    /**
+     * @brief Check readiness for a specific destination
+     *
+     * Same conditions as IsReadyToSend() with two additions: rejects sends
+     * to self, and (for unicast destinations) requires a known multi-hop
+     * route via FindNextHop(). Broadcast destinations short-circuit to the
+     * base predicate. A non-Success result does not preclude Send() from
+     * succeeding — direct delivery to a one-hop neighbor is attempted as a
+     * best-effort fallback.
+     *
+     * @param destination Destination node address
+     * @return Result Success if Send(destination, ...) is expected to
+     *                succeed; otherwise a Result with an error code
+     */
+    [[nodiscard]] Result IsReadyToSend(AddressType destination) const;
 
     /**
      * @brief Get network manager address

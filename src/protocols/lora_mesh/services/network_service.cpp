@@ -1830,6 +1830,14 @@ Result NetworkService::ProcessBroadcastMessage(
 }
 
 Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Cannot broadcast in state %d, not in normal operation",
+                    static_cast<int>(state_));
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot broadcast outside normal operation");
+    }
+
     message_seq_++;
 
     uint8_t ttl =

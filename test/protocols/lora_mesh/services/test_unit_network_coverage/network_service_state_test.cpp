@@ -360,6 +360,52 @@ TEST_F(NetworkServiceStateCoverageTest, SendNMClaimQueuesMessage) {
     EXPECT_TRUE(message_queue_->HasMessage(MessageType::NM_CLAIM));
 }
 
+// ─── SendBroadcast: state gate ──────────────────────────────────────────────
+
+TEST_F(NetworkServiceStateCoverageTest,
+       SendBroadcastRejectedOutsideNormalOperation) {
+    Configure();
+
+    const std::vector<INetworkService::ProtocolState> blocked_states = {
+        INetworkService::ProtocolState::INITIALIZING,
+        INetworkService::ProtocolState::DISCOVERY,
+        INetworkService::ProtocolState::JOINING,
+        INetworkService::ProtocolState::FAULT_RECOVERY,
+        INetworkService::ProtocolState::NM_ELECTION,
+    };
+
+    std::vector<uint8_t> payload = {0xAB, 0xCD};
+    for (auto state : blocked_states) {
+        service_->SetState(state);
+        Result result = service_->SendBroadcast(payload);
+        EXPECT_FALSE(result)
+            << "SendBroadcast should fail in state " << static_cast<int>(state);
+        EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState)
+            << "Expected kInvalidState in state " << static_cast<int>(state);
+    }
+}
+
+TEST_F(NetworkServiceStateCoverageTest,
+       SendBroadcastSucceedsInNormalOperation) {
+    Configure();
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    std::vector<uint8_t> payload = {0xAB, 0xCD};
+    Result result = service_->SendBroadcast(payload);
+    EXPECT_TRUE(result) << result.GetErrorMessage();
+    EXPECT_TRUE(message_queue_->HasMessage(MessageType::DATA_BROADCAST));
+}
+
+TEST_F(NetworkServiceStateCoverageTest, SendBroadcastSucceedsInNetworkManager) {
+    Configure();
+    service_->SetState(INetworkService::ProtocolState::NETWORK_MANAGER);
+
+    std::vector<uint8_t> payload = {0xAB, 0xCD};
+    Result result = service_->SendBroadcast(payload);
+    EXPECT_TRUE(result) << result.GetErrorMessage();
+    EXPECT_TRUE(message_queue_->HasMessage(MessageType::DATA_BROADCAST));
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

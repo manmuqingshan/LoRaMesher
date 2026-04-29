@@ -683,5 +683,89 @@ TEST_F(LoraMeshProtocolCoverageTest, StartFailsWhenHardwareStartFails) {
     protocol.reset();
 }
 
+// ---------------------------------------------------------------------------
+// IsReadyToSend() predicate
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief IsReadyToSend() reports kNotInitialized on a fresh protocol.
+ *
+ * Without Init(), neither network_service_ nor superframe_service_ exist.
+ * The composed predicate must report not-ready and must not crash.
+ */
+TEST_F(LoraMeshProtocolCoverageTest, IsReadyToSendBeforeInitNotInitialized) {
+    auto protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+    Result base = protocol->IsReadyToSend();
+    EXPECT_FALSE(base);
+    EXPECT_EQ(base.getErrorCode(), LoraMesherErrorCode::kNotInitialized);
+
+    Result with_dest = protocol->IsReadyToSend(0x9999);
+    EXPECT_FALSE(with_dest);
+    EXPECT_EQ(with_dest.getErrorCode(), LoraMesherErrorCode::kNotInitialized);
+}
+
+/**
+ * @brief IsReadyToSend() reports kInvalidState after Init but before Start.
+ *
+ * Services exist but the protocol is in INITIALIZING — the state gate alone
+ * blocks the predicate.
+ */
+TEST_F(LoraMeshProtocolCoverageTest, IsReadyToSendAfterInitBeforeStart) {
+    auto protocol = CreateInitialized();
+    Result result = protocol->IsReadyToSend();
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+}
+
+/**
+ * @brief IsReadyToSend() reports kInvalidState in DISCOVERY.
+ *
+ * State accessor reports DISCOVERY immediately after Start(). Even with
+ * services running, the state gate keeps the predicate false.
+ */
+TEST_F(LoraMeshProtocolCoverageTest, IsReadyToSendInDiscoveryReturnsFalse) {
+    auto protocol = CreateStarted();
+    using ProtocolState = protocols::lora_mesh::INetworkService::ProtocolState;
+    auto state = protocol->GetState();
+    EXPECT_TRUE(state == ProtocolState::DISCOVERY ||
+                state == ProtocolState::INITIALIZING)
+        << "Expected DISCOVERY/INITIALIZING after Start, got "
+        << static_cast<int>(state);
+    Result result = protocol->IsReadyToSend();
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+    protocol->Stop();
+}
+
+/**
+ * @brief IsReadyToSend(self) reports kInvalidParameter once base ready.
+ *
+ * Self-send rejection only fires after the base predicate passes; in a
+ * non-ready protocol the base error code propagates first. We assert the
+ * non-Success result either way.
+ */
+TEST_F(LoraMeshProtocolCoverageTest, IsReadyToSendSelfReturnsFalse) {
+    auto protocol = CreateInitialized(0x4001);
+    Result result = protocol->IsReadyToSend(0x4001);
+    EXPECT_FALSE(result)
+        << "Self-send must be rejected even in non-ready state";
+}
+
+/**
+ * @brief IsReadyToSend(broadcast) follows base IsReadyToSend() truth value.
+ *
+ * Before stabilization the base is non-Success, so the broadcast overload
+ * propagates the same error code. The short-circuit-true on broadcast only
+ * kicks in once the base predicate is Success (covered by the integration
+ * suite).
+ */
+TEST_F(LoraMeshProtocolCoverageTest, IsReadyToSendBroadcastTracksBase) {
+    auto protocol = CreateInitialized();
+    Result base = protocol->IsReadyToSend();
+    Result bcast = protocol->IsReadyToSend(kBroadcastAddress);
+    EXPECT_EQ(static_cast<bool>(base), static_cast<bool>(bcast));
+    EXPECT_EQ(base.getErrorCode(), bcast.getErrorCode());
+}
+
 }  // namespace test
 }  // namespace loramesher

@@ -125,6 +125,12 @@ Update these files when protocol or library behavior changes:
 - If architecture is flawed, refactor it
 - Write code a senior engineer would approve
 
+## Test-First Workflow
+- When adding a feature or fixing a bug, write the test that should fail against the current code first
+- Run it and confirm it fails for the right reason — a test that passes accidentally proves nothing
+- Only then implement the change, and re-run the test to confirm it passes
+- Applies to both unit and integration tests; for the slow integration suite, narrow the `--filter` so the red→green cycle stays short
+
 ## Context Management
 - Re-read files before editing
 - Work in phases (max 5 files per phase)
