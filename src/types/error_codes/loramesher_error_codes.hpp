@@ -36,6 +36,7 @@ enum class LoraMesherErrorCode {
     kNotImplemented,      ///< Feature not implemented
     kSerializationError,  ///< Failed message serialization
     kNoRoute,             ///< No route to destination
+    kQueueFull,           ///< Message queue at capacity
 };
 
 /**
@@ -118,6 +119,8 @@ class LoraMesherErrorCategory : public std::error_category {
                 return "Message serialization failed";
             case LoraMesherErrorCode::kNoRoute:
                 return "No route to destination";
+            case LoraMesherErrorCode::kQueueFull:
+                return "Message queue full";
             default:
                 return "Unknown error";
         }

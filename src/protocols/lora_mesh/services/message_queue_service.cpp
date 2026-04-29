@@ -17,35 +17,42 @@ namespace lora_mesh {
 MessageQueueService::MessageQueueService(size_t max_queue_size)
     : max_queue_size_(max_queue_size) {}
 
-void MessageQueueService::AddMessageToQueue(
+Result MessageQueueService::AddMessageToQueue(
     types::protocols::lora_mesh::SlotAllocation::SlotType type,
     std::unique_ptr<BaseMessage> message) {
 
     size_t idx = static_cast<size_t>(type);
     if (idx == 0 || idx >= kNumSlotTypes) {
-        LOG_ERROR("Invalid slot type: %d", static_cast<int>(type));
-        return;
+        LOG_ERROR("Invalid slot type: %s",
+                  types::protocols::lora_mesh::slot_utils::SlotTypeToString(type)
+                      .c_str());
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Invalid slot type");
     }
 
     std::lock_guard<std::mutex> lock(queue_mutex_);
     auto& queue = message_queues_[idx];
 
-    // Check if queue has reached maximum size
     if (max_queue_size_ > 0 && queue.size() >= max_queue_size_) {
-        LOG_WARNING("Queue for type %d is full, dropping oldest message",
-                    static_cast<int>(type));
-
-        // Remove oldest message (front of queue)
-        if (!queue.empty()) {
-            queue.erase(queue.begin());
-        }
+        LOG_WARNING(
+            "Queue for slot type %s is full (size=%zu), rejecting new message",
+            types::protocols::lora_mesh::slot_utils::SlotTypeToString(type)
+                .c_str(),
+            queue.size());
+        return Result(
+            LoraMesherErrorCode::kQueueFull,
+            "Queue full for slot type " +
+                types::protocols::lora_mesh::slot_utils::SlotTypeToString(type));
     }
 
-    // Add the new message to the queue
     queue.push_back(std::move(message));
 
-    LOG_DEBUG("Added message to queue type %d, new size: %zu",
-              static_cast<int>(type), queue.size());
+    LOG_DEBUG(
+        "Added message to queue type %s, new size: %zu",
+        types::protocols::lora_mesh::slot_utils::SlotTypeToString(type).c_str(),
+        queue.size());
+
+    return Result::Success();
 }
 
 std::unique_ptr<BaseMessage> MessageQueueService::ExtractMessageOfType(

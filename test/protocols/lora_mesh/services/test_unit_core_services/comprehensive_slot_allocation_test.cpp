@@ -29,11 +29,11 @@ namespace slot_utils = types::protocols::lora_mesh::slot_utils;
  */
 class MockMessageQueueService : public protocols::IMessageQueueService {
    public:
-    void AddMessageToQueue(
+    Result AddMessageToQueue(
         SlotAllocation::SlotType type,
         std::unique_ptr<BaseMessage> /* message */) override {
-        // Just store the message type for verification
         queued_message_types_.push_back(type);
+        return Result::Success();
     }
 
     std::unique_ptr<BaseMessage> ExtractMessageOfType(

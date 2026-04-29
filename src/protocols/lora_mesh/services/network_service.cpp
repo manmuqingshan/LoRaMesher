@@ -260,9 +260,13 @@ Result NetworkService::SendRoutingTableUpdate() {
                       "Failed to create routing table message");
     }
 
-    // Queue message for transmission
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::CONTROL_TX, std::move(message));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue routing table update: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_DEBUG("Routing table update message queued for transmission");
     return Result::Success();
@@ -1161,11 +1165,15 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
                       "Failed to create join request message");
     }
 
-    // Queue message for transmission using DISCOVERY_TX slot for proper timing
     auto base_msg =
         std::make_unique<BaseMessage>(join_request->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue join request: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO("Join request queued for manager 0x%04X, requesting %d slots",
              manager_address, requested_slots);
@@ -1550,11 +1558,15 @@ Result NetworkService::SendJoinResponse(AddressType dest,
                       "Failed to create join response");
     }
 
-    // Queue for transmission
     auto base_msg =
         std::make_unique<BaseMessage>(join_response->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue join response: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     if (sponsor_address != 0 && sponsor_address != node_address_) {
         LOG_INFO(
@@ -1693,11 +1705,15 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
         original_msg.GetDestination(), original_msg.GetSource(), new_next_hop,
         forwarded_msg->GetTTL());
 
-    // Queue for TX slot
     auto base_msg =
         std::make_unique<BaseMessage>(forwarded_msg->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
-                                              std::move(base_msg));
+    Result queue_result = message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue forwarded DATA: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     return Result::Success();
 }
@@ -1752,10 +1768,14 @@ Result NetworkService::SendData(AddressType destination,
         "Sending DATA to 0x%04X via 0x%04X (ttl=%u, seq=%u), payload_size=%zu",
         destination, next_hop, ttl, message_seq_, data.size());
 
-    // Queue for TX slot
     auto base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
-                                              std::move(base_msg));
+    Result queue_result = message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue DATA for 0x%04X: %s", destination,
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     return Result::Success();
 }
@@ -1832,8 +1852,13 @@ Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
              message_seq_, data.size());
 
     auto base_msg = std::make_unique<BaseMessage>(bcast->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
-                                              std::move(base_msg));
+    Result queue_result = message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue BROADCAST: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     return Result::Success();
 }
@@ -1866,8 +1891,13 @@ Result NetworkService::ForwardBroadcastMessage(
               original.GetSeqNum());
 
     auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
-                                              std::move(base_msg));
+    Result queue_result = message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue forwarded BROADCAST: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     return Result::Success();
 }
@@ -1973,11 +2003,15 @@ Result NetworkService::SendSlotRequest(uint8_t num_slots) {
                       "Failed to create slot request");
     }
 
-    // Queue for transmission
     auto base_msg =
         std::make_unique<BaseMessage>(slot_request->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue slot request: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO("Slot request queued for %d slots", num_slots);
 
@@ -3118,11 +3152,15 @@ Result NetworkService::SendSyncBeacon() {
     // Set callback to update propagation_delay right before transmission
     SetSyncBeaconPreSendCallback(base_msg);
 
-    // Add to sync beacon TX queue - protocol layer handles actual transmission
     auto base_msg_ptr = std::make_unique<BaseMessage>(std::move(base_msg));
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX,
         std::move(base_msg_ptr));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue sync beacon: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO("Queued sync beacon for transmission: %d total slots, %d max hops",
              total_slots, current_network_depth_);
@@ -3158,11 +3196,15 @@ Result NetworkService::ForwardSyncBeacon(
     message_queue_service_->ClearQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX);
 
-    // Add to sync beacon TX queue for forwarding
     auto base_msg_ptr = std::make_unique<BaseMessage>(std::move(base_msg));
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX,
         std::move(base_msg_ptr));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue forwarded sync beacon: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO("Queued forwarded sync beacon for transmission");
 
@@ -3424,11 +3466,15 @@ Result NetworkService::ForwardJoinRequest(
                       "Failed to create forwarded join request");
     }
 
-    // Queue for transmission in next available discovery slot
     auto base_msg =
         std::make_unique<BaseMessage>(forwarded_request->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue forwarded join request: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO(
         "Forwarded join request from 0x%04X to network manager 0x%04X via "
@@ -3504,11 +3550,15 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
                       "Failed to create final join response");
     }
 
-    // Queue for transmission
     auto base_msg =
         std::make_unique<BaseMessage>(final_response->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue join response for sponsored node: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO(
         "Forwarded join response to sponsored node 0x%04X: status=%d, slots=%d",
@@ -3579,8 +3629,13 @@ Result NetworkService::ForwardJoinResponse(
     }
 
     auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue forwarded join response: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO(
         "Forwarded join response to 0x%04X via next hop 0x%04X (target: "
@@ -3747,9 +3802,14 @@ Result NetworkService::SendNMClaim() {
     }
 
     auto base_msg = std::make_unique<BaseMessage>(claim_opt->ToBaseMessage());
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType::DISCOVERY_TX,
         std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue NM_CLAIM: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_INFO("Queued NM_CLAIM (priority=%d, network_id=0x%04X)",
              election_priority_, network_id_);

@@ -41,7 +41,7 @@ class MessageQueueService : public IMessageQueueService {
     virtual ~MessageQueueService() = default;
 
     // IMessageQueueService interface implementation
-    void AddMessageToQueue(
+    Result AddMessageToQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType type,
         std::unique_ptr<BaseMessage> message) override;
 

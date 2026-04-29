@@ -456,9 +456,15 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
             break;
     }
 
-    // Queue the message
     auto msg_copy = std::make_unique<BaseMessage>(message);
-    message_queue_service_->AddMessageToQueue(slot_type, std::move(msg_copy));
+    Result queue_result =
+        message_queue_service_->AddMessageToQueue(slot_type, std::move(msg_copy));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue message for %s slot: %s",
+                  slot_utils::SlotTypeToString(slot_type).c_str(),
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_DEBUG("Message queued for transmission in %s slot",
               slot_utils::SlotTypeToString(slot_type).c_str());
@@ -1052,8 +1058,13 @@ Result LoRaMeshProtocol::TrySendGuardedMessage(
 
     if (!CanFitInSlot(static_cast<uint8_t>(message->GetTotalSize()),
                       guard_time_ms)) {
-        message_queue_service_->AddMessageToQueue(slot_type,
-                                                  std::move(message));
+        Result requeue_result = message_queue_service_->AddMessageToQueue(
+            slot_type, std::move(message));
+        if (!requeue_result) {
+            LOG_ERROR("Failed to re-queue guarded message: %s",
+                      requeue_result.GetErrorMessage().c_str());
+            return requeue_result;
+        }
         return Result::Success();
     }
 
@@ -1097,8 +1108,13 @@ Result LoRaMeshProtocol::TrySendSubslottedMessage(
 
     if (!use_subslot) {
         if (!CanFitInSlot(msg_size)) {
-            message_queue_service_->AddMessageToQueue(slot_type,
-                                                      std::move(message));
+            Result requeue_result = message_queue_service_->AddMessageToQueue(
+                slot_type, std::move(message));
+            if (!requeue_result) {
+                LOG_ERROR("Failed to re-queue subslotted message: %s",
+                          requeue_result.GetErrorMessage().c_str());
+                return requeue_result;
+            }
             return Result::Success();
         }
         LOG_DEBUG("Subslot doesn't fit, sending immediately");
@@ -1475,9 +1491,13 @@ Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
                       "Failed to create routing message");
     }
 
-    // Add routing message to the message queue
-    message_queue_service_->AddMessageToQueue(
+    Result queue_result = message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::CONTROL_TX, std::move(routing_message));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue routing message: %s",
+                  queue_result.GetErrorMessage().c_str());
+        return queue_result;
+    }
 
     LOG_DEBUG("Routing message added to queue for transmission");
 

@@ -1612,6 +1612,45 @@ TEST_F(NetworkServiceCoverageTest, NoExpansionLeavesSlotTableAlone) {
     superframe_->StopSuperframe();
 }
 
+// ============================================================================
+// SendData propagates kQueueFull when the TX queue is at capacity.
+// Locks in error propagation through MessageQueueService → NetworkService and
+// (transitively) the user-facing LoraMesher::Send → LoRaMeshProtocol::SendData
+// path that delegates to NetworkService::SendData.
+// ============================================================================
+
+TEST_F(NetworkServiceCoverageTest, SendDataReturnsQueueFullWhenTxQueueSaturated) {
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+    // Cap the TX queue tightly so we can saturate it with a few SendData calls.
+    message_queue_->SetMaxQueueSize(3);
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    const std::vector<uint8_t> payload{0xDE, 0xAD, 0xBE, 0xEF};
+
+    for (int i = 0; i < 3; ++i) {
+        Result r = service_->SendData(kOtherNode, payload);
+        EXPECT_TRUE(r.IsSuccess()) << "SendData #" << i << " unexpectedly failed: "
+                                   << r.GetErrorMessage();
+    }
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 3u);
+
+    // The next SendData must surface kQueueFull from MessageQueueService.
+    Result rejected = service_->SendData(kOtherNode, payload);
+    EXPECT_FALSE(rejected.IsSuccess());
+    EXPECT_EQ(rejected.getErrorCode(), LoraMesherErrorCode::kQueueFull);
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 3u);
+
+    // Drain one entry; the next SendData must succeed again.
+    auto drained = message_queue_->ExtractMessageOfType(SlotType::TX);
+    ASSERT_NE(drained, nullptr);
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 2u);
+
+    Result recovered = service_->SendData(kOtherNode, payload);
+    EXPECT_TRUE(recovered.IsSuccess()) << recovered.GetErrorMessage();
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 3u);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

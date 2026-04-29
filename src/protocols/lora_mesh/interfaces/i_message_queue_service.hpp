@@ -6,6 +6,7 @@
 #pragma once
 
 #include <memory>
+#include "types/error_codes/result.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
@@ -23,11 +24,14 @@ class IMessageQueueService {
 
     /**
      * @brief Add a message to the queue
-     * 
+     *
      * @param type Message slot type
      * @param message Unique pointer to the message
+     * @return Result kSuccess if queued; kQueueFull if the per-slot queue is
+     *         at capacity (the message is rejected and not stored);
+     *         kInvalidArgument if the slot type is out of range.
      */
-    virtual void AddMessageToQueue(
+    virtual Result AddMessageToQueue(
         loramesher::types::protocols::lora_mesh::SlotAllocation::SlotType type,
         std::unique_ptr<BaseMessage> message) = 0;
 

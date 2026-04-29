@@ -62,16 +62,49 @@ TEST_F(MessageQueueServiceTest, AddToAllValidSlotTypes) {
     EXPECT_EQ(service_.GetTotalMessageCount(), 9u);
 }
 
-TEST_F(MessageQueueServiceTest, QueueFullDropsOldestMessage) {
-    // Fill to capacity (5)
+TEST_F(MessageQueueServiceTest, QueueFullRejectsNewMessage) {
+    // Fill to capacity (5) with PING messages
     for (int i = 0; i < 5; ++i) {
-        service_.AddMessageToQueue(SlotType::TX, MakeMessage());
+        Result r = service_.AddMessageToQueue(SlotType::TX,
+                                              MakeMessage(MessageType::PING));
+        EXPECT_TRUE(r.IsSuccess());
     }
     EXPECT_EQ(service_.GetQueueSize(SlotType::TX), 5u);
 
-    // Adding one more drops the oldest — size stays at 5
-    service_.AddMessageToQueue(SlotType::TX, MakeMessage());
+    // The next add must be rejected with kQueueFull and must not change size
+    Result r =
+        service_.AddMessageToQueue(SlotType::TX, MakeMessage(MessageType::DATA));
+    EXPECT_FALSE(r.IsSuccess());
+    EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kQueueFull);
     EXPECT_EQ(service_.GetQueueSize(SlotType::TX), 5u);
+
+    // The five originals remain in FIFO order; the rejected DATA is gone
+    for (int i = 0; i < 5; ++i) {
+        auto extracted = service_.ExtractMessageOfType(SlotType::TX);
+        ASSERT_NE(extracted, nullptr);
+        EXPECT_EQ(extracted->GetType(), MessageType::PING);
+    }
+    EXPECT_TRUE(service_.IsQueueEmpty(SlotType::TX));
+}
+
+TEST_F(MessageQueueServiceTest, AddMessageReturnsSuccessWhenSpaceAvailable) {
+    Result r = service_.AddMessageToQueue(SlotType::TX, MakeMessage());
+    EXPECT_TRUE(r.IsSuccess());
+    EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kSuccess);
+}
+
+TEST_F(MessageQueueServiceTest, AddMessageReturnsErrorForInvalidSlotType) {
+    Result r0 =
+        service_.AddMessageToQueue(static_cast<SlotType>(0), MakeMessage());
+    EXPECT_FALSE(r0.IsSuccess());
+    EXPECT_EQ(r0.getErrorCode(), LoraMesherErrorCode::kInvalidArgument);
+
+    Result r10 =
+        service_.AddMessageToQueue(static_cast<SlotType>(10), MakeMessage());
+    EXPECT_FALSE(r10.IsSuccess());
+    EXPECT_EQ(r10.getErrorCode(), LoraMesherErrorCode::kInvalidArgument);
+
+    EXPECT_EQ(service_.GetTotalMessageCount(), 0u);
 }
 
 TEST_F(MessageQueueServiceTest, AddMultipleMessages) {
