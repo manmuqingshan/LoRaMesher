@@ -1,6 +1,7 @@
 // utils/logger.hpp
 #pragma once
 
+#include <atomic>
 #include <cstdarg>
 #include <memory>
 
@@ -280,7 +281,7 @@ class Logger {
     // Binary semaphore for thread safety using RTOS abstraction
     os::SemaphoreHandle_t logger_semaphore_;
     // Shutdown flag to prevent logging during destruction (atomic for thread safety)
-    bool shutdown_requested_{false};
+    std::atomic<bool> shutdown_requested_{false};
 
     void LogMessage(LogLevel level, const char* message);
     void EnsureSemaphoreInitialized();

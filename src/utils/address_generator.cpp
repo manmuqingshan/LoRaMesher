@@ -108,7 +108,7 @@ AddressType AddressGenerator::GenerateFallback(const Config& config) {
     auto time_count = time_since_epoch.count();
 
     // Combine random device with time count for better entropy
-    std::mt19937 gen(rd() ^ static_cast<uint32_t>(time_count));
+    std::minstd_rand gen(rd() ^ static_cast<uint32_t>(time_count));
     std::uniform_int_distribution<uint16_t> dis(
         1, 0xFFFE);  // Avoid reserved addresses by default
 

@@ -1,4 +1,5 @@
 #include "logger.hpp"
+#include <mutex>
 #include "os/os_port.hpp"
 
 namespace loramesher {
@@ -32,16 +33,16 @@ void Logger::LogRaw(LogLevel level, const char* message) {
 void Logger::Log(LogLevel level, const char* format, ...) {
     EnsureSemaphoreInitialized();
 
-    if (!logger_semaphore_ ||
-        !GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
-        return;
-    }
-
     char buffer[LOGGER_BUFFER_SIZE];
     va_list args;
     va_start(args, format);
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
+
+    if (!logger_semaphore_ ||
+        !GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
+        return;
+    }
 
     try {
         LogMessage(level, buffer);
@@ -54,9 +55,12 @@ void Logger::Log(LogLevel level, const char* format, ...) {
 }
 
 void Logger::EnsureSemaphoreInitialized() {
-    if (!shutdown_requested_ && !logger_semaphore_) {
-        logger_semaphore_ = GetRTOS().CreateSystemSemaphore();
-    }
+    static std::once_flag flag;
+    std::call_once(flag, [this] {
+        if (!shutdown_requested_) {
+            logger_semaphore_ = GetRTOS().CreateSystemSemaphore();
+        }
+    });
 }
 
 void Logger::LogMessage(LogLevel level, const char* message) {
