@@ -12,6 +12,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#include "config/task_config.hpp"
 #include "os/rtos.hpp"
 #include "utils/logger.hpp"
 
@@ -159,8 +160,10 @@ class RTOSFreeRTOS : public RTOS {
     void StartScheduler() override { vTaskStartScheduler(); }
 
     uint32_t getTaskStackWatermark(TaskHandle_t taskHandle) override {
-        return uxTaskGetStackHighWaterMark(taskHandle) * 4;
-        // esp_get_free_heap_size
+        // uxTaskGetStackHighWaterMark returns words on this port; report
+        // bytes to match the rest of the codebase.
+        return uxTaskGetStackHighWaterMark(taskHandle) *
+               config::TaskConfig::kStackBytesPerWord;
     }
 
     TaskState getTaskState(TaskHandle_t taskHandle) override {

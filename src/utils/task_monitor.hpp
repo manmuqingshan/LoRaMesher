@@ -1,7 +1,9 @@
 // src/utilities/task_monitor.hpp
 #pragma once
 
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "config/system_config.hpp"
 #include "config/task_config.hpp"
@@ -52,6 +54,57 @@ class TaskMonitor {
 #endif
     }
 
+    struct Registration {
+        os::TaskHandle_t handle;
+        const char* name;            ///< Assumed to point to a string literal.
+        uint32_t configured_bytes;   ///< Total stack size in bytes.
+    };
+
+    /**
+     * @brief Register the calling task in the global watch list.
+     *
+     * Called once at task entry. Subsequent PollAllAndWarn() calls iterate
+     * this list to log each task's high-water-mark in bytes.
+     */
+    static void RegisterCurrentTask(const char* task_name,
+                                    uint32_t configured_bytes) {
+#ifdef LORAMESHER_BUILD_ARDUINO
+        os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
+        std::lock_guard<std::mutex> lock(GetRegistry().mutex);
+        GetRegistry().entries.push_back(
+            {handle, task_name, configured_bytes});
+#else
+        (void)task_name;
+        (void)configured_bytes;
+#endif
+    }
+
+    /**
+     * @brief Iterate every registered task, log its current high-water-mark
+     * in bytes, and warn if the value drops below kStackWarnBytes.
+     *
+     * On this FreeRTOS port uxTaskGetStackHighWaterMark returns words, so
+     * we multiply by kStackBytesPerWord to report bytes consistently.
+     */
+    static void PollAllAndWarn() {
+#ifdef LORAMESHER_BUILD_ARDUINO
+        std::lock_guard<std::mutex> lock(GetRegistry().mutex);
+        for (const auto& reg : GetRegistry().entries) {
+            UBaseType_t hwm_words =
+                uxTaskGetStackHighWaterMark(reg.handle);
+            uint32_t hwm_bytes = static_cast<uint32_t>(hwm_words) *
+                                 config::TaskConfig::kStackBytesPerWord;
+            LOG_INFO("STACK[%s] total=%u free=%u", reg.name,
+                     static_cast<unsigned>(reg.configured_bytes),
+                     static_cast<unsigned>(hwm_bytes));
+            if (hwm_bytes < config::TaskConfig::kStackWarnBytes) {
+                LOG_WARNING("Task %s stack low: %u bytes free", reg.name,
+                            static_cast<unsigned>(hwm_bytes));
+            }
+        }
+#endif
+    }
+
     /**
      * @brief Monitor all system tasks
      */
@@ -78,6 +131,15 @@ class TaskMonitor {
                  watermark);
 
         LOG_WARNING(buffer);
+    }
+
+    struct Registry {
+        std::mutex mutex;
+        std::vector<Registration> entries;
+    };
+    static Registry& GetRegistry() {
+        static Registry r;
+        return r;
     }
 };
 

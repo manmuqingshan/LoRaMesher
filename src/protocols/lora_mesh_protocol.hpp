@@ -495,7 +495,6 @@ class LoRaMeshProtocol : public Protocol {
     std::atomic<NodeRole> pending_role_{NodeRole::AUTO};
 
     // Constants
-    static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 8192;
     static constexpr uint32_t TASK_PRIORITY = 3;
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =

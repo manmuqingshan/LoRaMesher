@@ -370,21 +370,23 @@ TEST(RTOSCoverageTest, ResumeNonexistentTask) {
 // ---------------------------------------------------------------------------
 
 /**
- * @brief getTaskStackWatermark(nullptr) returns a simulated watermark for
- * the current thread if it happens to be a registered RTOS task; for the
- * main test thread (not registered) it returns the default 2048
- * (covers lines 1097-1124 in rtos_mock.hpp).
+ * @brief getTaskStackWatermark(nullptr) returns 0 for an unregistered caller
+ * (e.g. the main test thread), since real watermark tracking has no data
+ * for threads that never went through CreateTask.
  */
 TEST(RTOSCoverageTest, GetTaskStackWatermarkCurrentThread) {
     RTOSMock& rtos = GetMock();
 
-    // From the main test thread (not a registered task) → returns default 2048
+    // Main test thread is not a registered task → 0 (unknown).
     uint32_t watermark = rtos.getTaskStackWatermark(nullptr);
-    EXPECT_EQ(watermark, 2048u);
+    EXPECT_EQ(watermark, 0u);
 }
 
 /**
- * @brief getTaskStackWatermark() for a real RTOS task returns a sensible value.
+ * @brief getTaskStackWatermark() for a real RTOS task returns a sensible value
+ * once the task has called into the RTOS at least once (which triggers a
+ * SampleStackUsage call). Without any RTOS interaction the watermark equals
+ * the full stack size, since no sample has been taken.
  */
 TEST(RTOSCoverageTest, GetTaskStackWatermarkRealTask) {
     RTOSMock& rtos = GetMock();
@@ -396,7 +398,8 @@ TEST(RTOSCoverageTest, GetTaskStackWatermarkRealTask) {
         auto* p =
             static_cast<std::pair<std::atomic<uint32_t>*, std::atomic<bool>*>*>(
                 param);
-        // Ask for own watermark (nullptr = current task)
+        // Force a stack sample via the RTOS, then read own watermark.
+        (void)GetRTOS().ShouldStopOrPause();
         uint32_t wm = GetRTOS().getTaskStackWatermark(nullptr);
         p->first->store(wm);
         p->second->store(true);
@@ -411,8 +414,9 @@ TEST(RTOSCoverageTest, GetTaskStackWatermarkRealTask) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     EXPECT_TRUE(done.load());
-    // The simulated watermark should be >0 and <= stack_size (4096)
+    // After a sample has been taken, watermark should be >0 and < stack size.
     EXPECT_GT(measured_watermark.load(), 0u);
+    EXPECT_LT(measured_watermark.load(), 4096u);
 
     rtos.DeleteTask(handle);
 }

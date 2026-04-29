@@ -509,7 +509,12 @@ TEST_F(RTOSMockTest, TaskStackWatermarkTest) {
         // Prevent warning about unused checksum
         (void)checksum;
 
+        // Loop must call into the mock RTOS so SampleStackUsage fires; a bare
+        // std::this_thread::sleep_for would never trigger a sample.
         while (!exitFlag->load()) {
+            if (GetRTOS().ShouldStopOrPause()) {
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     };
@@ -525,10 +530,11 @@ TEST_F(RTOSMockTest, TaskStackWatermarkTest) {
     // Get stack watermark
     uint32_t watermark = rtosInstance->getTaskStackWatermark(taskHandle);
 
-    // Verify watermark is reasonable
-    // In the RTOSMock, watermark should be 60-90% of stack size
-    EXPECT_GT(watermark, stackSize * 0.5);  // More than 50% should be free
-    EXPECT_LT(watermark, stackSize);        // But not the full stack
+    // With real tracking, watermark = stackSize - peak_observed_use. The task
+    // touched a 1 KB buffer, so peak should be >= 1 KB; thus watermark must be
+    // strictly less than the full stack and strictly greater than zero.
+    EXPECT_GT(watermark, 0u);
+    EXPECT_LT(watermark, stackSize);
 
     // Clean up
     shouldExit.store(true);

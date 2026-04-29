@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <chrono>
 
+#include "config/task_config.hpp"
 #include "os/os_port.hpp"
 #include "ping_pong_protocol.hpp"
 #include "types/radio/radio_event.hpp"
+#include "utils/task_monitor.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -114,7 +116,9 @@ Result PingPongProtocol::Init(
 
     // Create the timeout checking task
     bool timeout_task_created = GetRTOS().CreateTask(
-        TimeoutCheckTaskFunction, "PingPongTimeout", TIMEOUT_TASK_STACK_SIZE,
+        TimeoutCheckTaskFunction, "PingPongTimeout",
+        config::TaskConfig::kPingPongTimeoutStackSize /
+            config::TaskConfig::kStackBytesPerWord,
         this, TIMEOUT_TASK_PRIORITY, &timeout_task_handle_);
 
     if (!timeout_task_created) {
@@ -125,7 +129,9 @@ Result PingPongProtocol::Init(
 
     // Create message processing task
     bool process_task_created = GetRTOS().CreateTask(
-        MessageProcessTaskFunction, "PingPongProcess", PROCESS_TASK_STACK_SIZE,
+        MessageProcessTaskFunction, "PingPongProcess",
+        config::TaskConfig::kPingPongProcessStackSize /
+            config::TaskConfig::kStackBytesPerWord,
         this, PROCESS_TASK_PRIORITY, &process_task_handle_);
 
     if (!process_task_created) {
@@ -180,6 +186,9 @@ void PingPongProtocol::MessageProcessTaskFunction(void* parameters) {
     // RTOS instance
     auto& rtos = GetRTOS();
 
+    utils::TaskMonitor::RegisterCurrentTask(
+        "PingPongProcess", config::TaskConfig::kPingPongProcessStackSize);
+
     // Pointer to receive from queue
     std::unique_ptr<radio::RadioEvent>* event_ptr = nullptr;
 
@@ -215,6 +224,9 @@ void PingPongProtocol::TimeoutCheckTaskFunction(void* parameters) {
 
     // RTOS instance for delay and other operations
     auto& rtos = GetRTOS();
+
+    utils::TaskMonitor::RegisterCurrentTask(
+        "PingPongTimeout", config::TaskConfig::kPingPongTimeoutStackSize);
 
     // Task loop
     while (!protocol->stop_tasks_ && !rtos.ShouldStopOrPause()) {

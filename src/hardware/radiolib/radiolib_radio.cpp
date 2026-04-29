@@ -74,7 +74,8 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
     // Create processing task with monitored configuration
     bool task_created = GetRTOS().CreateTask(
         ProcessEvents, taskName.c_str(),
-        config::TaskConfig::kRadioEventStackSize / 4,  // FreeRTOS uses words
+        config::TaskConfig::kRadioEventStackSize /
+            config::TaskConfig::kStackBytesPerWord,
         this, config::TaskPriorities::kRadioEventPriority, &processing_task_);
 
     if (!task_created) {
@@ -554,6 +555,9 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     char address_str[8];
     snprintf(address_str, sizeof(address_str), "0x%04X", radio->local_address_);
     GetRTOS().SetCurrentTaskNodeAddress(address_str);
+
+    utils::TaskMonitor::RegisterCurrentTask(
+        "RadioEvent", config::TaskConfig::kRadioEventStackSize);
 
     // LOG_DEBUG("Processing events for radio %p", static_cast<void*>(radio));
     while (!GetRTOS().ShouldStopOrPause() && radio->processing_task_) {

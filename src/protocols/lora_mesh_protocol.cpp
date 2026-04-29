@@ -9,6 +9,7 @@
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/radio/radio_event.hpp"
+#include "utils/task_monitor.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
@@ -203,8 +204,10 @@ Result LoRaMeshProtocol::Init(
 
     // Create main protocol task
     bool task_created = GetRTOS().CreateTask(
-        ProtocolTaskFunction, "LoRaMeshMain", PROTOCOL_TASK_STACK_SIZE, this,
-        TASK_PRIORITY, &protocol_task_handle_);
+        ProtocolTaskFunction, "LoRaMeshMain",
+        config::TaskConfig::kProtocolMainStackSize /
+            config::TaskConfig::kStackBytesPerWord,
+        this, TASK_PRIORITY, &protocol_task_handle_);
 
     if (!task_created) {
         return Result(LoraMesherErrorCode::kConfigurationError,
@@ -537,13 +540,13 @@ bool LoRaMeshProtocol::IsSynchronized() const {
     bool network_synchronized = network_service_->IsSynchronized();
     bool superframe_synchronized = superframe_service_->IsSynchronized();
 
-    if (!network_synchronized) {
-        LOG_WARNING("Network service is not synchronized");
-    }
+    // if (!network_synchronized) {
+    //     LOG_WARNING("Network service is not synchronized");
+    // }
 
-    if (!superframe_synchronized) {
-        LOG_WARNING("Superframe service is not synchronized");
-    }
+    // if (!superframe_synchronized) {
+    //     LOG_WARNING("Superframe service is not synchronized");
+    // }
 
     return network_synchronized &&
            superframe_synchronized;  // Both must be synchronized
@@ -635,11 +638,23 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
              protocol->GetNodeAddress());
     rtos.SetCurrentTaskNodeAddress(address_str);
 
+    utils::TaskMonitor::RegisterCurrentTask(
+        "LoRaMeshMain", config::TaskConfig::kProtocolMainStackSize);
+
     LOG_INFO("Protocol task started");
+
+    uint32_t last_stack_log_ms = rtos.getTickCount();
+    constexpr uint32_t kStackLogIntervalMs = 30000;
 
     Result result = Result::Success();
 
     while (!rtos.ShouldStopOrPause()) {
+        const uint32_t now_ms = rtos.getTickCount();
+        if (now_ms - last_stack_log_ms >= kStackLogIntervalMs) {
+            utils::TaskMonitor::PollAllAndWarn();
+            last_stack_log_ms = now_ms;
+        }
+
         // Calculate timeout based on current state
         uint32_t timeout_ms = QUEUE_WAIT_TIMEOUT_MS;
 

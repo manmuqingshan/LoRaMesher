@@ -25,6 +25,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -319,6 +321,16 @@ class RTOSMock : public RTOS {
                 std::thread::id my_id = std::this_thread::get_id();
                 std::lock_guard<std::timed_mutex> lock(tasksMutex_);
                 GetThreadLocalTaskInfo() = findCurrentTaskInfoUnsafe(my_id);
+            }
+
+            // Capture this task's stack base address now (just before the
+            // user's task function runs). __builtin_frame_address(0) returns
+            // the current function's frame pointer; on downward-growing stacks
+            // (x86_64, ARM, AArch64) every nested frame has a smaller address.
+            if (TaskInfo* my_info = GetThreadLocalTaskInfo()) {
+                my_info->stack_base_addr.store(
+                    reinterpret_cast<uintptr_t>(__builtin_frame_address(0)),
+                    std::memory_order_relaxed);
             }
 
             try {
@@ -756,6 +768,13 @@ class RTOSMock : public RTOS {
      * @return true if the task should stop, false to continue
      */
     bool ShouldStopOrPause() override {
+        // Sample stack pointer for the calling task before any other work.
+        // Frame address taken in this function — close enough to the user
+        // task's deepest frame (RTOS call only adds a few bytes).
+        SampleStackUsage(GetThreadLocalTaskInfo(),
+                         reinterpret_cast<uintptr_t>(
+                             __builtin_frame_address(0)));
+
         std::thread::id thread_id = std::this_thread::get_id();
         std::string task_name = "current";
         TaskInfo* task_info = nullptr;
@@ -1193,7 +1212,6 @@ class RTOSMock : public RTOS {
         std::thread::id current_id;
 
         if (taskHandle == nullptr) {
-            // Get the stack watermark for the current task
             current_id = std::this_thread::get_id();
         } else {
             auto* thread = static_cast<std::thread*>(taskHandle);
@@ -1202,20 +1220,11 @@ class RTOSMock : public RTOS {
 
         for (const auto& [thread, info] : tasks_) {
             if (thread->get_id() == current_id) {
-                // If we haven't set a specific watermark for this task, simulate one
-                if (info.stack_watermark == 0) {
-                    // Simulate a watermark between 60-90% of total stack size
-                    uint32_t used_percentage =
-                        10 + (std::rand() % 30);  // 10-40% used
-                    uint32_t free_percentage = 100 - used_percentage;
-                    return (info.stack_size * free_percentage) / 100;
-                }
-                return info.stack_watermark;
+                return ComputeFreeStackBytes(info);
             }
         }
 
-        // Task not found, return default value
-        return 2048;
+        return 0;
     }
 
     /**
@@ -1253,22 +1262,12 @@ class RTOSMock : public RTOS {
         std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
         for (const auto& [thread, info] : tasks_) {
-            // Get the stack watermark for this task (or calculate it if not set)
-            uint32_t watermark = info.stack_watermark;
-            if (watermark == 0) {
-                // Simulate a watermark between 60-90% of total stack size
-                uint32_t used_percentage =
-                    10 + (std::rand() % 30);  // 10-40% used
-                uint32_t free_percentage = 100 - used_percentage;
-                watermark = (info.stack_size * free_percentage) / 100;
-            }
-
-            stats.push_back(TaskStats{.name = info.name,
-                                      .state = info.suspended
-                                                   ? TaskState::kSuspended
-                                                   : TaskState::kRunning,
-                                      .stackWatermark = watermark,
-                                      .runtime = 0});
+            stats.push_back(
+                TaskStats{.name = info.name,
+                          .state = info.suspended ? TaskState::kSuspended
+                                                  : TaskState::kRunning,
+                          .stackWatermark = ComputeFreeStackBytes(info),
+                          .runtime = 0});
         }
 
         return stats;
@@ -1982,6 +1981,59 @@ class RTOSMock : public RTOS {
     static thread_local char thread_local_node_address_[8];
 
     /**
+     * @brief Sample the current stack pointer against the calling task's
+     * recorded base, update peak_stack_used, and abort if the peak has
+     * reached or exceeded the configured stack size.
+     *
+     * Called from hot RTOS paths (ShouldStopOrPause, etc.). Cheap when no
+     * task is registered or budget hasn't been exceeded; aborts the test
+     * loudly when the caller's stack usage crosses the configured budget,
+     * surfacing on native what would be a hard FreeRTOS overflow on ESP32.
+     */
+    /**
+     * @brief Compute free stack bytes from peak observed usage. Returns 0 when
+     * no sample has been taken yet (task hasn't called into the RTOS) or when
+     * usage has met/exceeded the configured budget.
+     */
+    static inline uint32_t ComputeFreeStackBytes(const TaskInfo& info) {
+        if (info.stack_size == 0) {
+            return 0;
+        }
+        uint32_t used =
+            info.peak_stack_used.load(std::memory_order_relaxed);
+        if (used == 0) {
+            return info.stack_size;
+        }
+        return used >= info.stack_size ? 0u : info.stack_size - used;
+    }
+
+    static inline void SampleStackUsage(TaskInfo* info,
+                                        uintptr_t current_frame) {
+        if (!info) {
+            return;
+        }
+        uintptr_t base =
+            info->stack_base_addr.load(std::memory_order_relaxed);
+        if (base == 0 || current_frame >= base) {
+            return;
+        }
+        uint32_t used = static_cast<uint32_t>(base - current_frame);
+        uint32_t prev =
+            info->peak_stack_used.load(std::memory_order_relaxed);
+        while (used > prev &&
+               !info->peak_stack_used.compare_exchange_weak(
+                   prev, used, std::memory_order_relaxed)) {
+        }
+        if (info->stack_size > 0 && used >= info->stack_size) {
+            std::fprintf(stderr,
+                         "\n*** MOCK STACK OVERFLOW: task '%s' used %u "
+                         "bytes, budget=%u ***\n",
+                         info->name.c_str(), used, info->stack_size);
+            std::abort();
+        }
+    }
+
+    /**
      * @brief Returns a reference to this thread's cached TaskInfo pointer.
      * Set once in CreateTask before the task function runs, cleared on exit.
      * Nullptr for non-task threads (e.g., test thread).
@@ -2369,6 +2421,13 @@ class RTOSMock : public RTOS {
         // For timed-join in DeleteTask()
         std::shared_ptr<std::promise<void>> exit_signal;
         std::shared_future<void> exit_future;
+
+        // Real stack-usage tracking: captured at task entry via
+        // __builtin_frame_address(0). Sampling happens inside hot RTOS paths
+        // (e.g. ShouldStopOrPause) and updates peak_stack_used. If
+        // peak_stack_used >= stack_size, the test aborts with a clear message.
+        std::atomic<uintptr_t> stack_base_addr{0};
+        std::atomic<uint32_t> peak_stack_used{0};
     };
 
     TimeMode timeMode_;  ///< Current time mode (real or virtual)

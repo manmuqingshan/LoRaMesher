@@ -187,17 +187,12 @@ class PingPongProtocol : public Protocol {
     // Constants
     static constexpr uint32_t TIMEOUT_CHECK_INTERVAL_MS =
         1000;  ///< Interval for timeout checks in milliseconds
-    static constexpr uint32_t TIMEOUT_TASK_STACK_SIZE =
-        2048;  ///< TODO: Change it to use the configStack.
-    ///Stack size for the timeout checking task
     static constexpr uint32_t TIMEOUT_TASK_PRIORITY =
         3;  ///< Priority for the timeout checking task
     static constexpr size_t MESSAGE_QUEUE_SIZE =
         10;  ///< Maximum number of messages in queue
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS =
         100;  ///< Wait timeout for queue operations
-    static constexpr uint32_t PROCESS_TASK_STACK_SIZE =
-        2048;  ///< Stack size for processing task
     static constexpr uint32_t PROCESS_TASK_PRIORITY =
         3;  ///< Priority for processing task
 

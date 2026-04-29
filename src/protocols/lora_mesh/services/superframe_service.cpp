@@ -8,7 +8,9 @@
 #include <cstdlib>
 #include <random>
 
+#include "config/task_config.hpp"
 #include "os/os_port.hpp"
+#include "utils/task_monitor.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
@@ -308,14 +310,14 @@ uint32_t SuperframeService::GetDiscoveryTimeout() {
     // Base discovery timeout: 3 superframes worth of time
     uint32_t base_timeout = total_slots_ * slot_duration_ms_ * 3;
 
-    // Add random jitter to prevent simultaneous network creation
-    // when multiple nodes start at nearly the same time.
+    // Add per-node jitter to prevent simultaneous network creation when
+    // multiple nodes start at nearly the same time. Seeded with the node
+    // address so each node deterministically picks a different offset.
     if (discovery_jitter_max_ms_ > 0) {
-        std::mt19937 rng(node_address_);
+        std::minstd_rand rng(node_address_);
         std::uniform_int_distribution<uint32_t> dist(0,
                                                      discovery_jitter_max_ms_);
-        uint32_t jitter = dist(rng);
-        return base_timeout + jitter;
+        return base_timeout + dist(rng);
     }
 
     return base_timeout;
@@ -652,8 +654,10 @@ bool SuperframeService::CreateUpdateTask() {
     }
 
     bool task_created = GetRTOS().CreateTask(
-        UpdateTaskFunction, "SuperframeUpdate", TASK_STACK_SIZE, this,
-        TASK_PRIORITY, &update_task_handle_);
+        UpdateTaskFunction, "SuperframeUpdate",
+        config::TaskConfig::kSuperframeStackSize /
+            config::TaskConfig::kStackBytesPerWord,
+        this, TASK_PRIORITY, &update_task_handle_);
 
     if (task_created) {
         LOG_DEBUG("Superframe update task created");
@@ -696,6 +700,9 @@ void SuperframeService::UpdateTaskFunction(void* param) {
                  service->node_address_);
         rtos.SetCurrentTaskNodeAddress(address_str);
     }
+
+    utils::TaskMonitor::RegisterCurrentTask(
+        "SuperframeUpdate", config::TaskConfig::kSuperframeStackSize);
 
     // Task loop with queue-based efficient waiting
     SuperframeNotificationType notification;

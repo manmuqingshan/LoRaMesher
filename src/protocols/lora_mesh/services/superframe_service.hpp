@@ -435,7 +435,6 @@ class SuperframeService : public ISuperframeService {
 
     // Constants
     static constexpr uint32_t DEFAULT_UPDATE_INTERVAL_MS = 20;
-    static constexpr uint32_t TASK_STACK_SIZE = 6144;
     static constexpr uint32_t TASK_PRIORITY = 14;
     static constexpr uint32_t NOTIFICATION_QUEUE_SIZE = 32;
 };
