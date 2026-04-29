@@ -4,7 +4,7 @@
  */
 #pragma once
 
-#define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
+//#define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
 
 #include <gtest/gtest.h>
 #include <filesystem>
