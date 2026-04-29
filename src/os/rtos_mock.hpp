@@ -253,13 +253,13 @@ class RTOSMock : public RTOS {
         // protocol tasks asynchronously (not via tasksToWake), so we must wait
         // for those tasks to finish processing and re-block as well.
         if (!tasksToWake.empty() || !timersToTrigger.empty()) {
-#if defined(__SANITIZE_THREAD__) || \
-    (defined(__has_feature) && __has_feature(thread_sanitizer))
-            waitForTasksToReblock(500);
-#else
+            // #if defined(__SANITIZE_THREAD__) || \
+//     (defined(__has_feature) && __has_feature(thread_sanitizer))
+            //             waitForTasksToReblock(500);
+            // #else
             waitForTasksToReblock(
-                100);  // 100ms covers async slot-transition processing
-#endif
+                1000);  // 1000ms covers async slot-transition processing
+                        // #endif
         }
 
         return virtualTimeMs_;
