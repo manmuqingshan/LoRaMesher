@@ -1937,6 +1937,64 @@ TEST_F(RoutingTableUnitTest, BidirectionalDirectRouteCanReplaceIndirectRoute) {
     EXPECT_EQ(it->routing_entry.hop_count, 1);
 }
 
+// =============================================================================
+// HasUnidirectionalRisk / SetControlSlotIndex / SetMaxNodes overflow
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, HasUnidirectionalRiskNotPresentReturnsFalse) {
+    EXPECT_FALSE(routing_table_->HasUnidirectionalRisk(kNeighbor1));
+}
+
+TEST_F(RoutingTableUnitTest,
+       HasUnidirectionalRiskFreshDirectNeighborReturnsFalse) {
+    AddDirectNeighbor(kNeighbor1, kGoodQuality);
+    // Fresh entry: messages_received < 2 → predicate returns false.
+    EXPECT_FALSE(routing_table_->HasUnidirectionalRisk(kNeighbor1));
+}
+
+TEST_F(RoutingTableUnitTest, HasUnidirectionalRiskFalseForMultiHopRoute) {
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kNeighbor1, 1, kGoodQuality));
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+    // kNeighbor1 is reachable via 2 hops, hop_count != 1 → no risk.
+    EXPECT_FALSE(routing_table_->HasUnidirectionalRisk(kNeighbor1));
+}
+
+TEST_F(RoutingTableUnitTest, SetControlSlotIndexSucceedsForExistingNode) {
+    AddDirectNeighbor(kNeighbor1);
+    EXPECT_TRUE(routing_table_->SetControlSlotIndex(kNeighbor1, 7));
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->control_slot_index, 7u);
+}
+
+TEST_F(RoutingTableUnitTest, SetControlSlotIndexFailsForUnknownNode) {
+    EXPECT_FALSE(routing_table_->SetControlSlotIndex(kNeighbor1, 7));
+}
+
+TEST_F(RoutingTableUnitTest, SetMaxNodesShrinksTableAndDropsOldest) {
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    AddDirectNeighbor(kNeighbor3);
+    EXPECT_EQ(routing_table_->GetSize(), 3u);
+
+    routing_table_->SetMaxNodes(2);
+    EXPECT_EQ(routing_table_->GetSize(), 2u);
+}
+
+TEST_F(RoutingTableUnitTest, GetStatisticsReportsNodeCount) {
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    std::string stats = routing_table_->GetStatistics();
+    EXPECT_NE(stats.find("Nodes: 2"), std::string::npos);
+}
+
 TEST_F(RoutingTableUnitTest, InactiveRouteCanBeReplacedByUnidirectionalDirect) {
     // Set up: kNeighbor1 via kNeighbor2 (2 hops), then mark inactive
     AddDirectNeighbor(kNeighbor2, kGoodQuality);
