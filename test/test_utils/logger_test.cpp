@@ -4,6 +4,9 @@
  */
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <string>
+
 #include "utils/logger.hpp"
 
 using namespace loramesher;
@@ -47,4 +50,53 @@ TEST_F(LoggerTest, LogLevelTest) {
 
     // Now Debug messages should appear
     LOG.Debug("This is another debug message: %d", 2);
+}
+
+namespace {
+
+class CountingLogHandler : public LogHandler {
+   public:
+    int writes_ = 0;
+    int flushes_ = 0;
+    LogLevel last_level_ = LogLevel::kInfo;
+    std::string last_message_;
+
+    void Write(LogLevel level, const char* /*node_addr*/,
+               const char* message) override {
+        writes_++;
+        last_level_ = level;
+        last_message_ = message ? message : "";
+    }
+
+    void Flush() override { flushes_++; }
+};
+
+}  // namespace
+
+TEST_F(LoggerTest, LogRawWritesPreformattedMessage) {
+    auto handler = std::make_unique<CountingLogHandler>();
+    auto* raw = handler.get();
+    LOG.SetHandler(std::move(handler));
+    LOG.SetLogLevel(LogLevel::kDebug);
+
+    LOG.LogRaw(LogLevel::kInfo, "raw-message");
+
+    EXPECT_GE(raw->writes_, 1);
+    EXPECT_EQ(raw->last_message_, "raw-message");
+    EXPECT_EQ(raw->last_level_, LogLevel::kInfo);
+}
+
+TEST_F(LoggerTest, FlushDispatchesToHandler) {
+    auto handler = std::make_unique<CountingLogHandler>();
+    auto* raw = handler.get();
+    LOG.SetHandler(std::move(handler));
+
+    int before = raw->flushes_;
+    LOG.Flush();
+    EXPECT_GT(raw->flushes_, before);
+}
+
+TEST_F(LoggerTest, SetHandlerToNullDoesNotCrashOnSubsequentLog) {
+    LOG.SetHandler(nullptr);
+    EXPECT_NO_THROW(LOG.Info("after-null-handler"));
 }

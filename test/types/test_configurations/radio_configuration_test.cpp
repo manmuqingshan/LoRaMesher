@@ -238,5 +238,95 @@ TEST(RadioConfigMaxPacketForSfTest, UnknownSfReturnsConservativeDefault) {
     EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(13, 125.0F), 51);
 }
 
+// ===========================================================================
+// setCurrentLimit / IsCurrentLimitAuto
+// ===========================================================================
+
+TEST(RadioConfigCurrentLimitTest, DefaultIsAuto) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_TRUE(c.IsCurrentLimitAuto());
+    EXPECT_FLOAT_EQ(c.getCurrentLimit(), RadioConfig::kAutoCurrentLimit);
+}
+
+TEST(RadioConfigCurrentLimitTest, SetExplicitValueWithinRange) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    c.setCurrentLimit(60.0F);
+    EXPECT_FLOAT_EQ(c.getCurrentLimit(), 60.0F);
+    EXPECT_FALSE(c.IsCurrentLimitAuto());
+}
+
+TEST(RadioConfigCurrentLimitTest, SetAutoExplicitlyKeepsAuto) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    c.setCurrentLimit(45.0F);
+    EXPECT_FALSE(c.IsCurrentLimitAuto());
+
+    c.setCurrentLimit(RadioConfig::kAutoCurrentLimit);
+    EXPECT_TRUE(c.IsCurrentLimitAuto());
+}
+
+TEST(RadioConfigCurrentLimitTest, SetTooLowThrows) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_THROW(c.setCurrentLimit(44.0F), std::invalid_argument);
+}
+
+TEST(RadioConfigCurrentLimitTest, SetTooHighThrows) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_THROW(c.setCurrentLimit(241.0F), std::invalid_argument);
+}
+
+TEST(RadioConfigCurrentLimitTest, SetAtBoundariesSucceeds) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1276();
+    EXPECT_NO_THROW(c.setCurrentLimit(45.0F));
+    EXPECT_FLOAT_EQ(c.getCurrentLimit(), 45.0F);
+    EXPECT_NO_THROW(c.setCurrentLimit(240.0F));
+    EXPECT_FLOAT_EQ(c.getCurrentLimit(), 240.0F);
+}
+
+// ===========================================================================
+// RecommendedCurrentLimit — covers all radio type / power-tier branches
+// ===========================================================================
+
+TEST(RadioConfigRecommendedCurrentLimitTest, Sx1276PowerTiers) {
+    EXPECT_FLOAT_EQ(RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, 5),
+                    45.0F);
+    EXPECT_FLOAT_EQ(RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, 7),
+                    45.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, 10), 60.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, 14), 60.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, 17), 100.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, 20), 150.0F);
+}
+
+TEST(RadioConfigRecommendedCurrentLimitTest, Sx1278PowerTiersMatchSx1276) {
+    EXPECT_FLOAT_EQ(RadioConfig::RecommendedCurrentLimit(RadioType::kSx1278, 7),
+                    45.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1278, 14), 60.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1278, 17), 100.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1278, 20), 150.0F);
+}
+
+TEST(RadioConfigRecommendedCurrentLimitTest, Sx1262PowerTiers) {
+    EXPECT_FLOAT_EQ(RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, 5),
+                    60.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, 14), 60.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, 17), 100.0F);
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, 22), 140.0F);
+}
+
+TEST(RadioConfigRecommendedCurrentLimitTest, MockRadioFallsThroughToDefault) {
+    EXPECT_FLOAT_EQ(
+        RadioConfig::RecommendedCurrentLimit(RadioType::kMockRadio, 17), 60.0F);
+}
+
 }  // namespace test
 }  // namespace loramesher

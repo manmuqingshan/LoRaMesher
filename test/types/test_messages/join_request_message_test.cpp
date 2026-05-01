@@ -367,5 +367,24 @@ TEST_F(JoinRequestMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
     EXPECT_FALSE(result.has_value());
 }
 
+TEST_F(JoinRequestMessageTest,
+       CreateFromBaseMessagePayloadTooSmallReturnsNullopt) {
+    std::array<uint8_t, 1> truncated{0xFF};
+    BaseMessage too_small(dest, src, MessageType::JOIN_REQUEST,
+                          std::span<const uint8_t>(truncated));
+
+    auto result = JoinRequestMessage::CreateFromBaseMessage(too_small);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(JoinRequestMessageTest, SetRequestedSlotsUpdatesHeaderField) {
+    auto opt = JoinRequestMessage::Create(dest, src, /*battery_level=*/80,
+                                          /*requested_slots=*/1);
+    ASSERT_TRUE(opt.has_value());
+    Result r = opt->SetRequestedSlots(5);
+    EXPECT_TRUE(r.IsSuccess());
+    EXPECT_EQ(opt->GetHeader().GetRequestedSlots(), 5);
+}
+
 }  // namespace test
 }  // namespace loramesher

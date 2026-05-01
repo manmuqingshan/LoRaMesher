@@ -406,6 +406,37 @@ TEST_F(NetworkServiceStateCoverageTest, SendBroadcastSucceedsInNetworkManager) {
     EXPECT_TRUE(message_queue_->HasMessage(MessageType::DATA_BROADCAST));
 }
 
+TEST_F(NetworkServiceStateCoverageTest,
+       ApplyRoleChangeInvalidRoleReturnsError) {
+    Configure();
+    Result r = service_->ApplyRoleChange(static_cast<NodeRole>(99));
+    EXPECT_FALSE(r);
+    EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kInvalidParameter);
+}
+
+TEST_F(NetworkServiceStateCoverageTest, ApplyRoleChangeSameRoleNoOp) {
+    Configure(0x1001, NodeRole::AUTO);
+    Result r = service_->ApplyRoleChange(NodeRole::AUTO);
+    EXPECT_TRUE(r);
+}
+
+TEST_F(NetworkServiceStateCoverageTest,
+       ApplyRoleChangePromoteToNMFromJoiningDefersChange) {
+    Configure(0x1001, NodeRole::AUTO);
+    service_->SetState(INetworkService::ProtocolState::JOINING);
+    Result r = service_->ApplyRoleChange(NodeRole::NETWORK_MANAGER);
+    EXPECT_TRUE(r) << r.GetErrorMessage();
+    EXPECT_EQ(service_->GetNodeRole(), NodeRole::NETWORK_MANAGER);
+}
+
+TEST_F(NetworkServiceStateCoverageTest, ApplyRoleChangeAutoToNodeOnly) {
+    Configure(0x1001, NodeRole::AUTO);
+    service_->SetState(INetworkService::ProtocolState::DISCOVERY);
+    Result r = service_->ApplyRoleChange(NodeRole::NODE_ONLY);
+    EXPECT_TRUE(r) << r.GetErrorMessage();
+    EXPECT_EQ(service_->GetNodeRole(), NodeRole::NODE_ONLY);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

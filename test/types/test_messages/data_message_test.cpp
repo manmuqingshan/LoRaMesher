@@ -247,6 +247,21 @@ TEST_F(DataMessageTest, SetNextHopTest) {
     EXPECT_EQ(msg_ptr->GetPayload(), payload);
 }
 
+TEST_F(DataMessageTest, CreatePayloadTooLargeReturnsNullopt) {
+    std::vector<uint8_t> oversized(
+        BaseMessage::kMaxPayloadSize - DataHeader::DataFieldsSize() + 1, 0xCC);
+    auto result = DataMessage::Create(dest, src, next_hop, oversized);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(DataMessageTest, CreateFromBaseMessagePayloadTooSmallReturnsNullopt) {
+    std::array<uint8_t, 1> truncated{0xFF};
+    BaseMessage too_small(dest, src, MessageType::DATA,
+                          std::span<const uint8_t>(truncated));
+    auto result = DataMessage::CreateFromBaseMessage(too_small);
+    EXPECT_FALSE(result.has_value());
+}
+
 /**
  * @brief Test that next_hop is preserved during serialization/deserialization
  */

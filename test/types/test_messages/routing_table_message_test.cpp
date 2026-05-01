@@ -381,6 +381,17 @@ TEST_F(RoutingTableMessageTest, SourceCapabilitiesAndSlots) {
     EXPECT_EQ(hdr.GetSourceAllocatedDataSlots(), slots);
 }
 
+TEST_F(RoutingTableMessageTest,
+       MessageGetSourceCapabilitiesAndSlotsDelegateToHeader) {
+    const uint8_t caps = 0x55;
+    const uint8_t slots = 7;
+    auto opt = RoutingTableMessage::Create(dest, src, network_id, table_version,
+                                           entries, caps, slots);
+    ASSERT_TRUE(opt.has_value());
+    EXPECT_EQ(opt->GetSourceCapabilities(), caps);
+    EXPECT_EQ(opt->GetSourceAllocatedDataSlots(), slots);
+}
+
 /**
  * @brief RoutingTableHeader::Deserialize() success path via serialized buffer.
  *

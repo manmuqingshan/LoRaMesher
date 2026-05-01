@@ -471,6 +471,44 @@ TEST_F(SyncBeaconMessageTest, MutablePayloadPreservesOtherFields) {
     EXPECT_EQ(updated_beacon->GetTotalSlots(), orig_total_slots);
 }
 
+TEST_F(SyncBeaconMessageTest, CreateFromBaseMessageRoundTrip) {
+    ASSERT_TRUE(original_msg.has_value());
+    BaseMessage base = original_msg->ToBaseMessage();
+    auto round_trip = SyncBeaconMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(round_trip.has_value());
+    EXPECT_EQ(round_trip->GetNetworkId(), original_msg->GetNetworkId());
+    EXPECT_EQ(round_trip->GetTotalSlots(), original_msg->GetTotalSlots());
+    EXPECT_EQ(round_trip->GetSlotDuration(), original_msg->GetSlotDuration());
+    EXPECT_EQ(round_trip->GetHopCount(), original_msg->GetHopCount());
+    EXPECT_EQ(round_trip->GetMaxHops(), original_msg->GetMaxHops());
+    EXPECT_EQ(round_trip->GetNodeCount(), original_msg->GetNodeCount());
+    EXPECT_EQ(round_trip->GetNetworkManager(),
+              original_msg->GetNetworkManager());
+}
+
+TEST_F(SyncBeaconMessageTest,
+       CreateFromBaseMessagePayloadTooSmallReturnsNullopt) {
+    std::array<uint8_t, 2> truncated{0xFF, 0xFF};
+    BaseMessage too_small(dest, src, MessageType::SYNC_BEACON,
+                          std::span<const uint8_t>(truncated));
+    auto result = SyncBeaconMessage::CreateFromBaseMessage(too_small);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(SyncBeaconMessageTest, GetNetworkManagerReturnsConfiguredValue) {
+    AddressType nm = 0xCAFE;
+    auto msg = SyncBeaconMessage::CreateOriginal(
+        dest, src, network_id, total_slots, slot_duration_ms, nm, 50, max_hops);
+    ASSERT_TRUE(msg.has_value());
+    EXPECT_EQ(msg->GetNetworkManager(), nm);
+}
+
+TEST_F(SyncBeaconMessageTest, UpdatePropagationDelaySetsField) {
+    ASSERT_TRUE(original_msg.has_value());
+    original_msg->UpdatePropagationDelay(7777);
+    EXPECT_EQ(original_msg->GetPropagationDelay(), 7777u);
+}
+
 /**
  * @brief Tests the pre-send callback mechanism end-to-end
  */
