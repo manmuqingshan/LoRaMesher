@@ -765,6 +765,30 @@ TEST_F(NetworkNodeRouteTest, LinkQualityProvisionalBelowSampleThreshold) {
               NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
 }
 
+TEST_F(NetworkNodeRouteTest, LinkQualityProvisionalCapHoldsAtBoundary) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.ReceivedMessage(1000);
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+    stats.ExpectMessage();
+    EXPECT_EQ(stats.messages_expected, stats.messages_received + 1);
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       LinkQualityProvisionalDrainsWhenExpectedRunsAhead) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.ReceivedMessage(1000);
+    for (int i = 0; i < 10; ++i) {
+        stats.ExpectMessage();
+    }
+    EXPECT_LT(stats.messages_received,
+              NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality);
+    EXPECT_LT(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
 TEST_F(NetworkNodeRouteTest, LinkQualityClimbsAfterSampleThreshold) {
     NetworkNodeRoute::LinkQualityStats stats;
     stats.UpdateRemoteQuality(240);

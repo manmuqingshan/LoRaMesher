@@ -14,13 +14,15 @@ namespace lora_mesh {
 
 // LinkQualityStats implementation
 uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
-    // Until we have enough direct receptions to trust the EWMA/window,
-    // report a provisional value so a single packet cannot inflate quality.
     if (messages_received < kMinSamplesForQuality) {
-        if (remote_link_quality > 0) {
-            return std::min<uint8_t>(remote_link_quality, kProvisionalQuality);
+        uint8_t cap =
+            remote_link_quality > 0
+                ? std::min<uint8_t>(remote_link_quality, kProvisionalQuality)
+                : kProvisionalQuality;
+        if (messages_expected > messages_received + 1) {
+            return std::min<uint8_t>(cap, ewma_quality);
         }
-        return kProvisionalQuality;
+        return cap;
     }
 
     // Use sliding window PDR when ready, otherwise fall back to EWMA

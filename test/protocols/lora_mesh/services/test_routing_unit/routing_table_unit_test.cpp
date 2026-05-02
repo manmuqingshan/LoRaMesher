@@ -2026,5 +2026,34 @@ TEST_F(RoutingTableUnitTest, InactiveRouteCanBeReplacedByUnidirectionalDirect) {
     EXPECT_TRUE(it->is_active);
 }
 
+TEST_F(RoutingTableUnitTest,
+       MarginalDirectLinkQualityDecaysOnMissedExpectations) {
+    std::vector<RoutingTableEntry> empty;
+    ReceiveRoutingMessage(kNeighbor1, empty, /*local_link_quality=*/200);
+
+    auto find_neighbor = [&]() {
+        const auto& nodes = routing_table_->GetNodes();
+        return std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+    };
+    auto it = find_neighbor();
+    ASSERT_NE(it, routing_table_->GetNodes().end());
+    ASSERT_EQ(it->routing_entry.hop_count, 1);
+    ASSERT_EQ(it->link_stats.messages_received, 1u);
+
+    for (int i = 0; i < 15; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+
+    it = find_neighbor();
+    ASSERT_NE(it, routing_table_->GetNodes().end());
+    EXPECT_LT(it->link_stats.messages_received,
+              NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality);
+    EXPECT_LT(it->routing_entry.link_quality,
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
 }  // namespace test
 }  // namespace loramesher

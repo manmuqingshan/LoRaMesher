@@ -675,7 +675,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
 
         LOG_DEBUG(
             "Source 0x%04X: remote_quality=%d ewma=%d link_quality=%d "
-            "expected=%d received=%d%s",
+            "expected=%d received=%d%s%s",
             source_address, local_link_quality,
             source_node_it->link_stats.ewma_quality, direct_quality,
             source_node_it->link_stats.messages_expected,
@@ -683,6 +683,11 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             (local_link_quality == 0 &&
              source_node_it->link_stats.messages_expected >= 3)
                 ? " [UNIDIRECTIONAL]"
+                : "",
+            (source_node_it->link_stats.messages_received <
+             types::protocols::lora_mesh::NetworkNodeRoute::LinkQualityStats::
+                 kMinSamplesForQuality)
+                ? " [PROVISIONAL]"
                 : "");
 
         // Always update capabilities for direct neighbor (source of the message)
