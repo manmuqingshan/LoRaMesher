@@ -1,0 +1,565 @@
+/**
+ * @file rtos_mock_time_test.cpp
+ * @brief Tests for virtual time functionality in RTOSMock
+ */
+
+#include <gtest/gtest.h>
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <thread>
+#include <vector>
+#include "os/rtos_mock.hpp"
+
+#ifdef ARDUINO
+
+TEST(RTOSMockTest, ImplementArduinoTests) {
+    GTEST_SKIP();
+}
+
+#else
+
+namespace loramesher {
+namespace test {
+
+/**
+ * @class RTOSMockTimeTest
+ * @brief Test fixture for testing the virtual time functionality in RTOSMock
+ */
+class RTOSMockTimeTest : public ::testing::Test {
+   protected:
+    void SetUp() override {
+        // Get RTOS instance and cast to RTOSMock
+        rtos_ = &GetRTOS();
+        rtosMock_ = dynamic_cast<os::RTOSMock*>(rtos_);
+        ASSERT_NE(rtosMock_, nullptr) << "RTOS is not an RTOSMock instance";
+
+        // Set virtual time mode for testing
+        rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+
+        // Store initial time
+        initialTime_ = rtos_->getTickCount();
+    }
+
+    void TearDown() override {
+        // Clean up any remaining tasks
+        for (auto& task : taskHandles_) {
+            if (task) {
+                rtos_->DeleteTask(task);
+                task = nullptr;
+            }
+        }
+
+        // Clean up any remaining queues
+        for (auto& queue : queueHandles_) {
+            if (queue) {
+                rtos_->DeleteQueue(queue);
+                queue = nullptr;
+            }
+        }
+
+        // Clean up any remaining semaphores
+        for (auto& sem : semaphoreHandles_) {
+            if (sem) {
+                rtos_->DeleteSemaphore(sem);
+                sem = nullptr;
+            }
+        }
+
+        // Clean up dynamically allocated task parameters
+        for (auto& cleanup : taskParameterCleanup_) {
+            cleanup();
+        }
+        taskParameterCleanup_.clear();
+
+        // Return to real-time mode after tests
+        rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    }
+
+    /**
+     * @brief Wait for tasks to execute
+     * 
+     * This helper function waits a short time to allow tasks to run and
+     * process any events before continuing. It helps ensure proper test
+     * sequencing, especially when virtual time is used.
+     */
+    void WaitForTasksToExecute() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    /**
+     * @brief Helper method to safely create a queue and track its handle
+     */
+    os::QueueHandle_t CreateTrackedQueue(uint32_t length, uint32_t itemSize) {
+        os::QueueHandle_t handle = rtos_->CreateQueue(length, itemSize);
+        if (handle) {
+            queueHandles_.push_back(handle);
+        }
+        return handle;
+    }
+
+    /**
+     * @brief Helper method to safely create a semaphore and track its handle
+     */
+    os::SemaphoreHandle_t CreateTrackedSemaphore() {
+        os::SemaphoreHandle_t handle = rtos_->CreateBinarySemaphore();
+        if (handle) {
+            semaphoreHandles_.push_back(handle);
+        }
+        return handle;
+    }
+
+    // Test fixture members
+    os::RTOS* rtos_ = nullptr;
+    os::RTOSMock* rtosMock_ = nullptr;
+    uint32_t initialTime_ = 0;
+
+    // Vector to track task handles for cleanup
+    std::vector<os::TaskHandle_t> taskHandles_;
+
+    // Vector to track queue handles for cleanup
+    std::vector<os::QueueHandle_t> queueHandles_;
+
+    // Vector to track semaphore handles for cleanup
+    std::vector<os::SemaphoreHandle_t> semaphoreHandles_;
+
+    // Vector to track dynamically allocated task parameters for cleanup
+    std::vector<std::function<void()>> taskParameterCleanup_;
+};
+
+/**
+ * @brief Basic test for virtual time operation
+ */
+TEST_F(RTOSMockTimeTest, BasicVirtualTimeOperation) {
+    // Verify initial mode
+    ASSERT_EQ(rtosMock_->getTimeMode(), os::RTOSMock::TimeMode::kVirtualTime);
+
+    // Get initial time
+    uint32_t startTime = rtos_->getTickCount();
+
+    // Advance time
+    const uint32_t timeAdvance = 1000;
+    rtosMock_->advanceTime(timeAdvance);
+
+    // Verify time advanced
+    uint32_t newTime = rtos_->getTickCount();
+    EXPECT_GE(newTime, startTime + timeAdvance);
+}
+
+/**
+ * @brief Test that delay responds to virtual time
+ */
+TEST_F(RTOSMockTimeTest, SimpleDelayWithVirtualTime) {
+    // Create a shared state object with proper memory management
+    struct SharedState {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> taskCompleted{false};
+        std::atomic<uint32_t> startTime{0};
+        std::atomic<uint32_t> endTime{0};
+    };
+
+    auto state = std::make_shared<SharedState>();
+
+    // Create a task that uses delay
+    auto* taskParam = new std::shared_ptr<SharedState>(state);
+    taskParameterCleanup_.push_back(
+        [taskParam]() { delete taskParam; });  // Track for cleanup
+
+    os::TaskHandle_t task = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto state = *static_cast<std::shared_ptr<SharedState>*>(param);
+
+            // Record start time and set started flag
+            state->startTime = GetRTOS().getTickCount();
+            state->taskStarted = true;
+
+            // Delay for 500ms
+            GetRTOS().delay(500);
+
+            // Record end time and set completed flag
+            state->endTime = GetRTOS().getTickCount();
+            state->taskCompleted = true;
+        },
+        "DelayTask", 2048, taskParam, 1, &task));
+
+    if (task) {
+        taskHandles_.push_back(task);
+    }
+
+    ASSERT_NE(task, nullptr);
+
+    // Wait for task to start
+    uint32_t waitAttempts = 0;
+    while (!state->taskStarted && waitAttempts < 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waitAttempts++;
+    }
+    ASSERT_TRUE(state->taskStarted) << "Task did not start within timeout";
+
+    // Task should not be completed yet
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance time by 300ms (not enough to complete)
+    rtosMock_->advanceTime(300);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance time by 300ms more (enough to complete)
+    rtosMock_->advanceTime(300);
+    WaitForTasksToExecute();
+
+    // Task should now be completed
+    EXPECT_TRUE(state->taskCompleted);
+
+    // Check timing
+    EXPECT_GE(state->endTime, state->startTime + 500);
+}
+
+/**
+ * @brief Test a simple queue operation with virtual time
+ */
+TEST_F(RTOSMockTimeTest, SimpleQueueOperation) {
+    // Create a queue
+    os::QueueHandle_t queue = CreateTrackedQueue(1, sizeof(int));
+    ASSERT_NE(queue, nullptr);
+
+    // Create shared state
+    struct SharedState {
+        std::atomic<bool> senderDone{false};
+        std::atomic<bool> receiverDone{false};
+        std::atomic<int> sentValue{0};
+        std::atomic<int> receivedValue{0};
+    };
+
+    auto state = std::make_shared<SharedState>();
+
+    // Value to send
+    const int testValue = 42;
+
+    // Create a sender task that delays then sends
+    auto* senderParam =
+        new std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>(queue,
+                                                                       state);
+    taskParameterCleanup_.push_back(
+        [senderParam]() { delete senderParam; });  // Track for cleanup
+
+    os::TaskHandle_t senderTask = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto args = *static_cast<
+                std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>*>(
+                param);
+            auto queue = args.first;
+            auto state = args.second;
+
+            // Wait 200ms
+            GetRTOS().delay(200);
+
+            // Send value
+            int value = 42;
+            state->sentValue = value;
+            GetRTOS().SendToQueue(queue, &value, 0);
+            state->senderDone = true;
+        },
+        "SenderTask", 2048, senderParam, 1, &senderTask));
+
+    if (senderTask) {
+        taskHandles_.push_back(senderTask);
+    }
+
+    ASSERT_NE(senderTask, nullptr);
+
+    // Create a receiver task
+    auto* receiverParam =
+        new std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>(queue,
+                                                                       state);
+    taskParameterCleanup_.push_back(
+        [receiverParam]() { delete receiverParam; });  // Track for cleanup
+
+    os::TaskHandle_t receiverTask = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto args = *static_cast<
+                std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>*>(
+                param);
+            auto queue = args.first;
+            auto state = args.second;
+
+            // Wait for value with timeout
+            int value = 0;
+            auto result = GetRTOS().ReceiveFromQueue(queue, &value, 500);
+
+            if (result == os::QueueResult::kOk) {
+                state->receivedValue = value;
+            }
+
+            state->receiverDone = true;
+        },
+        "ReceiverTask", 2048, receiverParam, 1, &receiverTask));
+
+    if (receiverTask) {
+        taskHandles_.push_back(receiverTask);
+    }
+
+    ASSERT_NE(receiverTask, nullptr);
+
+    // Wait for tasks to start
+    WaitForTasksToExecute();
+
+    // Initially, neither task should be done
+    EXPECT_FALSE(state->senderDone);
+    EXPECT_FALSE(state->receiverDone);
+
+    // Advance time to 250ms (sender should send)
+    rtosMock_->advanceTime(250);
+    WaitForTasksToExecute();
+
+    // Sender should be done, receiver should have gotten the value
+    EXPECT_TRUE(state->senderDone);
+    EXPECT_TRUE(state->receiverDone);
+    EXPECT_EQ(state->receivedValue, testValue);
+}
+
+/**
+ * @brief Test that creates a task that sleeps indefinitely and then kills it from outside
+ */
+TEST_F(RTOSMockTimeTest, CreateTaskSleepAndKillFromOutside) {
+    // Create shared state to track task lifecycle
+    struct SharedState {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> taskSleeping{false};
+        std::atomic<bool> taskCompleted{false};
+        std::atomic<bool> shouldExit{false};
+        std::atomic<uint32_t> startTime{0};
+    };
+
+    auto state = std::make_shared<SharedState>();
+
+    // Create a task parameter with proper memory management
+    auto* taskParam = new std::shared_ptr<SharedState>(state);
+    taskParameterCleanup_.push_back(
+        [taskParam]() { delete taskParam; });  // Track for cleanup
+
+    os::TaskHandle_t task = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto state = *static_cast<std::shared_ptr<SharedState>*>(param);
+
+            // Record start time and set started flag
+            state->startTime = GetRTOS().getTickCount();
+            state->taskStarted = true;
+
+            // Signal that we're about to sleep
+            state->taskSleeping = true;
+
+            // Sleep for a long time but check for exit periodically
+            while (!state->shouldExit) {
+                GetRTOS().delay(
+                    1000);  // Sleep in chunks so we can check exit flag
+            }
+
+            // This should be reached when shouldExit is set
+            state->taskCompleted = true;
+        },
+        "SleepingTask", 2048, taskParam, 1, &task));
+
+    if (task) {
+        taskHandles_.push_back(task);
+    }
+
+    ASSERT_NE(task, nullptr);
+
+    // Wait for task to start and begin sleeping
+    uint32_t waitAttempts = 0;
+    while (!state->taskSleeping && waitAttempts < 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waitAttempts++;
+    }
+    ASSERT_TRUE(state->taskStarted) << "Task did not start within timeout";
+    ASSERT_TRUE(state->taskSleeping)
+        << "Task did not begin sleeping within timeout";
+
+    // Task should not be completed yet (it's sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance some virtual time to ensure task is deep in sleep
+    rtosMock_->advanceTime(500);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed (still sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance more time to trigger another sleep cycle
+    rtosMock_->advanceTime(1000);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed (still sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Now signal the task to exit gracefully before deletion
+    state->shouldExit = true;
+
+    // Advance time to let task process the exit signal
+    rtosMock_->advanceTime(1100);
+    WaitForTasksToExecute();
+
+    // Task should now be completed
+    EXPECT_TRUE(state->taskCompleted);
+
+    // Now kill the task from outside (it should already be finished)
+    rtos_->DeleteTask(task);
+
+    // Remove from our tracking since we manually deleted it
+    auto it = std::find(taskHandles_.begin(), taskHandles_.end(), task);
+    if (it != taskHandles_.end()) {
+        *it =
+            nullptr;  // Mark as deleted so TearDown doesn't try to delete again
+    }
+}
+
+/**
+ * @brief Test that forcefully kills a task while it's actually sleeping
+ */
+TEST_F(RTOSMockTimeTest, ForceKillSleepingTask) {
+    // Create shared state to track task lifecycle
+    struct SharedState {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> taskSleeping{false};
+        std::atomic<bool> taskCompleted{false};
+        std::atomic<uint32_t> startTime{0};
+    };
+
+    auto state = std::make_shared<SharedState>();
+
+    // Create a task parameter with proper memory management
+    auto* taskParam = new std::shared_ptr<SharedState>(state);
+    taskParameterCleanup_.push_back(
+        [taskParam]() { delete taskParam; });  // Track for cleanup
+
+    os::TaskHandle_t task = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto state = *static_cast<std::shared_ptr<SharedState>*>(param);
+
+            try {
+                // Record start time and set started flag
+                state->startTime = GetRTOS().getTickCount();
+                state->taskStarted = true;
+
+                // Signal that we're about to sleep
+                state->taskSleeping = true;
+
+                // Sleep for a very long time - this should be interrupted by task deletion
+                GetRTOS().delay(100000);  // 100 seconds
+
+                // This should not be reached if task is killed
+                state->taskCompleted = true;
+            } catch (...) {
+                // Task was forcefully terminated, this is expected
+            }
+        },
+        "ForceKillTask", 2048, taskParam, 1, &task));
+
+    if (task) {
+        taskHandles_.push_back(task);
+    }
+
+    ASSERT_NE(task, nullptr);
+
+    // Wait for task to start and begin sleeping
+    uint32_t waitAttempts = 0;
+    while (!state->taskSleeping && waitAttempts < 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waitAttempts++;
+    }
+    ASSERT_TRUE(state->taskStarted) << "Task did not start within timeout";
+    ASSERT_TRUE(state->taskSleeping)
+        << "Task did not begin sleeping within timeout";
+
+    // Task should not be completed yet (it's sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance some virtual time to ensure task is deep in sleep
+    rtosMock_->advanceTime(1000);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed (still sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Now forcefully kill the task while it's sleeping
+    rtos_->DeleteTask(task);
+
+    // Remove from our tracking since we manually deleted it
+    auto it = std::find(taskHandles_.begin(), taskHandles_.end(), task);
+    if (it != taskHandles_.end()) {
+        *it =
+            nullptr;  // Mark as deleted so TearDown doesn't try to delete again
+    }
+
+    // Advance more time and wait for execution
+    rtosMock_->advanceTime(1000);
+    WaitForTasksToExecute();
+
+    // Task should never have completed normally (it was killed while sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+}
+
+TEST_F(RTOSMockTimeTest, WaitForTasksReblocksAfterQueueDataArrives) {
+    auto q = CreateTrackedQueue(5, sizeof(int));
+
+    struct State {
+        std::atomic<int> received{-1};
+        std::atomic<bool> entered_receive{false};
+    };
+
+    auto state = std::make_shared<State>();
+
+    auto* p =
+        new std::pair<os::QueueHandle_t, std::shared_ptr<State>>(q, state);
+    taskParameterCleanup_.push_back([p] { delete p; });
+
+    os::TaskHandle_t task = nullptr;
+    rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<
+                std::pair<os::QueueHandle_t, std::shared_ptr<State>>*>(param);
+            int v = 0;
+            s->second->entered_receive = true;
+            if (GetRTOS().ReceiveFromQueue(s->first, &v, 5000) ==
+                os::QueueResult::kOk)
+                s->second->received = v;
+            // Keep task alive so TearDown can DeleteTask cleanly
+            while (true)
+                GetRTOS().delay(100000);
+        },
+        "Receiver", 2048, p, 1, &task);
+    taskHandles_.push_back(task);
+
+    // Wait for task to enter ReceiveFromQueue and block on the empty queue
+    uint32_t attempts = 0;
+    while (!state->entered_receive && attempts++ < 50)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_TRUE(state->entered_receive);
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(20));  // let it reach waitFor
+
+    // Send data while task is blocked — notify_one fires but task not scheduled yet
+    int data = 42;
+    rtos_->SendToQueue(q, &data, 0);
+
+    // With fix: waits until task processes the message (pending_queue_items_ → 0)
+    // Without fix: returns immediately (queue_cv_count_ > 0 → "blocked") before task runs
+    rtosMock_->waitForTasksToReblock(100);
+
+    EXPECT_EQ(42, state->received.load())
+        << "Task had not processed queue data before waitForTasksToReblock "
+           "returned";
+}
+
+}  // namespace test
+}  // namespace loramesher
+
+#endif  // ARDUINO

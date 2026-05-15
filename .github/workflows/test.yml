@@ -1,0 +1,223 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  esp32-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install platformio
+
+    - name: Build ESP32 Example
+      run: |
+        cd examples/simple_example
+        sed -i 's|lib_deps =.*|lib_deps = symlink://../../|' platformio.ini
+        pio run -e ttgo-lora32-v1
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install platformio
+
+    - name: Install LLVM 18
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y llvm-18 clang-18
+
+    - name: Run Tests
+      run: |
+        LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
+          pio test -e test_native_profile -v \
+          --junit-output-path test-results.xml
+
+    - name: Test Results Summary
+      if: always()
+      run: |
+        python3 << 'PYEOF'
+        import xml.etree.ElementTree as ET
+        import os, sys, shutil
+
+        junit_path = "test-results.xml"
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+        logs_dir = "test_logs"
+        failed_logs_dir = "failed_test_logs"
+
+        with open(summary_path, "a") as out:
+            out.write("## Test Results\n\n")
+
+            if not os.path.isfile(junit_path):
+                out.write("> **Warning:** No test results file found. "
+                          "Tests may have failed to build.\n\n")
+                sys.exit(0)
+
+            try:
+                tree = ET.parse(junit_path)
+            except ET.ParseError as e:
+                out.write(f"> **Warning:** Could not parse `{junit_path}` "
+                          f"(`{e}`). Tests likely crashed before writing a "
+                          f"complete report.\n\n")
+                sys.exit(0)
+
+            root = tree.getroot()
+
+            # Count from individual test cases (root totals include empty suites)
+            total = failures = errors = skipped = 0
+            failed_tests = []
+            for ts in root.iter("testsuite"):
+                for tc in ts.findall("testcase"):
+                    total += 1
+                    fail_el = tc.find("failure")
+                    err_el = tc.find("error")
+                    skip_el = tc.find("skipped")
+                    if fail_el is not None:
+                        failures += 1
+                        failed_tests.append((
+                            ts.attrib.get("name", "?"),
+                            tc.attrib.get("name", "?"),
+                            fail_el.attrib.get("message", "").strip(),
+                            (fail_el.text or "").strip(),
+                        ))
+                    elif err_el is not None:
+                        errors += 1
+                        failed_tests.append((
+                            ts.attrib.get("name", "?"),
+                            tc.attrib.get("name", "?"),
+                            err_el.attrib.get("message", "").strip(),
+                            (err_el.text or "").strip(),
+                        ))
+                    elif skip_el is not None:
+                        skipped += 1
+            passed = total - failures - errors - skipped
+            elapsed = root.attrib.get("time", "?")
+
+            if failures + errors == 0:
+                icon = "\u2705"
+                status = f"{icon} All {total} tests passed"
+            else:
+                icon = "\u274c"
+                status = f"{icon} {failures + errors} test(s) failed"
+
+            out.write(f"**{status}** ({elapsed}s)\n\n")
+            out.write("| Total | Passed | Failed | Errors | Skipped |\n")
+            out.write("|------:|-------:|-------:|-------:|--------:|\n")
+            out.write(f"| {total} | {passed} | {failures} | {errors} | {skipped} |\n\n")
+
+            if failed_tests:
+                os.makedirs(failed_logs_dir, exist_ok=True)
+                out.write("### Failed Tests\n\n")
+                for suite, name, message, detail in failed_tests:
+                    out.write(f"**`{suite} > {name}`**\n\n")
+                    if detail:
+                        out.write("<details>\n<summary>Show output</summary>\n\n")
+                        out.write(f"```\n{detail}\n```\n\n")
+                        out.write("</details>\n\n")
+                    elif message:
+                        out.write(f"> {message}\n\n")
+
+                    # Suite name in junit looks like "test_native_profile:protocols/.../test_routing"
+                    # but log filename uses just the gtest fixture: "TopologyRoutingTests_RingTopologyFiveNodes.log"
+                    log_basename = f"{suite.split(':')[-1].replace('/', '_')}_{name}.log"
+                    candidates = [
+                        os.path.join(logs_dir, log_basename),
+                        # Also try the gtest-style "<TestSuite>_<TestName>.log" format
+                        # produced by SetupFileLogging in the fixture
+                        os.path.join(logs_dir, f"{name}.log"),
+                    ]
+                    found = None
+                    for c in candidates:
+                        if os.path.isfile(c):
+                            found = c
+                            break
+                    if not found:
+                        # Fall back: any file in test_logs containing the test name
+                        for entry in os.listdir(logs_dir) if os.path.isdir(logs_dir) else []:
+                            if name in entry and entry.endswith(".log"):
+                                found = os.path.join(logs_dir, entry)
+                                break
+
+                    if found:
+                        shutil.copy(found, failed_logs_dir)
+                        with open(found) as fh:
+                            tail = fh.readlines()[-300:]
+                        out.write("<details>\n<summary>\ud83d\udcc4 Last 300 lines of "
+                                  f"<code>{os.path.basename(found)}</code></summary>\n\n")
+                        out.write("```\n")
+                        out.writelines(tail)
+                        out.write("\n```\n\n")
+                        out.write("</details>\n\n")
+                    else:
+                        out.write(f"> _(no matching log file in `{logs_dir}/`)_\n\n")
+        PYEOF
+
+    - name: Upload failing test logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-test-logs
+        path: failed_test_logs/
+        retention-days: 14
+        if-no-files-found: ignore
+
+    - name: Generate Coverage Report
+      if: always()
+      run: |
+        if ! ls .pio/coverage/*.profraw 1>/dev/null 2>&1; then
+          echo "No profile data found (tests may have failed to build)."
+          exit 0
+        fi
+        llvm-profdata-18 merge -sparse .pio/coverage/*.profraw \
+          -o .pio/coverage/loramesher.profdata
+
+        REPORT=$(llvm-cov-18 report .pio/build/test_native_profile/program \
+          -instr-profile=.pio/coverage/loramesher.profdata \
+          --ignore-filename-regex='(test/|googletest|\.pio)')
+
+        echo "## Test Coverage" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "$REPORT" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+        COVERAGE=$(echo "$REPORT" | tail -1 | awk '{print $NF}')
+        PCT=$(echo "$COVERAGE" | tr -d '%' | cut -d'.' -f1)
+        if   [ "$PCT" -ge 80 ]; then COLOR="brightgreen"
+        elif [ "$PCT" -ge 70 ]; then COLOR="green"
+        elif [ "$PCT" -ge 60 ]; then COLOR="yellow"
+        else COLOR="red"; fi
+
+        echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
+        echo "COVERAGE_COLOR=$COLOR" >> $GITHUB_ENV
+
+    - name: Update Coverage Badge
+      if: >
+        always() &&
+        github.event_name == 'push' &&
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/new_loramesher')
+      uses: schneegans/dynamic-badges-action@v1.7.0
+      with:
+        auth: ${{ secrets.GIST_TOKEN }}
+        gistID: ${{ secrets.GIST_ID }}
+        filename: loramesher_coverage.json
+        label: coverage
+        message: ${{ env.COVERAGE }}
+        color: ${{ env.COVERAGE_COLOR }}
