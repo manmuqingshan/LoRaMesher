@@ -11,10 +11,6 @@ jobs:
     
     steps:
     - uses: actions/checkout@v6
-    
-    - name: Build
-      run: |
-        platformio run
 
     - name: Extract changelog section for tag
       run: |
@@ -36,8 +32,6 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v3
       with:
-        files: |
-          .pio/build/**/firmware.bin
         body_path: ${{ github.workspace }}/RELEASE_NOTES.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
